@@ -442,14 +442,6 @@ grep "Blocked" .tinyclaw/logs/queue.log
 # Edit whitelist in queue-processor.js (add new patterns to BLACKLIST)
 ```
 
-## 🛡️ Security Enhancements (Future)
-
-See [Security](#-security) section for detailed hardening options:
-
-- Restricted shell (rbash)
-- Bubblewrap sandboxing
-- Command wrapper script
-
 ## 🚀 Production Deployment
 
 ### Using systemd
