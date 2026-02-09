@@ -15,6 +15,34 @@ const QUEUE_PROCESSING = path.join(SCRIPT_DIR, '.tinyclaw/queue/processing');
 const LOG_FILE = path.join(SCRIPT_DIR, '.tinyclaw/logs/queue.log');
 const RESET_FLAG = path.join(SCRIPT_DIR, '.tinyclaw/reset_flag');
 
+// Dangerous command blacklist
+const BLACKLIST = [
+    'rm -rf',
+    'rm -r',
+    'rm /',
+    'sudo',
+    'dd if=',
+    'mkfs',
+    '>:',
+    '> /',
+    'chmod -R 000',
+    'chown -R',
+    'kill -9',
+    'pkill',
+    'killall',
+    'iptables',
+    'ufw disable',
+    'systemctl stop',
+    'reboot',
+    'shutdown'
+];
+
+// Check if message contains blacklisted patterns
+function isBlacklisted(msg) {
+    const lowerMsg = msg.toLowerCase();
+    return BLACKLIST.some(pattern => lowerMsg.includes(pattern.toLowerCase()));
+}
+
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, path.dirname(LOG_FILE)].forEach(dir => {
     if (!fs.existsSync(dir)) {
@@ -43,6 +71,18 @@ async function processMessage(messageFile) {
         const { channel, sender, message, timestamp, messageId } = messageData;
 
         log('INFO', `Processing [${channel}] from ${sender}: ${message.substring(0, 50)}...`);
+
+        // Check for blacklisted commands
+        if (isBlacklisted(message)) {
+            log('WARN', 'Blocked blacklisted command pattern');
+            response = "⚠️ This request has been blocked for security reasons.";
+            fs.writeFileSync(
+                path.join(QUEUE_OUTGOING, `${channel}_${messageId}_${Date.now()}.json`),
+                JSON.stringify({ channel, sender, message: response, originalMessage: message, timestamp: Date.now(), messageId }, null, 2)
+            );
+            fs.unlinkSync(processingFile);
+            return;
+        }
 
         // Check if we should reset conversation (start fresh without -c)
         const shouldReset = fs.existsSync(RESET_FLAG);
