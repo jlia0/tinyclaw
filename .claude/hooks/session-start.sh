@@ -6,6 +6,7 @@ cat << 'EOF'
 
 Running in persistent mode with:
 - WhatsApp message integration
+- Discord message integration
 - Heartbeat monitoring (with .tinyclaw/heartbeat.md file)
 - Activity logging
 

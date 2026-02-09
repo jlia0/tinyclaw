@@ -14,6 +14,24 @@ const QUEUE_OUTGOING = path.join(SCRIPT_DIR, '.tinyclaw/queue/outgoing');
 const QUEUE_PROCESSING = path.join(SCRIPT_DIR, '.tinyclaw/queue/processing');
 const LOG_FILE = path.join(SCRIPT_DIR, '.tinyclaw/logs/queue.log');
 const RESET_FLAG = path.join(SCRIPT_DIR, '.tinyclaw/reset_flag');
+const MODEL_CONFIG = path.join(SCRIPT_DIR, '.tinyclaw/model');
+
+// Model name mapping
+const MODEL_IDS: Record<string, string> = {
+    'sonnet': 'claude-sonnet-4-5-20250929',
+    'opus': 'claude-opus-4-6',
+};
+
+function getModelFlag(): string {
+    try {
+        const model = fs.readFileSync(MODEL_CONFIG, 'utf8').trim();
+        const modelId = MODEL_IDS[model];
+        if (modelId) {
+            return `--model ${modelId} `;
+        }
+    } catch {}
+    return '';
+}
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, path.dirname(LOG_FILE)].forEach(dir => {
@@ -74,8 +92,9 @@ async function processMessage(messageFile: string): Promise<void> {
         // Call Claude
         let response: string;
         try {
+            const modelFlag = getModelFlag();
             response = execSync(
-              `cd "${SCRIPT_DIR}" && claude --dangerously-skip-permissions ${continueFlag}-p "${message.replace(/"/g, '\\"')}"`,
+              `cd "${SCRIPT_DIR}" && claude --dangerously-skip-permissions ${modelFlag}${continueFlag}-p "${message.replace(/"/g, '\\"')}"`,
               {
                 encoding: "utf-8",
                 timeout: 120000, // 2 minute timeout
