@@ -141,6 +141,7 @@ You'll get a response! 🤖
 - Processes **ONE message at a time**
 - Calls `claude -c -p`
 - Writes responses to outgoing queue
+- **Security:** Command blacklist blocks dangerous patterns
 
 ### 3. heartbeat-cron.sh
 
@@ -312,10 +313,87 @@ WhatsApp session persists across restarts:
 
 ## 🔐 Security
 
+### Command Blacklist
+
+`queue-processor.js` includes a blacklist of dangerous command patterns that are blocked before reaching Claude:
+
+```javascript
+const BLACKLIST = [
+    'rm -rf', 'rm -r', 'rm /',     // File destruction
+    'sudo',                          // Privilege escalation
+    'dd if=', 'mkfs',                // Disk operations
+    '>:', '> /',                     // Output redirection
+    'chmod -R 000', 'chown -R',      // Permission changes
+    'kill -9', 'pkill', 'killall',   // Process killing
+    'iptables', 'ufw disable',       // Firewall manipulation
+    'systemctl stop',                // Service management
+    'reboot', 'shutdown'             // System changes
+];
+```
+
+Blocked requests return: "⚠️ This request has been blocked for security reasons."
+
+**Blocked attempts are logged to:** `.tinyclaw/logs/queue.log`
+
+### Future Security Enhancements
+
+#### 1. Restricted Shell (rbash)
+
+Restrict Claude to a limited shell environment:
+
+```javascript
+execSync(
+  `rbash -c 'PATH=/usr/bin:/bin claude --dangerously-skip-permissions -c -p "${message}"'`,
+  ...
+);
+```
+
+#### 2. Bubblewrap Sandboxing
+
+Run Claude in an isolated container with no access to sensitive paths:
+
+```bash
+# Install
+sudo apt install bwrap
+
+# Wrap execution
+bwrap --bind / / --tmpfs /home --ro-bind ~/.config/claude ~/.config/claude claude -c -p "message"
+```
+
+#### 3. Command Wrapper Script
+
+Create `/usr/local/bin/safe-claude` to sanitize inputs:
+
+```bash
+#!/bin/bash
+# Strip dangerous patterns
+INPUT=$(echo "$1" | sed -e 's/rm\s*-rf.*//g' -e 's/sudo\s*//g')
+
+if [ "$INPUT" != "$1" ]; then
+    echo "Blocked dangerous command"
+    exit 1
+fi
+
+claude --dangerously-skip-permissions -c -p "$1"
+```
+
+### Security Considerations
+
+| Risk | Mitigation |
+|------|------------|
+| Remote compromise via WhatsApp | Command blacklist + user training |
+| Privilege escalation | Don't run as root; use standard user |
+| Data destruction | Regular backups; restricted permissions |
+| Unauthorized access | WhatsApp is already authenticated |
+
+### Current Security Measures
+
 - WhatsApp session stored locally in `.tinyclaw/whatsapp-session/`
 - Queue files are local (no network exposure)
 - Each channel handles its own authentication
 - Claude runs with your user permissions
+
+**Note:** Since `queue-processor.js` uses `--dangerously-skip-permissions`, Claude can execute any command your user account can. Only run trusted commands through it and be cautious about messages received.
 
 ## 🐛 Troubleshooting
 
@@ -352,6 +430,25 @@ ls -la .tinyclaw/queue/incoming/
 # Or attach to tmux
 tmux attach -t tinyclaw
 ```
+
+### Command Blacklist
+
+If legitimate requests are being blocked:
+
+```bash
+# View blocked attempts
+grep "Blocked" .tinyclaw/logs/queue.log
+
+# Edit whitelist in queue-processor.js (add new patterns to BLACKLIST)
+```
+
+## 🛡️ Security Enhancements (Future)
+
+See [Security](#-security) section for detailed hardening options:
+
+- Restricted shell (rbash)
+- Bubblewrap sandboxing
+- Command wrapper script
 
 ## 🚀 Production Deployment
 
