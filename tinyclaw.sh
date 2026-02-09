@@ -80,19 +80,17 @@ start_daemon() {
         echo -e "${YELLOW}📱 Waiting for QR code...${NC}"
         echo ""
 
-        # Wait for QR code to appear (up to 20 seconds)
-        for i in {1..20}; do
+        # Clean up any stale QR code file
+        rm -f "$SCRIPT_DIR/.tinyclaw/qr-code.txt"
+
+        # Wait for QR code file to be written by whatsapp-client.js (up to 30 seconds)
+        QR_FOUND=false
+        for i in {1..30}; do
             sleep 1
-            # Capture the WhatsApp pane with more lines (-S for scrollback, large number for full capture)
-            QR_OUTPUT=$(tmux capture-pane -t "$TMUX_SESSION:0.0" -p -S -50 2>/dev/null)
-
-            # Check if QR code is present (looks for QR pattern characters)
-            if echo "$QR_OUTPUT" | grep -q "█"; then
-                # Wait a bit more to ensure full QR code is rendered
-                sleep 2
-
-                # Capture again to get the complete QR code
-                QR_OUTPUT=$(tmux capture-pane -t "$TMUX_SESSION:0.0" -p -S -50 2>/dev/null)
+            if [ -f "$SCRIPT_DIR/.tinyclaw/qr-code.txt" ]; then
+                # Small delay to ensure file is fully written
+                sleep 1
+                QR_FOUND=true
 
                 clear
                 echo ""
@@ -100,8 +98,7 @@ start_daemon() {
                 echo -e "${GREEN}                    WhatsApp QR Code${NC}"
                 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
                 echo ""
-                # Filter to show only the QR code and relevant messages
-                echo "$QR_OUTPUT" | grep -A 100 "Scan" | head -60
+                cat "$SCRIPT_DIR/.tinyclaw/qr-code.txt"
                 echo ""
                 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
                 echo ""
@@ -113,6 +110,9 @@ start_daemon() {
                 echo "   4. Scan the QR code above"
                 echo ""
                 echo -e "${BLUE}Waiting for authentication...${NC}"
+
+                # Clean up QR file
+                rm -f "$SCRIPT_DIR/.tinyclaw/qr-code.txt"
 
                 # Wait for authentication (watch logs)
                 for j in {1..30}; do
@@ -131,16 +131,15 @@ start_daemon() {
         done
 
         # If QR didn't show in terminal, give instructions
-        if [ $i -eq 20 ]; then
+        if [ "$QR_FOUND" = false ]; then
             echo ""
             echo -e "${YELLOW}⚠️  QR code not captured in terminal${NC}"
             echo ""
-            echo "To see the QR code, use one of these options:"
+            echo "To see the QR code, attach to the tmux session:"
             echo ""
-            echo -e "  ${GREEN}Option 1:${NC} ./show-qr.sh"
-            echo -e "  ${GREEN}Option 2:${NC} tmux attach -t $TMUX_SESSION"
+            echo -e "  ${GREEN}tmux attach -t $TMUX_SESSION${NC}"
             echo ""
-            echo "The QR code is in the top pane."
+            echo "The QR code is in the top-left pane."
             echo ""
         fi
     else

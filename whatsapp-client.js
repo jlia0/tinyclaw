@@ -60,6 +60,12 @@ client.on('qr', (qr) => {
     qrcode.generate(qr, { small: true });
     console.log('\n');
     log('INFO', 'Open WhatsApp → Settings → Linked Devices → Link a Device');
+
+    // Write QR code to file so tinyclaw.sh can display it directly
+    // (tmux pane capture is unreliable for wide Unicode QR codes)
+    qrcode.generate(qr, { small: true }, function(qrOutput) {
+        fs.writeFileSync(path.join(SCRIPT_DIR, '.tinyclaw/qr-code.txt'), qrOutput);
+    });
 });
 
 // Authentication success
