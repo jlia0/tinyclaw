@@ -5,6 +5,7 @@ node_modules/
 .tinyclaw/logs/
 .tinyclaw/whatsapp-session/
 .tinyclaw/queue/
+.tinyclaw/tasks/
 .tinyclaw/reset_flag
 .wwebjs_cache
 *.log

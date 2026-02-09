@@ -77,6 +77,13 @@ async function processMessage(messageFile) {
             response = response.substring(0, 3900) + '\n\n[Response truncated...]';
         }
 
+        // Suppress silent heartbeat responses
+        if (channel === 'heartbeat' && response.includes('HEARTBEAT_OK')) {
+            log('INFO', 'Heartbeat: all clear, no action needed');
+            fs.unlinkSync(processingFile);
+            return;
+        }
+
         // Write response to outgoing queue
         const responseData = {
             channel,
