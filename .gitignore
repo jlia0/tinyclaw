@@ -1,3 +1,6 @@
+# Environment (contains phone numbers)
+.env
+
 # Dependencies
 node_modules/
 

@@ -14,6 +14,47 @@ const QUEUE_OUTGOING = path.join(SCRIPT_DIR, '.tinyclaw/queue/outgoing');
 const QUEUE_PROCESSING = path.join(SCRIPT_DIR, '.tinyclaw/queue/processing');
 const LOG_FILE = path.join(SCRIPT_DIR, '.tinyclaw/logs/queue.log');
 const RESET_FLAG = path.join(SCRIPT_DIR, '.tinyclaw/reset_flag');
+const CONFIG_FILE = path.join(SCRIPT_DIR, '.tinyclaw/config.json');
+
+// Load config with defaults
+function loadConfig() {
+    const defaults = {
+        patternFilterEnabled: true
+    };
+    try {
+        if (fs.existsSync(CONFIG_FILE)) {
+            return { ...defaults, ...JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) };
+        }
+    } catch (e) {
+        log('WARN', `Failed to load config: ${e.message}`);
+    }
+    return defaults;
+}
+
+// Security: Dangerous patterns to block before they reach Claude (defense in depth)
+const BLOCKED_PATTERNS = [
+    /rm\s+(-rf?|--recursive)/i,
+    /sudo/i,
+    /\|\s*bash/i,
+    /curl.*\|\s*(sh|bash)/i,
+    /wget.*\|\s*(sh|bash)/i,
+    /eval\s*\(/i,
+    /\.ssh/i,
+    /id_rsa/i,
+    /\.env\b/i,
+    /password/i,
+    /secret/i,
+    /api[_-]?key/i,
+    /credential/i,
+    /chmod\s+777/i,
+    /mkfs/i,
+    /dd\s+if=/i,
+    />(>)?\s*\/dev\//i,
+];
+
+function containsDangerousPattern(message) {
+    return BLOCKED_PATTERNS.some(pattern => pattern.test(message));
+}
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, path.dirname(LOG_FILE)].forEach(dir => {
@@ -43,6 +84,24 @@ async function processMessage(messageFile) {
         const { channel, sender, message, timestamp, messageId } = messageData;
 
         log('INFO', `Processing [${channel}] from ${sender}: ${message.substring(0, 50)}...`);
+
+        // Security: Block dangerous patterns before they reach Claude (optional, defense in depth)
+        const config = loadConfig();
+        if (config.patternFilterEnabled && containsDangerousPattern(message)) {
+            log('WARN', `🚫 Blocked dangerous pattern in message from ${sender}`);
+            const responseFile = channel === 'heartbeat'
+                ? path.join(QUEUE_OUTGOING, `${messageId}.json`)
+                : path.join(QUEUE_OUTGOING, `${channel}_${messageId}_${Date.now()}.json`);
+            const responseData = {
+                channel, sender, messageId,
+                message: "I can't process that request for security reasons.",
+                originalMessage: message,
+                timestamp: Date.now()
+            };
+            fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
+            fs.unlinkSync(processingFile);
+            return;
+        }
 
         // Check if we should reset conversation (start fresh without -c)
         const shouldReset = fs.existsSync(RESET_FLAG);

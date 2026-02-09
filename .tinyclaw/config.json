@@ -1,0 +1,9 @@
+{
+  "allowlistEnabled": true,
+  "rateLimitEnabled": true,
+  "rateLimit": {
+    "maxMessages": 10,
+    "windowMs": 60000
+  },
+  "patternFilterEnabled": true
+}

@@ -61,10 +61,15 @@ Other Channels ──────┘        ↓
 ### Installation
 
 ```bash
-cd /Users/jliao/workspace/tinyclaw
+git clone https://github.com/jlia0/tinyclaw.git
+cd tinyclaw
 
 # Install dependencies
 npm install
+
+# Configure allowed senders (REQUIRED for security)
+cp .env.example .env
+# Edit .env and add your phone number(s)
 
 # Make scripts executable
 chmod +x *.sh *.js
@@ -312,10 +317,64 @@ WhatsApp session persists across restarts:
 
 ## 🔐 Security
 
+### Sender Allowlist
+
+Only specified phone numbers can trigger Claude. Set via environment variable:
+
+```bash
+# .env (gitignored)
+TINYCLAW_ALLOWED_SENDERS=14155551234,14155555678
+```
+
+Copy `.env.example` to `.env` and add your phone number(s).
+
+### Dangerous Pattern Filter (Optional)
+
+Defense-in-depth layer that blocks messages containing dangerous patterns before reaching Claude:
+- `rm -rf`, `sudo`, shell pipes (`| bash`)
+- SSH keys, `.env`, passwords, API keys, credentials
+- Destructive commands (`mkfs`, `dd if=`, `chmod 777`)
+
+**Enabled by default.** Disable if too aggressive for your use case:
+```json
+{ "patternFilterEnabled": false }
+```
+
+### Rate Limiting
+
+Prevents message flooding. Defaults: 10 messages per 60 seconds per sender.
+Includes helpful "wait X seconds" feedback when triggered.
+
+Configure in `.tinyclaw/config.json`:
+```json
+{
+  "rateLimitEnabled": true,
+  "rateLimit": { "maxMessages": 10, "windowMs": 60000 }
+}
+```
+
+### Full Configuration Example
+
+`.tinyclaw/config.json`:
+```json
+{
+  "allowlistEnabled": true,
+  "rateLimitEnabled": true,
+  "rateLimit": { "maxMessages": 10, "windowMs": 60000 },
+  "patternFilterEnabled": true
+}
+```
+
+### Other Protections
+
 - WhatsApp session stored locally in `.tinyclaw/whatsapp-session/`
 - Queue files are local (no network exposure)
 - Each channel handles its own authentication
 - Claude runs with your user permissions
+
+### ⚠️ Important Note
+
+This project uses `--dangerously-skip-permissions` which bypasses Claude's permission system. The security measures above reduce risk but cannot fully prevent a determined attacker with allowlist access from crafting malicious prompts.
 
 ## 🐛 Troubleshooting
 

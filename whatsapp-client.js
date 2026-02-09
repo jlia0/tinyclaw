@@ -10,11 +10,69 @@ const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 
+// Load .env file
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+    fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
+        const match = line.match(/^([^#=]+)=(.*)$/);
+        if (match) process.env[match[1].trim()] = match[2].trim();
+    });
+}
+
 const SCRIPT_DIR = __dirname;
 const QUEUE_INCOMING = path.join(SCRIPT_DIR, '.tinyclaw/queue/incoming');
 const QUEUE_OUTGOING = path.join(SCRIPT_DIR, '.tinyclaw/queue/outgoing');
 const LOG_FILE = path.join(SCRIPT_DIR, '.tinyclaw/logs/whatsapp.log');
 const SESSION_DIR = path.join(SCRIPT_DIR, '.tinyclaw/whatsapp-session');
+const CONFIG_FILE = path.join(SCRIPT_DIR, '.tinyclaw/config.json');
+
+// Load config with defaults
+function loadConfig() {
+    const defaults = {
+        allowlistEnabled: true,
+        rateLimitEnabled: true,
+        rateLimit: { maxMessages: 10, windowMs: 60000 }
+    };
+    try {
+        if (fs.existsSync(CONFIG_FILE)) {
+            return { ...defaults, ...JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) };
+        }
+    } catch (e) {
+        log('WARN', `Failed to load config: ${e.message}`);
+    }
+    return defaults;
+}
+
+// Get allowed senders from environment variable
+function getAllowedSenders() {
+    const envValue = process.env.TINYCLAW_ALLOWED_SENDERS;
+    if (!envValue) return [];
+    return envValue.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// Rate limiting with Retry-After support
+const rateLimits = new Map();
+
+function checkRateLimit(senderId, config) {
+    if (!config.rateLimitEnabled) return { limited: false };
+
+    const now = Date.now();
+    const limit = rateLimits.get(senderId);
+    const { maxMessages, windowMs } = config.rateLimit;
+
+    if (!limit || now - limit.windowStart > windowMs) {
+        rateLimits.set(senderId, { count: 1, windowStart: now });
+        return { limited: false };
+    }
+
+    limit.count++;
+    if (limit.count > maxMessages) {
+        const retryAfterMs = windowMs - (now - limit.windowStart);
+        const retryAfterSec = Math.ceil(retryAfterMs / 1000);
+        return { limited: true, retryAfterSec };
+    }
+    return { limited: false };
+}
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), SESSION_DIR].forEach(dir => {
@@ -97,6 +155,26 @@ client.on('message_create', async (message) => {
 
         // Skip group messages
         if (chat.isGroup) {
+            return;
+        }
+
+        // Security: Load config and check allowlist
+        const config = loadConfig();
+        const allowedSenders = getAllowedSenders();
+
+        if (config.allowlistEnabled && allowedSenders.length > 0) {
+            const phoneNumber = message.from.replace('@c.us', '');
+            if (!allowedSenders.includes(phoneNumber)) {
+                log('WARN', `🚫 Blocked message from non-allowlisted sender: ${phoneNumber}`);
+                return;
+            }
+        }
+
+        // Security: Rate limiting with helpful feedback
+        const rateCheck = checkRateLimit(message.from, config);
+        if (rateCheck.limited) {
+            log('WARN', `🚫 Rate limited: ${sender} (retry in ${rateCheck.retryAfterSec}s)`);
+            await message.reply(`⏳ Slow down! Please wait ${rateCheck.retryAfterSec} seconds before sending another message.`);
             return;
         }
 
