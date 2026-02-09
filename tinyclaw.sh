@@ -84,7 +84,7 @@ start_daemon() {
         for i in {1..20}; do
             sleep 1
             # Capture the WhatsApp pane with more lines (-S for scrollback, large number for full capture)
-            QR_OUTPUT=$(tmux capture-pane -t "$TMUX_SESSION:0.0" -p -S -50 2>/dev/null)
+            QR_OUTPUT=$(tmux capture-pane -t "$TMUX_SESSION:0.0" -p -S -200 2>/dev/null)
 
             # Check if QR code is present (looks for QR pattern characters)
             if echo "$QR_OUTPUT" | grep -q "█"; then
@@ -92,7 +92,7 @@ start_daemon() {
                 sleep 2
 
                 # Capture again to get the complete QR code
-                QR_OUTPUT=$(tmux capture-pane -t "$TMUX_SESSION:0.0" -p -S -50 2>/dev/null)
+                QR_OUTPUT=$(tmux capture-pane -t "$TMUX_SESSION:0.0" -p -S -200 2>/dev/null)
 
                 clear
                 echo ""
@@ -100,8 +100,8 @@ start_daemon() {
                 echo -e "${GREEN}                    WhatsApp QR Code${NC}"
                 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
                 echo ""
-                # Filter to show only the QR code and relevant messages
-                echo "$QR_OUTPUT" | grep -A 100 "Scan" | head -60
+                # Show QR code without filtering (full capture)
+                echo "$QR_OUTPUT" | grep -v "^$" | head -80
                 echo ""
                 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
                 echo ""
