@@ -38,6 +38,13 @@ start_daemon() {
         npm install
     fi
 
+    # Build TypeScript if dist/ is missing or source is newer
+    if [ ! -d "$SCRIPT_DIR/dist" ] || [ "$(find "$SCRIPT_DIR/src" -name '*.ts' -newer "$SCRIPT_DIR/dist/queue-processor.js" 2>/dev/null)" ]; then
+        echo -e "${YELLOW}Building TypeScript...${NC}"
+        cd "$SCRIPT_DIR"
+        npm run build
+    fi
+
     # Check if WhatsApp session already exists
     SESSION_EXISTS=false
     if [ -d "$SCRIPT_DIR/.tinyclaw/whatsapp-session" ] && [ "$(ls -A $SCRIPT_DIR/.tinyclaw/whatsapp-session 2>/dev/null)" ]; then
@@ -54,10 +61,10 @@ start_daemon() {
     tmux split-window -h -t "$TMUX_SESSION:0.2" -c "$SCRIPT_DIR"
 
     # Pane 0 (top-left): WhatsApp client
-    tmux send-keys -t "$TMUX_SESSION:0.0" "cd '$SCRIPT_DIR' && node whatsapp-client.js" C-m
+    tmux send-keys -t "$TMUX_SESSION:0.0" "cd '$SCRIPT_DIR' && node dist/whatsapp-client.js" C-m
 
     # Pane 1 (top-right): Queue processor
-    tmux send-keys -t "$TMUX_SESSION:0.1" "cd '$SCRIPT_DIR' && node queue-processor.js" C-m
+    tmux send-keys -t "$TMUX_SESSION:0.1" "cd '$SCRIPT_DIR' && node dist/queue-processor.js" C-m
 
     # Pane 2 (bottom-left): Heartbeat
     tmux send-keys -t "$TMUX_SESSION:0.2" "cd '$SCRIPT_DIR' && ./heartbeat-cron.sh" C-m
