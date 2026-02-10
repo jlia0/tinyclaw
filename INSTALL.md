@@ -65,7 +65,7 @@ tar -xzf tinyclaw-bundle.tar.gz
 cd tinyclaw
 
 # Install CLI
-./install.sh
+./install/install.sh
 
 # Start
 tinyclaw start
@@ -84,7 +84,7 @@ cd tinyclaw
 npm install
 
 # Install CLI globally
-./install.sh
+./install/install.sh
 
 # Start
 tinyclaw start
@@ -142,7 +142,7 @@ To remove TinyClaw:
 ```bash
 # Remove CLI command only
 cd /path/to/tinyclaw
-./uninstall.sh
+./install/uninstall.sh
 
 # Or remove everything (CLI + installation)
 rm -rf ~/.tinyclaw

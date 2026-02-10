@@ -172,7 +172,7 @@ start_daemon() {
     if ! load_settings; then
         echo -e "${YELLOW}No configuration found. Running setup wizard...${NC}"
         echo ""
-        "$SCRIPT_DIR/setup-wizard.sh"
+        "$SCRIPT_DIR/install/setup-wizard.sh"
 
         if ! load_settings; then
             echo -e "${RED}Setup failed or was cancelled${NC}"
@@ -246,7 +246,7 @@ start_daemon() {
     pane_idx=$((pane_idx + 1))
 
     # Heartbeat pane
-    tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && ./heartbeat-cron.sh" C-m
+    tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && ./lib/heartbeat-cron.sh" C-m
     tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "Heartbeat"
     pane_idx=$((pane_idx + 1))
 
@@ -605,7 +605,7 @@ case "${1:-}" in
         tmux attach -t "$TMUX_SESSION"
         ;;
     setup)
-        "$SCRIPT_DIR/setup-wizard.sh"
+        "$SCRIPT_DIR/install/setup-wizard.sh"
         ;;
     *)
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")

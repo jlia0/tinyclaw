@@ -167,13 +167,13 @@ cd "$INSTALL_DIR"
 # Make scripts executable
 chmod +x bin/tinyclaw
 chmod +x tinyclaw.sh
-chmod +x install.sh
-chmod +x uninstall.sh
-chmod +x setup-wizard.sh
-chmod +x heartbeat-cron.sh
+chmod +x install/install.sh
+chmod +x install/uninstall.sh
+chmod +x install/setup-wizard.sh
+chmod +x lib/heartbeat-cron.sh
 
 # Run the install script
-"$INSTALL_DIR/install.sh"
+"$INSTALL_DIR/install/install.sh"
 
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"

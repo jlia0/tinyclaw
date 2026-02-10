@@ -79,7 +79,7 @@ tar -xzf tinyclaw-bundle.tar.gz
 cd tinyclaw
 
 # Install CLI globally
-./install.sh
+./install/install.sh
 ```
 
 #### Option 3: From Source
@@ -95,7 +95,7 @@ cd tinyclaw
 npm install
 
 # Install CLI globally
-./install.sh
+./install/install.sh
 ```
 
 #### Option 4: Direct Script (No CLI Install)
@@ -260,14 +260,14 @@ To remove the global CLI installation:
 
 ```bash
 cd /path/to/tinyclaw
-./uninstall.sh
+./install/uninstall.sh
 ```
 
 This only removes the CLI symlink. The TinyClaw installation directory remains intact.
 
 ## 🔧 Components
 
-### 1. setup-wizard.sh
+### 1. install/setup-wizard.sh
 
 - Interactive setup on first run
 - Configures channels (Discord/WhatsApp/Telegram)
@@ -306,7 +306,7 @@ This only removes the CLI symlink. The TinyClaw installation directory remains i
 - Waits indefinitely for Claude to finish (supports long-running agent tasks)
 - Writes responses to outgoing queue
 
-### 6. heartbeat-cron.sh
+### 6. lib/heartbeat-cron.sh
 
 - Runs every 5 minutes
 - Sends heartbeat via queue
@@ -365,9 +365,13 @@ tinyclaw/
 │   ├── telegram-client.ts   # Telegram I/O
 │   └── queue-processor.ts   # Message processing
 ├── dist/                 # TypeScript build output
-├── setup-wizard.sh       # Interactive setup
-├── tinyclaw.sh           # Main script
-└── heartbeat-cron.sh     # Health checks
+├── install/              # Installation scripts
+│   ├── setup-wizard.sh   # Interactive setup
+│   ├── install.sh        # CLI installation
+│   └── uninstall.sh      # CLI uninstallation
+├── lib/                  # Runtime helper scripts
+│   └── heartbeat-cron.sh # Health checks
+└── tinyclaw.sh           # Main script
 ```
 
 ## 🔄 Reset Conversation
@@ -676,6 +680,8 @@ cd test-install
 # Test the CLI
 tinyclaw status
 ```
+
+The bundle structure maintains the organized directory layout with `install/` and `lib/` directories.
 
 ## 🎯 Use Cases
 

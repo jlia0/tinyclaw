@@ -54,12 +54,10 @@ jobs:
           cp -r src/ "$BUNDLE_DIR/"
           cp -r dist/ "$BUNDLE_DIR/"
           cp -r node_modules/ "$BUNDLE_DIR/"
+          cp -r install/ "$BUNDLE_DIR/"
+          cp -r lib/ "$BUNDLE_DIR/"
 
           cp tinyclaw.sh "$BUNDLE_DIR/"
-          cp setup-wizard.sh "$BUNDLE_DIR/"
-          cp heartbeat-cron.sh "$BUNDLE_DIR/"
-          cp install.sh "$BUNDLE_DIR/"
-          cp uninstall.sh "$BUNDLE_DIR/"
 
           cp package.json "$BUNDLE_DIR/"
           cp package-lock.json "$BUNDLE_DIR/"
@@ -70,10 +68,10 @@ jobs:
           # Make scripts executable
           chmod +x "$BUNDLE_DIR/bin/tinyclaw"
           chmod +x "$BUNDLE_DIR/tinyclaw.sh"
-          chmod +x "$BUNDLE_DIR/setup-wizard.sh"
-          chmod +x "$BUNDLE_DIR/heartbeat-cron.sh"
-          chmod +x "$BUNDLE_DIR/install.sh"
-          chmod +x "$BUNDLE_DIR/uninstall.sh"
+          chmod +x "$BUNDLE_DIR/install/setup-wizard.sh"
+          chmod +x "$BUNDLE_DIR/install/install.sh"
+          chmod +x "$BUNDLE_DIR/install/uninstall.sh"
+          chmod +x "$BUNDLE_DIR/lib/heartbeat-cron.sh"
 
           # Create tarball
           cd "$TEMP_DIR"
@@ -106,7 +104,7 @@ jobs:
 
           1. Download \`tinyclaw-bundle.tar.gz\`
           2. Extract: \`tar -xzf tinyclaw-bundle.tar.gz\`
-          3. Install: \`cd tinyclaw && ./install.sh\`
+          3. Install: \`cd tinyclaw && ./install/install.sh\`
 
           ### What's Changed
 
