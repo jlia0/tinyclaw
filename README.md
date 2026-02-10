@@ -52,6 +52,32 @@ TinyClaw is a lightweight wrapper around [Claude Code](https://claude.com/claude
 
 ### Installation
 
+#### Option 1: CLI Tool (Recommended)
+
+Install TinyClaw as a global CLI tool that works from any directory:
+
+```bash
+cd /path/to/tinyclaw
+
+# Install dependencies
+npm install
+
+# Install CLI globally
+./install.sh
+```
+
+This creates a `tinyclaw` command you can use anywhere:
+
+```bash
+tinyclaw start
+tinyclaw status
+tinyclaw logs
+```
+
+#### Option 2: Direct Script
+
+Run TinyClaw from its installation directory:
+
 ```bash
 cd /path/to/tinyclaw
 
@@ -159,48 +185,61 @@ You'll get a response! 🤖
 
 ## 📋 Commands
 
+If installed as CLI tool, use `tinyclaw` command. Otherwise use `./tinyclaw.sh`.
+
 ```bash
 # Start TinyClaw
-./tinyclaw.sh start
+tinyclaw start
 
 # Run setup wizard (change channels/model/heartbeat)
-./tinyclaw.sh setup
+tinyclaw setup
 
 # Check status
-./tinyclaw.sh status
+tinyclaw status
 
 # Send manual message
-./tinyclaw.sh send "What's the weather?"
+tinyclaw send "What's the weather?"
 
 # Reset conversation
-./tinyclaw.sh reset
+tinyclaw reset
 
 # Reset channel authentication
-./tinyclaw.sh channels reset whatsapp  # Clear WhatsApp session
-./tinyclaw.sh channels reset discord   # Shows Discord reset instructions
-./tinyclaw.sh channels reset telegram  # Shows Telegram reset instructions
+tinyclaw channels reset whatsapp  # Clear WhatsApp session
+tinyclaw channels reset discord   # Shows Discord reset instructions
+tinyclaw channels reset telegram  # Shows Telegram reset instructions
 
 # Switch Claude model
-./tinyclaw.sh model           # Show current model
-./tinyclaw.sh model sonnet    # Switch to Sonnet (fast)
-./tinyclaw.sh model opus      # Switch to Opus (smartest)
+tinyclaw model           # Show current model
+tinyclaw model sonnet    # Switch to Sonnet (fast)
+tinyclaw model opus      # Switch to Opus (smartest)
 
 # View logs
-./tinyclaw.sh logs whatsapp   # WhatsApp activity
-./tinyclaw.sh logs discord    # Discord activity
-./tinyclaw.sh logs telegram   # Telegram activity
-./tinyclaw.sh logs queue      # Queue processing
-./tinyclaw.sh logs heartbeat  # Heartbeat checks
+tinyclaw logs whatsapp   # WhatsApp activity
+tinyclaw logs discord    # Discord activity
+tinyclaw logs telegram   # Telegram activity
+tinyclaw logs queue      # Queue processing
+tinyclaw logs heartbeat  # Heartbeat checks
 
 # Attach to tmux
-./tinyclaw.sh attach
+tinyclaw attach
 
 # Restart
-./tinyclaw.sh restart
+tinyclaw restart
 
 # Stop
-./tinyclaw.sh stop
+tinyclaw stop
 ```
+
+### Uninstall CLI
+
+To remove the global CLI installation:
+
+```bash
+cd /path/to/tinyclaw
+./uninstall.sh
+```
+
+This only removes the CLI symlink. The TinyClaw installation directory remains intact.
 
 ## 🔧 Components
 

@@ -26,7 +26,12 @@ if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
     exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Use TINYCLAW_HOME if set (for CLI wrapper), otherwise detect from script location
+if [ -n "$TINYCLAW_HOME" ]; then
+    SCRIPT_DIR="$TINYCLAW_HOME"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 TMUX_SESSION="tinyclaw"
 LOG_DIR="$SCRIPT_DIR/.tinyclaw/logs"
 SETTINGS_FILE="$SCRIPT_DIR/.tinyclaw/settings.json"
