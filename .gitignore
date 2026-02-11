@@ -17,6 +17,9 @@ dist/
 # Environment variables
 .env
 
+# Rust build output
+target/
+
 # OS files
 .DS_Store
 
