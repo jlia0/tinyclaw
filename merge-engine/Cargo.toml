@@ -1,0 +1,22 @@
+[package]
+name = "merge-engine"
+version = "0.1.0"
+edition = "2024"
+description = "A non-LLM merge conflict resolver using structured merge, Version Space Algebra, and search-based techniques"
+license = "MIT"
+
+[dependencies]
+tree-sitter = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-javascript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+thiserror = "2"
+similar = "2"
+
+[dev-dependencies]
+tempfile = "3"
