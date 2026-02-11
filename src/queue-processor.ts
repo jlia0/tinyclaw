@@ -15,12 +15,12 @@ import fs from 'fs';
 import path from 'path';
 
 const SCRIPT_DIR = path.resolve(__dirname, '..');
-const QUEUE_INCOMING = path.join(SCRIPT_DIR, '.tinyclaw/queue/incoming');
-const QUEUE_OUTGOING = path.join(SCRIPT_DIR, '.tinyclaw/queue/outgoing');
-const QUEUE_PROCESSING = path.join(SCRIPT_DIR, '.tinyclaw/queue/processing');
-const LOG_FILE = path.join(SCRIPT_DIR, '.tinyclaw/logs/queue.log');
-const RESET_FLAG = path.join(SCRIPT_DIR, '.tinyclaw/reset_flag');
-const AGENTS_DIR = path.join(SCRIPT_DIR, '.tinyclaw/agents');
+const TINYCLAW_HOME = path.join(require('os').homedir(), '.tinyclaw');
+const QUEUE_INCOMING = path.join(TINYCLAW_HOME, 'queue/incoming');
+const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
+const QUEUE_PROCESSING = path.join(TINYCLAW_HOME, 'queue/processing');
+const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/queue.log');
+const RESET_FLAG = path.join(TINYCLAW_HOME, 'reset_flag');
 const SETTINGS_FILE = path.join(SCRIPT_DIR, '.tinyclaw/settings.json');
 
 // Model name mapping
@@ -46,6 +46,10 @@ interface AgentConfig {
 }
 
 interface Settings {
+    workspace?: {
+        path?: string;
+        name?: string;
+    };
     channels?: {
         enabled?: string[];
         discord?: { bot_token?: string };
@@ -61,7 +65,8 @@ interface Settings {
             model?: string;
         };
     };
-    agents?: Record<string, AgentConfig>;
+    teams?: Record<string, AgentConfig>;
+    agents?: Record<string, AgentConfig>; // Legacy fallback
     monitoring?: {
         heartbeat_interval?: number;
     };
@@ -101,23 +106,78 @@ function getDefaultAgentFromModels(settings: Settings): AgentConfig {
     } else {
         model = settings?.models?.anthropic?.model || 'sonnet';
     }
+
+    // Get workspace path from settings or use default
+    const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
+    const defaultAgentDir = path.join(workspacePath, 'default');
+
+    // Ensure default agent directory exists with copied configs
+    if (!fs.existsSync(defaultAgentDir)) {
+        fs.mkdirSync(defaultAgentDir, { recursive: true });
+
+        // Copy .claude directory
+        const sourceClaudeDir = path.join(TINYCLAW_HOME, '.claude');
+        const targetClaudeDir = path.join(defaultAgentDir, '.claude');
+        if (fs.existsSync(sourceClaudeDir)) {
+            copyDirSync(sourceClaudeDir, targetClaudeDir);
+        }
+
+        // Copy heartbeat.md
+        const sourceHeartbeat = path.join(TINYCLAW_HOME, 'heartbeat.md');
+        const targetHeartbeat = path.join(defaultAgentDir, 'heartbeat.md');
+        if (fs.existsSync(sourceHeartbeat)) {
+            fs.copyFileSync(sourceHeartbeat, targetHeartbeat);
+        }
+
+        // Copy AGENTS.md
+        const sourceAgents = path.join(TINYCLAW_HOME, 'AGENTS.md');
+        const targetAgents = path.join(defaultAgentDir, 'AGENTS.md');
+        if (fs.existsSync(sourceAgents)) {
+            fs.copyFileSync(sourceAgents, targetAgents);
+        }
+    }
+
     return {
         name: 'Default',
         provider,
         model,
-        working_directory: SCRIPT_DIR,
+        working_directory: defaultAgentDir,
     };
 }
 
 /**
- * Get all configured agents. Falls back to a single "default" agent
- * derived from the legacy models section if no agents are configured.
+ * Recursively copy directory
+ */
+function copyDirSync(src: string, dest: string): void {
+    fs.mkdirSync(dest, { recursive: true });
+    const entries = fs.readdirSync(src, { withFileTypes: true });
+
+    for (const entry of entries) {
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+
+        if (entry.isDirectory()) {
+            copyDirSync(srcPath, destPath);
+        } else {
+            fs.copyFileSync(srcPath, destPath);
+        }
+    }
+}
+
+/**
+ * Get all configured teams. Falls back to a single "default" team
+ * derived from the legacy models section if no teams are configured.
  */
 function getAgents(settings: Settings): Record<string, AgentConfig> {
+    // Check for teams first
+    if (settings.teams && Object.keys(settings.teams).length > 0) {
+        return settings.teams;
+    }
+    // Backwards compatibility: check legacy "agents" field
     if (settings.agents && Object.keys(settings.agents).length > 0) {
         return settings.agents;
     }
-    // Backwards compatibility: build default agent from models section
+    // Fall back to default team from models section
     return { default: getDefaultAgentFromModels(settings) };
 }
 
@@ -136,10 +196,10 @@ function resolveCodexModel(model: string): string {
 }
 
 /**
- * Get the reset flag path for a specific agent.
+ * Get the reset flag path for a specific team.
  */
-function getAgentResetFlag(agentId: string): string {
-    return path.join(AGENTS_DIR, agentId, 'reset_flag');
+function getAgentResetFlag(agentId: string, workspacePath: string): string {
+    return path.join(workspacePath, agentId, 'reset_flag');
 }
 
 /**
@@ -218,7 +278,7 @@ async function runCommand(command: string, args: string[], cwd?: string): Promis
 }
 
 // Ensure directories exist
-[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, AGENTS_DIR, path.dirname(LOG_FILE)].forEach(dir => {
+[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, path.dirname(LOG_FILE)].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -272,6 +332,9 @@ async function processMessage(messageFile: string): Promise<void> {
         const settings = getSettings();
         const agents = getAgents(settings);
 
+        // Get workspace path from settings
+        const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
+
         // Route message to agent
         let agentId: string;
         let message: string;
@@ -299,26 +362,49 @@ async function processMessage(messageFile: string): Promise<void> {
         }
 
         const agent = agents[agentId];
-        log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
+        log('INFO', `Routing to team: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
 
-        // Ensure agent state directory exists
-        const agentDir = path.join(AGENTS_DIR, agentId);
-        if (!fs.existsSync(agentDir)) {
-            fs.mkdirSync(agentDir, { recursive: true });
+        // Ensure team directory exists with config files
+        const teamDir = path.join(workspacePath, agentId);
+        if (!fs.existsSync(teamDir)) {
+            fs.mkdirSync(teamDir, { recursive: true });
+
+            // Copy .claude directory
+            const sourceClaudeDir = path.join(TINYCLAW_HOME, '.claude');
+            const targetClaudeDir = path.join(teamDir, '.claude');
+            if (fs.existsSync(sourceClaudeDir)) {
+                copyDirSync(sourceClaudeDir, targetClaudeDir);
+            }
+
+            // Copy heartbeat.md
+            const sourceHeartbeat = path.join(TINYCLAW_HOME, 'heartbeat.md');
+            const targetHeartbeat = path.join(teamDir, 'heartbeat.md');
+            if (fs.existsSync(sourceHeartbeat)) {
+                fs.copyFileSync(sourceHeartbeat, targetHeartbeat);
+            }
+
+            // Copy AGENTS.md
+            const sourceAgents = path.join(TINYCLAW_HOME, 'AGENTS.md');
+            const targetAgents = path.join(teamDir, 'AGENTS.md');
+            if (fs.existsSync(sourceAgents)) {
+                fs.copyFileSync(sourceAgents, targetAgents);
+            }
+
+            log('INFO', `Initialized team directory with config files: ${teamDir}`);
         }
 
-        // Resolve working directory
+        // Resolve working directory - use team directory
         const workingDir = agent.working_directory
             ? (path.isAbsolute(agent.working_directory)
                 ? agent.working_directory
-                : path.join(SCRIPT_DIR, agent.working_directory))
-            : SCRIPT_DIR;
+                : path.join(workspacePath, agent.working_directory))
+            : teamDir;
 
         // Get system prompt
         const systemPrompt = getAgentSystemPrompt(agent);
 
-        // Check for reset (per-agent or global)
-        const agentResetFlag = getAgentResetFlag(agentId);
+        // Check for reset (per-team or global)
+        const agentResetFlag = getAgentResetFlag(agentId, workspacePath);
         const shouldReset = fs.existsSync(RESET_FLAG) || fs.existsSync(agentResetFlag);
 
         if (shouldReset) {
@@ -404,7 +490,7 @@ async function processMessage(messageFile: string): Promise<void> {
         response = response.trim();
         const outboundFilesSet = new Set<string>();
         const fileRefRegex = /\[send_file:\s*([^\]]+)\]/g;
-        let fileMatch;
+        let fileMatch: RegExpExecArray | null;
         while ((fileMatch = fileRefRegex.exec(response)) !== null) {
             const filePath = fileMatch[1].trim();
             if (fs.existsSync(filePath)) {

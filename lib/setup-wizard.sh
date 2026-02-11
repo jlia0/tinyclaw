@@ -153,43 +153,68 @@ fi
 echo -e "${GREEN}✓ Heartbeat interval: ${HEARTBEAT_INTERVAL}s${NC}"
 echo ""
 
+# Workspace configuration
+echo "Workspace name (where team directories will be stored)?"
+echo -e "${YELLOW}(Creates ~/your-workspace-name/)${NC}"
+echo ""
+read -rp "Workspace name [default: tinyclaw-workspace]: " WORKSPACE_INPUT
+WORKSPACE_NAME=${WORKSPACE_INPUT:-tinyclaw-workspace}
+# Clean workspace name
+WORKSPACE_NAME=$(echo "$WORKSPACE_NAME" | tr ' ' '-' | tr -cd 'a-zA-Z0-9_-')
+WORKSPACE_PATH="$HOME/$WORKSPACE_NAME"
+echo -e "${GREEN}✓ Workspace: $WORKSPACE_PATH${NC}"
+echo ""
+
+# Default team name
+echo "Name your default team?"
+echo -e "${YELLOW}(The main AI assistant you'll interact with)${NC}"
+echo ""
+read -rp "Default team name [default: assistant]: " DEFAULT_TEAM_INPUT
+DEFAULT_TEAM_NAME=${DEFAULT_TEAM_INPUT:-assistant}
+# Clean team name
+DEFAULT_TEAM_NAME=$(echo "$DEFAULT_TEAM_NAME" | tr ' ' '-' | tr -cd 'a-zA-Z0-9_-' | tr '[:upper:]' '[:lower:]')
+echo -e "${GREEN}✓ Default team: $DEFAULT_TEAM_NAME${NC}"
+echo ""
+
 # --- Team of Agents (optional) ---
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  Team of Agents (Optional)${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo "You can set up multiple agents with different roles, models, and working directories."
-echo "Users route messages with '@agent_id message' in chat."
+echo "Users route messages with '@team_id message' in chat."
 echo ""
-read -rp "Set up a team of agents? [y/N]: " SETUP_AGENTS
+read -rp "Set up additional teams? [y/N]: " SETUP_TEAMS
 
-AGENTS_JSON=""
-if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
-    # Create default agent from the provider/model already selected
-    echo ""
-    echo -e "${GREEN}Creating default agent from your selections above...${NC}"
-    AGENTS_JSON='"agents": {'
-    AGENTS_JSON="$AGENTS_JSON \"default\": { \"name\": \"Default\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$PROJECT_ROOT\" }"
+TEAMS_JSON=""
+# Always create the default team
+DEFAULT_TEAM_DIR="$WORKSPACE_PATH/$DEFAULT_TEAM_NAME"
+# Capitalize first letter of team name
+DEFAULT_TEAM_DISPLAY=$(echo "$DEFAULT_TEAM_NAME" | sed 's/./\U&/')
+TEAMS_JSON='"teams": {'
+TEAMS_JSON="$TEAMS_JSON \"$DEFAULT_TEAM_NAME\": { \"name\": \"$DEFAULT_TEAM_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_TEAM_DIR\" }"
 
-    # Add more agents
-    ADDING_AGENTS=true
-    while [ "$ADDING_AGENTS" = true ]; do
+if [[ "$SETUP_TEAMS" =~ ^[yY] ]]; then
+
+    # Add more teams
+    ADDING_TEAMS=true
+    while [ "$ADDING_TEAMS" = true ]; do
         echo ""
-        read -rp "Add another agent? [y/N]: " ADD_MORE
+        read -rp "Add another team? [y/N]: " ADD_MORE
         if [[ ! "$ADD_MORE" =~ ^[yY] ]]; then
-            ADDING_AGENTS=false
+            ADDING_TEAMS=false
             continue
         fi
 
-        read -rp "  Agent ID (lowercase, no spaces): " NEW_AGENT_ID
-        NEW_AGENT_ID=$(echo "$NEW_AGENT_ID" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
-        if [ -z "$NEW_AGENT_ID" ]; then
+        read -rp "  Team ID (lowercase, no spaces): " NEW_TEAM_ID
+        NEW_TEAM_ID=$(echo "$NEW_TEAM_ID" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
+        if [ -z "$NEW_TEAM_ID" ]; then
             echo -e "${RED}  Invalid ID, skipping${NC}"
             continue
         fi
 
-        read -rp "  Display name: " NEW_AGENT_NAME
-        [ -z "$NEW_AGENT_NAME" ] && NEW_AGENT_NAME="$NEW_AGENT_ID"
+        read -rp "  Display name: " NEW_TEAM_NAME
+        [ -z "$NEW_TEAM_NAME" ] && NEW_TEAM_NAME="$NEW_TEAM_ID"
 
         echo "  Provider: 1) Anthropic  2) OpenAI"
         read -rp "  Choose [1-2, default: 1]: " NEW_PROVIDER_CHOICE
@@ -214,23 +239,21 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
             esac
         fi
 
-        read -rp "  Working directory [default: $PROJECT_ROOT]: " NEW_WORKDIR
-        [ -z "$NEW_WORKDIR" ] && NEW_WORKDIR="$PROJECT_ROOT"
-        NEW_WORKDIR="${NEW_WORKDIR/#\~/$HOME}"
+        NEW_TEAM_DIR="$WORKSPACE_PATH/$NEW_TEAM_ID"
 
         read -rp "  System prompt (one line, or leave empty): " NEW_SYSPROMPT
 
-        AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_WORKDIR\""
+        TEAMS_JSON="$TEAMS_JSON, \"$NEW_TEAM_ID\": { \"name\": \"$NEW_TEAM_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_TEAM_DIR\""
         if [ -n "$NEW_SYSPROMPT" ]; then
-            AGENTS_JSON="$AGENTS_JSON, \"system_prompt\": \"$NEW_SYSPROMPT\""
+            TEAMS_JSON="$TEAMS_JSON, \"system_prompt\": \"$NEW_SYSPROMPT\""
         fi
-        AGENTS_JSON="$AGENTS_JSON }"
+        TEAMS_JSON="$TEAMS_JSON }"
 
-        echo -e "  ${GREEN}✓ Agent '${NEW_AGENT_ID}' added${NC}"
+        echo -e "  ${GREEN}✓ Team '${NEW_TEAM_ID}' added${NC}"
     done
-
-    AGENTS_JSON="$AGENTS_JSON },"
 fi
+
+TEAMS_JSON="$TEAMS_JSON },"
 
 # Build enabled channels array JSON
 CHANNELS_JSON="["
@@ -256,6 +279,10 @@ fi
 
 cat > "$SETTINGS_FILE" <<EOF
 {
+  "workspace": {
+    "path": "${WORKSPACE_PATH}",
+    "name": "${WORKSPACE_NAME}"
+  },
   "channels": {
     "enabled": ${CHANNELS_JSON},
     "discord": {
@@ -266,7 +293,7 @@ cat > "$SETTINGS_FILE" <<EOF
     },
     "whatsapp": {}
   },
-  ${AGENTS_JSON}
+  ${TEAMS_JSON}
   ${MODELS_SECTION},
   "monitoring": {
     "heartbeat_interval": ${HEARTBEAT_INTERVAL}
@@ -280,14 +307,30 @@ if command -v jq &> /dev/null; then
     jq '.' "$SETTINGS_FILE" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$SETTINGS_FILE"
 fi
 
+# Create workspace directory
+mkdir -p "$WORKSPACE_PATH"
+echo -e "${GREEN}✓ Created workspace: $WORKSPACE_PATH${NC}"
+
+# Create ~/.tinyclaw with templates
+TINYCLAW_HOME="$HOME/.tinyclaw"
+mkdir -p "$TINYCLAW_HOME"
+if [ -d "$PROJECT_ROOT/.claude" ]; then
+    cp -r "$PROJECT_ROOT/.claude" "$TINYCLAW_HOME/"
+fi
+if [ -f "$PROJECT_ROOT/.tinyclaw/heartbeat.md" ]; then
+    cp "$PROJECT_ROOT/.tinyclaw/heartbeat.md" "$TINYCLAW_HOME/"
+fi
+if [ -f "$PROJECT_ROOT/AGENTS.md" ]; then
+    cp "$PROJECT_ROOT/AGENTS.md" "$TINYCLAW_HOME/"
+fi
+echo -e "${GREEN}✓ Created ~/.tinyclaw with templates${NC}"
+
 echo -e "${GREEN}✓ Configuration saved to .tinyclaw/settings.json${NC}"
 echo ""
-if [ -n "$AGENTS_JSON" ]; then
-    echo "You can manage agents later with:"
-    echo -e "  ${GREEN}./tinyclaw.sh agent list${NC}    - List agents"
-    echo -e "  ${GREEN}./tinyclaw.sh agent add${NC}     - Add more agents"
-    echo ""
-fi
+echo "You can manage teams later with:"
+echo -e "  ${GREEN}./tinyclaw.sh team list${NC}    - List teams"
+echo -e "  ${GREEN}./tinyclaw.sh team add${NC}     - Add more teams"
+echo ""
 echo "You can now start TinyClaw:"
 echo -e "  ${GREEN}./tinyclaw.sh start${NC}"
 echo ""
