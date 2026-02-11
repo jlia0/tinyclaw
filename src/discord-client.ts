@@ -58,12 +58,31 @@ interface ResponseData {
     files?: string[];
 }
 
+function sanitizeFileName(fileName: string): string {
+    const baseName = path.basename(fileName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+    return baseName.length > 0 ? baseName : 'file.bin';
+}
+
+function buildUniqueFilePath(dir: string, preferredName: string): string {
+    const cleanName = sanitizeFileName(preferredName);
+    const ext = path.extname(cleanName);
+    const stem = path.basename(cleanName, ext);
+    let candidate = path.join(dir, cleanName);
+    let counter = 1;
+    while (fs.existsSync(candidate)) {
+        candidate = path.join(dir, `${stem}_${counter}${ext}`);
+        counter++;
+    }
+    return candidate;
+}
+
 // Download a file from URL to local path
 function downloadFile(url: string, destPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
-        const client = url.startsWith('https') ? https : http;
         const file = fs.createWriteStream(destPath);
-        client.get(url, (response) => {
+        const request = (url.startsWith('https') ? https.get(url, handleResponse) : http.get(url, handleResponse));
+
+        function handleResponse(response: http.IncomingMessage): void {
             if (response.statusCode === 301 || response.statusCode === 302) {
                 const redirectUrl = response.headers.location;
                 if (redirectUrl) {
@@ -75,7 +94,9 @@ function downloadFile(url: string, destPath: string): Promise<void> {
             }
             response.pipe(file);
             file.on('finish', () => { file.close(); resolve(); });
-        }).on('error', (err) => {
+        }
+
+        request.on('error', (err) => {
             fs.unlink(destPath, () => {});
             reject(err);
         });
@@ -168,7 +189,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
             return;
         }
 
-        const sender = message.author.displayName || message.author.username;
+        const sender = message.author.username;
 
         // Generate unique message ID
         const messageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -178,13 +199,13 @@ client.on(Events.MessageCreate, async (message: Message) => {
         if (hasAttachments) {
             for (const [, attachment] of message.attachments) {
                 try {
-                    const ext = path.extname(attachment.name || '') || '.bin';
-                    const filename = `discord_${messageId}_${Date.now()}${ext}`;
-                    const localPath = path.join(FILES_DIR, filename);
+                    const attachmentName = attachment.name || `discord_${messageId}_${Date.now()}.bin`;
+                    const filename = `discord_${messageId}_${attachmentName}`;
+                    const localPath = buildUniqueFilePath(FILES_DIR, filename);
 
                     await downloadFile(attachment.url, localPath);
                     downloadedFiles.push(localPath);
-                    log('INFO', `Downloaded attachment: ${filename} (${attachment.contentType || 'unknown'})`);
+                    log('INFO', `Downloaded attachment: ${path.basename(localPath)} (${attachment.contentType || 'unknown'})`);
                 } catch (dlErr) {
                     log('ERROR', `Failed to download attachment ${attachment.name}: ${(dlErr as Error).message}`);
                 }
@@ -292,9 +313,11 @@ async function checkOutgoingQueue(): Promise<void> {
                         const chunks = splitMessage(responseText);
 
                         // First chunk as reply, rest as follow-up messages
-                        pending.message.reply(chunks[0]);
+                        if (chunks.length > 0) {
+                            await pending.message.reply(chunks[0]!);
+                        }
                         for (let i = 1; i < chunks.length; i++) {
-                            pending.channel.send(chunks[i]);
+                            await pending.channel.send(chunks[i]!);
                         }
                     }
 

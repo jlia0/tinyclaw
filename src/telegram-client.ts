@@ -60,6 +60,31 @@ interface ResponseData {
     files?: string[];
 }
 
+function sanitizeFileName(fileName: string): string {
+    const baseName = path.basename(fileName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+    return baseName.length > 0 ? baseName : 'file.bin';
+}
+
+function ensureFileExtension(fileName: string, fallbackExt: string): string {
+    if (path.extname(fileName)) {
+        return fileName;
+    }
+    return `${fileName}${fallbackExt}`;
+}
+
+function buildUniqueFilePath(dir: string, preferredName: string): string {
+    const cleanName = sanitizeFileName(preferredName);
+    const ext = path.extname(cleanName);
+    const stem = path.basename(cleanName, ext);
+    let candidate = path.join(dir, cleanName);
+    let counter = 1;
+    while (fs.existsSync(candidate)) {
+        candidate = path.join(dir, `${stem}_${counter}${ext}`);
+        counter++;
+    }
+    return candidate;
+}
+
 // Track pending messages (waiting for response)
 const pendingMessages = new Map<string, PendingMessage>();
 
@@ -109,9 +134,10 @@ function splitMessage(text: string, maxLength = 4096): string[] {
 // Download a file from URL to local path
 function downloadFile(url: string, destPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
-        const client = url.startsWith('https') ? https : http;
         const file = fs.createWriteStream(destPath);
-        client.get(url, (response) => {
+        const request = (url.startsWith('https') ? https.get(url, handleResponse) : http.get(url, handleResponse));
+
+        function handleResponse(response: http.IncomingMessage): void {
             if (response.statusCode === 301 || response.statusCode === 302) {
                 const redirectUrl = response.headers.location;
                 if (redirectUrl) {
@@ -123,7 +149,9 @@ function downloadFile(url: string, destPath: string): Promise<void> {
             }
             response.pipe(file);
             file.on('finish', () => { file.close(); resolve(); });
-        }).on('error', (err) => {
+        }
+
+        request.on('error', (err) => {
             fs.unlink(destPath, () => {}); // Clean up on error
             reject(err);
         });
@@ -131,17 +159,20 @@ function downloadFile(url: string, destPath: string): Promise<void> {
 }
 
 // Download a Telegram file by file_id and return the local path
-async function downloadTelegramFile(fileId: string, ext: string, messageId: string): Promise<string | null> {
+async function downloadTelegramFile(fileId: string, ext: string, messageId: string, originalName?: string): Promise<string | null> {
     try {
         const file = await bot.getFile(fileId);
         if (!file.file_path) return null;
 
         const url = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-        const filename = `telegram_${messageId}_${Date.now()}${ext}`;
-        const localPath = path.join(FILES_DIR, filename);
+        const telegramPathName = path.basename(file.file_path);
+        const sourceName = originalName || telegramPathName || `file_${Date.now()}${ext}`;
+        const withExt = ensureFileExtension(sourceName, ext || '.bin');
+        const filename = `telegram_${messageId}_${withExt}`;
+        const localPath = buildUniqueFilePath(FILES_DIR, filename);
 
         await downloadFile(url, localPath);
-        log('INFO', `Downloaded file: ${filename}`);
+        log('INFO', `Downloaded file: ${path.basename(localPath)}`);
         return localPath;
     } catch (error) {
         log('ERROR', `Failed to download file: ${(error as Error).message}`);
@@ -189,7 +220,7 @@ bot.on('message', async (msg) => {
         if (msg.photo && msg.photo.length > 0) {
             // Get the largest photo (last in array)
             const photo = msg.photo[msg.photo.length - 1];
-            const filePath = await downloadTelegramFile(photo.file_id, '.jpg', queueMessageId);
+            const filePath = await downloadTelegramFile(photo.file_id, '.jpg', queueMessageId, `photo_${msg.message_id}.jpg`);
             if (filePath) downloadedFiles.push(filePath);
         }
 
@@ -198,40 +229,42 @@ bot.on('message', async (msg) => {
             const ext = msg.document.file_name
                 ? path.extname(msg.document.file_name)
                 : extFromMime(msg.document.mime_type);
-            const filePath = await downloadTelegramFile(msg.document.file_id, ext, queueMessageId);
+            const filePath = await downloadTelegramFile(msg.document.file_id, ext, queueMessageId, msg.document.file_name);
             if (filePath) downloadedFiles.push(filePath);
         }
 
         // Handle audio messages
         if (msg.audio) {
             const ext = extFromMime(msg.audio.mime_type) || '.mp3';
-            const filePath = await downloadTelegramFile(msg.audio.file_id, ext, queueMessageId);
+            const audioFileName = ('file_name' in msg.audio) ? (msg.audio as { file_name?: string }).file_name : undefined;
+            const filePath = await downloadTelegramFile(msg.audio.file_id, ext, queueMessageId, audioFileName);
             if (filePath) downloadedFiles.push(filePath);
         }
 
         // Handle voice messages
         if (msg.voice) {
-            const filePath = await downloadTelegramFile(msg.voice.file_id, '.ogg', queueMessageId);
+            const filePath = await downloadTelegramFile(msg.voice.file_id, '.ogg', queueMessageId, `voice_${msg.message_id}.ogg`);
             if (filePath) downloadedFiles.push(filePath);
         }
 
         // Handle video messages
         if (msg.video) {
             const ext = extFromMime(msg.video.mime_type) || '.mp4';
-            const filePath = await downloadTelegramFile(msg.video.file_id, ext, queueMessageId);
+            const videoFileName = ('file_name' in msg.video) ? (msg.video as { file_name?: string }).file_name : undefined;
+            const filePath = await downloadTelegramFile(msg.video.file_id, ext, queueMessageId, videoFileName);
             if (filePath) downloadedFiles.push(filePath);
         }
 
         // Handle video notes (round video messages)
         if (msg.video_note) {
-            const filePath = await downloadTelegramFile(msg.video_note.file_id, '.mp4', queueMessageId);
+            const filePath = await downloadTelegramFile(msg.video_note.file_id, '.mp4', queueMessageId, `video_note_${msg.message_id}.mp4`);
             if (filePath) downloadedFiles.push(filePath);
         }
 
         // Handle sticker
         if (msg.sticker) {
             const ext = msg.sticker.is_animated ? '.tgs' : msg.sticker.is_video ? '.webm' : '.webp';
-            const filePath = await downloadTelegramFile(msg.sticker.file_id, ext, queueMessageId);
+            const filePath = await downloadTelegramFile(msg.sticker.file_id, ext, queueMessageId, `sticker_${msg.message_id}${ext}`);
             if (filePath) downloadedFiles.push(filePath);
             if (!messageText) messageText = `[Sticker: ${msg.sticker.emoji || 'sticker'}]`;
         }
@@ -352,11 +385,13 @@ async function checkOutgoingQueue(): Promise<void> {
                         const chunks = splitMessage(responseText);
 
                         // First chunk as reply, rest as follow-up messages
-                        bot.sendMessage(pending.chatId, chunks[0], {
-                            reply_to_message_id: pending.messageId,
-                        });
+                        if (chunks.length > 0) {
+                            await bot.sendMessage(pending.chatId, chunks[0]!, {
+                                reply_to_message_id: pending.messageId,
+                            });
+                        }
                         for (let i = 1; i < chunks.length; i++) {
-                            bot.sendMessage(pending.chatId, chunks[i]);
+                            await bot.sendMessage(pending.chatId, chunks[i]!);
                         }
                     }
 
