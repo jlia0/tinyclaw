@@ -172,7 +172,7 @@ start_daemon() {
     if ! load_settings; then
         echo -e "${YELLOW}No configuration found. Running setup wizard...${NC}"
         echo ""
-        "$SCRIPT_DIR/scripts/setup-wizard.sh"
+        "$SCRIPT_DIR/lib/setup-wizard.sh"
 
         if ! load_settings; then
             echo -e "${RED}Setup failed or was cancelled${NC}"
@@ -717,7 +717,7 @@ case "${1:-}" in
         tmux attach -t "$TMUX_SESSION"
         ;;
     setup)
-        "$SCRIPT_DIR/scripts/setup-wizard.sh"
+        "$SCRIPT_DIR/lib/setup-wizard.sh"
         ;;
     *)
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")

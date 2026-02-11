@@ -286,7 +286,7 @@ This only removes the CLI symlink. The TinyClaw installation directory remains i
 
 ## 🔧 Components
 
-### 1. scripts/setup-wizard.sh
+### 1. lib/setup-wizard.sh
 
 - Interactive setup on first run
 - Configures channels (Discord/WhatsApp/Telegram)
@@ -390,9 +390,9 @@ tinyclaw/
 │   └── queue-processor.ts   # Message processing
 ├── dist/                 # TypeScript build output
 ├── lib/                  # Runtime helper scripts
+│   ├── setup-wizard.sh   # Interactive setup (first run)
 │   └── heartbeat-cron.sh # Health checks
 ├── scripts/              # Installation & build scripts
-│   ├── setup-wizard.sh   # Interactive setup
 │   ├── install.sh        # CLI installation
 │   ├── uninstall.sh      # CLI uninstallation
 │   ├── bundle.sh         # Create release bundle

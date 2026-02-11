@@ -169,7 +169,7 @@ chmod +x bin/tinyclaw
 chmod +x tinyclaw.sh
 chmod +x scripts/install.sh
 chmod +x scripts/uninstall.sh
-chmod +x scripts/setup-wizard.sh
+chmod +x lib/setup-wizard.sh
 chmod +x lib/heartbeat-cron.sh
 
 # Run the install script

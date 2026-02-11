@@ -2,7 +2,8 @@
 # TinyClaw Setup Wizard
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SETTINGS_FILE="$SCRIPT_DIR/.tinyclaw/settings.json"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SETTINGS_FILE="$PROJECT_ROOT/.tinyclaw/settings.json"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -10,7 +11,7 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-mkdir -p "$SCRIPT_DIR/.tinyclaw"
+mkdir -p "$PROJECT_ROOT/.tinyclaw"
 
 echo ""
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
