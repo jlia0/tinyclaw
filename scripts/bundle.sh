@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # TinyClaw Bundle Creator
 # Creates a distributable tarball with all dependencies pre-installed
 

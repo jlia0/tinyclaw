@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # TinyClaw CLI Installation Script
 
 set -e
