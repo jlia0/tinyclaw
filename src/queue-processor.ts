@@ -111,31 +111,8 @@ function getDefaultAgentFromModels(settings: Settings): AgentConfig {
     const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
     const defaultAgentDir = path.join(workspacePath, 'default');
 
-    // Ensure default agent directory exists with copied configs
-    if (!fs.existsSync(defaultAgentDir)) {
-        fs.mkdirSync(defaultAgentDir, { recursive: true });
-
-        // Copy .claude directory
-        const sourceClaudeDir = path.join(TINYCLAW_HOME, '.claude');
-        const targetClaudeDir = path.join(defaultAgentDir, '.claude');
-        if (fs.existsSync(sourceClaudeDir)) {
-            copyDirSync(sourceClaudeDir, targetClaudeDir);
-        }
-
-        // Copy heartbeat.md
-        const sourceHeartbeat = path.join(TINYCLAW_HOME, 'heartbeat.md');
-        const targetHeartbeat = path.join(defaultAgentDir, 'heartbeat.md');
-        if (fs.existsSync(sourceHeartbeat)) {
-            fs.copyFileSync(sourceHeartbeat, targetHeartbeat);
-        }
-
-        // Copy AGENTS.md
-        const sourceAgents = path.join(TINYCLAW_HOME, 'AGENTS.md');
-        const targetAgents = path.join(defaultAgentDir, 'AGENTS.md');
-        if (fs.existsSync(sourceAgents)) {
-            fs.copyFileSync(sourceAgents, targetAgents);
-        }
-    }
+    // Ensure default team directory exists with copied configs
+    ensureTeamDirectory(defaultAgentDir);
 
     return {
         name: 'Default',
@@ -161,6 +138,39 @@ function copyDirSync(src: string, dest: string): void {
         } else {
             fs.copyFileSync(srcPath, destPath);
         }
+    }
+}
+
+/**
+ * Ensure team directory exists with template files copied from TINYCLAW_HOME.
+ * Creates directory if it doesn't exist and copies .claude/, heartbeat.md, and AGENTS.md.
+ */
+function ensureTeamDirectory(teamDir: string): void {
+    if (fs.existsSync(teamDir)) {
+        return; // Directory already exists
+    }
+
+    fs.mkdirSync(teamDir, { recursive: true });
+
+    // Copy .claude directory
+    const sourceClaudeDir = path.join(TINYCLAW_HOME, '.claude');
+    const targetClaudeDir = path.join(teamDir, '.claude');
+    if (fs.existsSync(sourceClaudeDir)) {
+        copyDirSync(sourceClaudeDir, targetClaudeDir);
+    }
+
+    // Copy heartbeat.md
+    const sourceHeartbeat = path.join(TINYCLAW_HOME, 'heartbeat.md');
+    const targetHeartbeat = path.join(teamDir, 'heartbeat.md');
+    if (fs.existsSync(sourceHeartbeat)) {
+        fs.copyFileSync(sourceHeartbeat, targetHeartbeat);
+    }
+
+    // Copy AGENTS.md
+    const sourceAgents = path.join(TINYCLAW_HOME, 'AGENTS.md');
+    const targetAgents = path.join(teamDir, 'AGENTS.md');
+    if (fs.existsSync(sourceAgents)) {
+        fs.copyFileSync(sourceAgents, targetAgents);
     }
 }
 
@@ -366,30 +376,9 @@ async function processMessage(messageFile: string): Promise<void> {
 
         // Ensure team directory exists with config files
         const teamDir = path.join(workspacePath, agentId);
-        if (!fs.existsSync(teamDir)) {
-            fs.mkdirSync(teamDir, { recursive: true });
-
-            // Copy .claude directory
-            const sourceClaudeDir = path.join(TINYCLAW_HOME, '.claude');
-            const targetClaudeDir = path.join(teamDir, '.claude');
-            if (fs.existsSync(sourceClaudeDir)) {
-                copyDirSync(sourceClaudeDir, targetClaudeDir);
-            }
-
-            // Copy heartbeat.md
-            const sourceHeartbeat = path.join(TINYCLAW_HOME, 'heartbeat.md');
-            const targetHeartbeat = path.join(teamDir, 'heartbeat.md');
-            if (fs.existsSync(sourceHeartbeat)) {
-                fs.copyFileSync(sourceHeartbeat, targetHeartbeat);
-            }
-
-            // Copy AGENTS.md
-            const sourceAgents = path.join(TINYCLAW_HOME, 'AGENTS.md');
-            const targetAgents = path.join(teamDir, 'AGENTS.md');
-            if (fs.existsSync(sourceAgents)) {
-                fs.copyFileSync(sourceAgents, targetAgents);
-            }
-
+        const isNewTeam = !fs.existsSync(teamDir);
+        ensureTeamDirectory(teamDir);
+        if (isNewTeam) {
             log('INFO', `Initialized team directory with config files: ${teamDir}`);
         }
 

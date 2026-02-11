@@ -822,8 +822,8 @@ team_remove() {
     jq --arg id "$team_id" 'del(.teams[$id])' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
 
     # Clean up team state directory
-    if [ -d "$TEAMS_DIR/$agent_id" ]; then
-        rm -rf "$TEAMS_DIR/$agent_id"
+    if [ -d "$TEAMS_DIR/$team_id" ]; then
+        rm -rf "$TEAMS_DIR/$team_id"
     fi
 
     echo -e "${GREEN}✓ Team '${team_id}' removed.${NC}"
@@ -846,8 +846,8 @@ team_reset() {
         exit 1
     fi
 
-    mkdir -p "$TEAMS_DIR/$agent_id"
-    touch "$TEAMS_DIR/$agent_id/reset_flag"
+    mkdir -p "$TEAMS_DIR/$team_id"
+    touch "$TEAMS_DIR/$team_id/reset_flag"
 
     local agent_name
     agent_name=$(jq -r ".teams.\"${team_id}\".name" "$SETTINGS_FILE" 2>/dev/null)

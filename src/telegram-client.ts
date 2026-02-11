@@ -98,27 +98,27 @@ function log(level: string, message: string): void {
     fs.appendFileSync(LOG_FILE, logMessage);
 }
 
-// Load agents from settings for /agents command
+// Load teams from settings for /agents command
 function getAgentListText(): string {
     try {
         const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
         const settings = JSON.parse(settingsData);
-        const agents = settings.agents;
-        if (!agents || Object.keys(agents).length === 0) {
-            return 'No agents configured. Using default single-agent mode.\n\nConfigure agents in .tinyclaw/settings.json or run: tinyclaw agent add';
+        const teams = settings.teams;
+        if (!teams || Object.keys(teams).length === 0) {
+            return 'No teams configured. Using default single-agent mode.\n\nConfigure teams in .tinyclaw/settings.json or run: tinyclaw team add';
         }
-        let text = 'Available Agents:\n';
-        for (const [id, agent] of Object.entries(agents) as [string, any][]) {
-            text += `\n@${id} - ${agent.name}`;
-            text += `\n  Provider: ${agent.provider}/${agent.model}`;
-            text += `\n  Directory: ${agent.working_directory}`;
-            if (agent.system_prompt) text += `\n  Has custom system prompt`;
-            if (agent.prompt_file) text += `\n  Prompt file: ${agent.prompt_file}`;
+        let text = 'Available Teams:\n';
+        for (const [id, team] of Object.entries(teams) as [string, any][]) {
+            text += `\n@${id} - ${team.name}`;
+            text += `\n  Provider: ${team.provider}/${team.model}`;
+            text += `\n  Directory: ${team.working_directory}`;
+            if (team.system_prompt) text += `\n  Has custom system prompt`;
+            if (team.prompt_file) text += `\n  Prompt file: ${team.prompt_file}`;
         }
-        text += '\n\nUsage: Start your message with @agent_id to route to a specific agent.';
+        text += '\n\nUsage: Start your message with @team_id to route to a specific team.';
         return text;
     } catch {
-        return 'Could not load agent configuration.';
+        return 'Could not load team configuration.';
     }
 }
 
@@ -307,9 +307,9 @@ bot.on('message', async (msg: TelegramBot.Message) => {
 
         log('INFO', `Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
 
-        // Check for agents list command
-        if (msg.text && msg.text.trim().match(/^[!/]agents$/i)) {
-            log('INFO', 'Agents list command received');
+        // Check for teams list command
+        if (msg.text && msg.text.trim().match(/^[!/]team$/i)) {
+            log('INFO', 'Teams list command received');
             const agentList = getAgentListText();
             await bot.sendMessage(msg.chat.id, agentList, {
                 reply_to_message_id: msg.message_id,
