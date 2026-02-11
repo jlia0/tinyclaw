@@ -41,8 +41,6 @@ interface AgentConfig {
     provider: string;       // 'anthropic' or 'openai'
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
-    system_prompt?: string;  // inline system prompt text
-    prompt_file?: string;    // path to a file with system prompt
 }
 
 interface Settings {
@@ -212,22 +210,6 @@ function getAgentResetFlag(agentId: string, workspacePath: string): string {
     return path.join(workspacePath, agentId, 'reset_flag');
 }
 
-/**
- * Load the system prompt for an agent. Checks prompt_file first, then system_prompt.
- */
-function getAgentSystemPrompt(agent: AgentConfig): string {
-    if (agent.prompt_file) {
-        try {
-            const resolved = path.isAbsolute(agent.prompt_file)
-                ? agent.prompt_file
-                : path.join(SCRIPT_DIR, agent.prompt_file);
-            return fs.readFileSync(resolved, 'utf8').trim();
-        } catch {
-            // Fall through to inline prompt
-        }
-    }
-    return agent.system_prompt || '';
-}
 
 /**
  * Parse @agent_id prefix from a message.
@@ -389,9 +371,6 @@ async function processMessage(messageFile: string): Promise<void> {
                 : path.join(workspacePath, agent.working_directory))
             : teamDir;
 
-        // Get system prompt
-        const systemPrompt = getAgentSystemPrompt(agent);
-
         // Check for reset (per-team or global)
         const agentResetFlag = getAgentResetFlag(agentId, workspacePath);
         const shouldReset = fs.existsSync(RESET_FLAG) || fs.existsSync(agentResetFlag);
@@ -459,9 +438,6 @@ async function processMessage(messageFile: string): Promise<void> {
                 const claudeArgs = ['--dangerously-skip-permissions'];
                 if (modelId) {
                     claudeArgs.push('--model', modelId);
-                }
-                if (systemPrompt) {
-                    claudeArgs.push('--system-prompt', systemPrompt);
                 }
                 if (continueConversation) {
                     claudeArgs.push('-c');
@@ -542,6 +518,31 @@ interface QueueFile {
     time: number;
 }
 
+// Per-team processing chains - ensures messages to same team are sequential
+const teamProcessingChains = new Map<string, Promise<void>>();
+
+/**
+ * Peek at a message file to determine which team it's routed to
+ */
+function peekTeamId(filePath: string): string {
+    try {
+        const messageData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const settings = getSettings();
+        const agents = getAgents(settings);
+
+        // Check for pre-routed agent
+        if (messageData.agent && agents[messageData.agent]) {
+            return messageData.agent;
+        }
+
+        // Parse @team_id prefix
+        const routing = parseAgentRouting(messageData.message || '', agents);
+        return routing.agentId || 'default';
+    } catch {
+        return 'default';
+    }
+}
+
 // Main processing loop
 async function processQueue(): Promise<void> {
     try {
@@ -558,9 +559,30 @@ async function processQueue(): Promise<void> {
         if (files.length > 0) {
             log('DEBUG', `Found ${files.length} message(s) in queue`);
 
-            // Process one at a time
+            // Process messages in parallel by team (sequential within each team)
             for (const file of files) {
-                await processMessage(file.path);
+                // Determine target team
+                const teamId = peekTeamId(file.path);
+
+                // Get or create promise chain for this team
+                const currentChain = teamProcessingChains.get(teamId) || Promise.resolve();
+
+                // Chain this message to the team's promise
+                const newChain = currentChain
+                    .then(() => processMessage(file.path))
+                    .catch(error => {
+                        log('ERROR', `Error processing message for team ${teamId}: ${error.message}`);
+                    });
+
+                // Update the chain
+                teamProcessingChains.set(teamId, newChain);
+
+                // Clean up completed chains to avoid memory leaks
+                newChain.finally(() => {
+                    if (teamProcessingChains.get(teamId) === newChain) {
+                        teamProcessingChains.delete(teamId);
+                    }
+                });
             }
         }
     } catch (error) {
