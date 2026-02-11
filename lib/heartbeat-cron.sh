@@ -2,10 +2,12 @@
 # Heartbeat - Periodically prompts Claude via queue system
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HEARTBEAT_FILE="$SCRIPT_DIR/.tinyclaw/heartbeat.md"
-LOG_FILE="$SCRIPT_DIR/.tinyclaw/logs/heartbeat.log"
-QUEUE_INCOMING="$SCRIPT_DIR/.tinyclaw/queue/incoming"
-SETTINGS_FILE="$SCRIPT_DIR/.tinyclaw/settings.json"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+HEARTBEAT_FILE="$PROJECT_ROOT/.tinyclaw/heartbeat.md"
+LOG_FILE="$PROJECT_ROOT/.tinyclaw/logs/heartbeat.log"
+QUEUE_INCOMING="$PROJECT_ROOT/.tinyclaw/queue/incoming"
+QUEUE_OUTGOING="$PROJECT_ROOT/.tinyclaw/queue/outgoing"
+SETTINGS_FILE="$PROJECT_ROOT/.tinyclaw/settings.json"
 
 # Read interval from settings.json, default to 3600
 if [ -f "$SETTINGS_FILE" ]; then
@@ -15,7 +17,7 @@ if [ -f "$SETTINGS_FILE" ]; then
 fi
 INTERVAL=${INTERVAL:-3600}
 
-mkdir -p "$QUEUE_INCOMING"
+mkdir -p "$(dirname "$LOG_FILE")" "$QUEUE_INCOMING" "$QUEUE_OUTGOING"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
@@ -56,7 +58,7 @@ EOF
     sleep 10
 
     # Check for response (optional logging)
-    RESPONSE_FILE="$SCRIPT_DIR/.tinyclaw/queue/outgoing/${MESSAGE_ID}.json"
+    RESPONSE_FILE="$QUEUE_OUTGOING/${MESSAGE_ID}.json"
     if [ -f "$RESPONSE_FILE" ]; then
         RESPONSE=$(cat "$RESPONSE_FILE" | jq -r '.message' 2>/dev/null || echo "")
         if [ -n "$RESPONSE" ]; then

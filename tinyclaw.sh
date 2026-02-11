@@ -357,6 +357,26 @@ stop_daemon() {
     log "Daemon stopped"
 }
 
+# Restart daemon safely even when called from inside TinyClaw's tmux session
+restart_daemon() {
+    if session_exists && [ -n "${TMUX:-}" ]; then
+        local current_session
+        current_session=$(tmux display-message -p '#S' 2>/dev/null || true)
+        if [ "$current_session" = "$TMUX_SESSION" ]; then
+            local bash_bin
+            bash_bin=$(command -v bash)
+            log "Restart requested from inside tmux session; scheduling detached restart..."
+            nohup "$bash_bin" "$SCRIPT_DIR/tinyclaw.sh" __delayed_start >/dev/null 2>&1 &
+            stop_daemon
+            return
+        fi
+    fi
+
+    stop_daemon
+    sleep 2
+    start_daemon
+}
+
 # Send message to Claude and get response
 send_message() {
     local message="$1"
@@ -832,7 +852,9 @@ case "${1:-}" in
         stop_daemon
         ;;
     restart)
-        stop_daemon
+        restart_daemon
+        ;;
+    __delayed_start)
         sleep 2
         start_daemon
         ;;

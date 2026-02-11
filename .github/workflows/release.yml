@@ -6,6 +6,9 @@ on:
       - 'v*.*.*'  # Trigger on version tags like v1.0.0
   workflow_dispatch:  # Allow manual trigger
 
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
@@ -31,14 +34,15 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
-      - name: Install production dependencies
+      - name: Install dependencies
         run: |
-          PUPPETEER_SKIP_DOWNLOAD=true npm install --production
-        env:
-          NODE_ENV: production
+          PUPPETEER_SKIP_DOWNLOAD=true npm ci --include=dev
 
       - name: Build TypeScript
         run: npm run build
+
+      - name: Prune development dependencies
+        run: npm prune --omit=dev
 
       - name: Create bundle tarball
         run: |

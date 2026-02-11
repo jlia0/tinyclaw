@@ -1,8 +1,7 @@
 {
   "name": "tinyclaw",
-  "version": "1.0.0",
-  "description": "TinyClaw with WhatsApp, Discord, and Telegram integration",
-  "main": "dist/whatsapp-client.js",
+  "version": "0.0.1",
+  "description": "TinyClaw is a tiny agent that acts as your 24/7 personal assistant",
   "scripts": {
     "build": "tsc",
     "whatsapp": "node dist/whatsapp-client.js",

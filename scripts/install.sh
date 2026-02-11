@@ -4,7 +4,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WRAPPER="$SCRIPT_DIR/bin/tinyclaw"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WRAPPER="$PROJECT_ROOT/bin/tinyclaw"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'

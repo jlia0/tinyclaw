@@ -49,10 +49,10 @@ rm -rf .wwebjs_cache/
 echo -e "${GREEN}✓ Cleaned${NC}"
 echo ""
 
-# Step 2: Install production dependencies
-echo -e "${BLUE}[2/5] Installing production dependencies...${NC}"
+# Step 2: Install dependencies for build
+echo -e "${BLUE}[2/5] Installing dependencies...${NC}"
 echo "This may take a few minutes..."
-PUPPETEER_SKIP_DOWNLOAD=true npm install --production --silent
+PUPPETEER_SKIP_DOWNLOAD=true npm install --silent
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
@@ -64,6 +64,10 @@ echo ""
 
 # Step 4: Create bundle directory
 echo -e "${BLUE}[4/5] Creating bundle...${NC}"
+
+# Keep runtime bundle lean: remove development-only dependencies after build.
+npm prune --omit=dev --silent
+
 mkdir -p "$BUNDLE_DIR"
 
 # Copy necessary files

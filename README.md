@@ -64,6 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/jlia0/tinyclaw/main/scripts/remote-
 ```
 
 This automatically:
+
 - Downloads pre-built bundle (no npm install needed)
 - Installs to `~/.tinyclaw`
 - Creates global `tinyclaw` command
@@ -330,7 +331,7 @@ This only removes the CLI symlink. The TinyClaw installation directory remains i
 
 ### 6. lib/heartbeat-cron.sh
 
-- Runs every 5 minutes
+- Runs every 60 minutes
 - Sends heartbeat via queue
 - Keeps conversation active
 
@@ -421,6 +422,7 @@ Next message starts fresh (no conversation history).
 All configuration is stored in `.tinyclaw/settings.json`:
 
 **Anthropic (Claude) example:**
+
 ```json
 {
   "channels": {
@@ -446,6 +448,7 @@ All configuration is stored in `.tinyclaw/settings.json`:
 ```
 
 **OpenAI (Codex CLI) example:**
+
 ```json
 {
   "channels": {
@@ -569,11 +572,13 @@ Queue processor handles all channels automatically!
 ### ✅ Multiple AI Providers
 
 **Anthropic Claude:**
+
 - Sonnet (fast, recommended)
 - Opus (smartest)
 - Uses `claude -c -p` CLI for conversation continuity
 
 **OpenAI Codex:**
+
 - GPT-5.3 Codex (recommended)
 - GPT-5.2
 - Uses `codex exec resume --last` for conversation continuity
@@ -581,6 +586,7 @@ Queue processor handles all channels automatically!
 - Requires Codex CLI to be installed and authenticated
 
 Switch providers and models in one command:
+
 ```bash
 # One-step command (recommended)
 ./tinyclaw.sh provider openai --model gpt-5.3-codex
@@ -723,6 +729,7 @@ For maintainers creating releases:
 ```
 
 This creates `tinyclaw-bundle-{version}.tar.gz` with:
+
 - All source code
 - Pre-installed `node_modules/` (production only)
 - Compiled TypeScript (dist/)
@@ -733,6 +740,7 @@ Upload this bundle to GitHub Releases, and the remote installer will automatical
 ### Automated Releases
 
 The project includes a GitHub Actions workflow that automatically:
+
 1. Builds the bundle when you push a version tag
 2. Creates a GitHub Release
 3. Uploads the bundle as a release asset

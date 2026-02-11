@@ -5,7 +5,7 @@
  * Does NOT call Claude directly - that's handled by queue-processor
  */
 
-import { Client, LocalAuth, Message, Chat } from 'whatsapp-web.js';
+import { Client, LocalAuth, Message, Chat, MessageMedia, MessageTypes } from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
 import fs from 'fs';
 import path from 'path';
@@ -16,9 +16,10 @@ const QUEUE_OUTGOING = path.join(SCRIPT_DIR, '.tinyclaw/queue/outgoing');
 const LOG_FILE = path.join(SCRIPT_DIR, '.tinyclaw/logs/whatsapp.log');
 const SESSION_DIR = path.join(SCRIPT_DIR, '.tinyclaw/whatsapp-session');
 const SETTINGS_FILE = path.join(SCRIPT_DIR, '.tinyclaw/settings.json');
+const FILES_DIR = path.join(SCRIPT_DIR, '.tinyclaw/files');
 
 // Ensure directories exist
-[QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), SESSION_DIR].forEach(dir => {
+[QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), SESSION_DIR, FILES_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -37,6 +38,7 @@ interface QueueData {
     message: string;
     timestamp: number;
     messageId: string;
+    files?: string[];
 }
 
 interface ResponseData {
@@ -46,10 +48,59 @@ interface ResponseData {
     originalMessage: string;
     timestamp: number;
     messageId: string;
+    files?: string[];
+}
+
+// Media message types that we can download
+const MEDIA_TYPES: string[] = [
+    MessageTypes.IMAGE,
+    MessageTypes.AUDIO,
+    MessageTypes.VOICE,
+    MessageTypes.VIDEO,
+    MessageTypes.DOCUMENT,
+    MessageTypes.STICKER,
+];
+
+// Get file extension from mime type
+function extFromMime(mime?: string): string {
+    if (!mime) return '.bin';
+    const map: Record<string, string> = {
+        'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
+        'image/webp': '.webp', 'audio/ogg': '.ogg', 'audio/mpeg': '.mp3',
+        'audio/mp4': '.m4a', 'video/mp4': '.mp4', 'application/pdf': '.pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+        'text/plain': '.txt',
+    };
+    return map[mime] || `.${mime.split('/')[1] || 'bin'}`;
+}
+
+// Download media from a WhatsApp message and save to FILES_DIR
+async function downloadWhatsAppMedia(message: Message, queueMessageId: string): Promise<string | null> {
+    try {
+        const media = await message.downloadMedia();
+        if (!media || !media.data) return null;
+
+        const ext = message.type === MessageTypes.DOCUMENT && (message as any)._data?.filename
+            ? path.extname((message as any)._data.filename)
+            : extFromMime(media.mimetype);
+
+        const filename = `whatsapp_${queueMessageId}_${Date.now()}${ext}`;
+        const localPath = path.join(FILES_DIR, filename);
+
+        // Write base64 data to file
+        fs.writeFileSync(localPath, Buffer.from(media.data, 'base64'));
+        log('INFO', `Downloaded media: ${filename} (${media.mimetype})`);
+        return localPath;
+    } catch (error) {
+        log('ERROR', `Failed to download media: ${(error as Error).message}`);
+        return null;
+    }
 }
 
 // Track pending messages (waiting for response)
 const pendingMessages = new Map<string, PendingMessage>();
+let processingOutgoingQueue = false;
 
 // Logger
 function log(level: string, message: string): void {
@@ -116,7 +167,7 @@ client.on('qr', (qr: string) => {
         fs.mkdirSync(channelsDir, { recursive: true });
     }
     const qrFile = path.join(channelsDir, 'whatsapp_qr.txt');
-    qrcode.generate(qr, { small: true }, (code) => {
+    qrcode.generate(qr, { small: true }, (code: string) => {
         fs.writeFileSync(qrFile, code);
         log('INFO', 'QR code saved to .tinyclaw/channels/whatsapp_qr.txt');
     });
@@ -148,15 +199,17 @@ client.on('message_create', async (message: Message) => {
             return;
         }
 
-        // Skip non-chat messages
-        if (message.type !== 'chat') {
+        // Check if message has downloadable media
+        const hasMedia = message.hasMedia && MEDIA_TYPES.includes(message.type);
+        const isChat = message.type === 'chat';
+
+        // Skip messages that are neither chat nor media
+        if (!isChat && !hasMedia) {
             return;
         }
 
-        // Skip empty messages
-        if (!message.body || message.body.trim().length === 0) {
-            return;
-        }
+        let messageText = message.body || '';
+        const downloadedFiles: string[] = [];
 
         const chat = await message.getChat();
         const contact = await message.getContact();
@@ -167,7 +220,27 @@ client.on('message_create', async (message: Message) => {
             return;
         }
 
-        log('INFO', `📱 Message from ${sender}: ${message.body.substring(0, 50)}...`);
+        // Generate unique message ID
+        const messageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+        // Download media if present
+        if (hasMedia) {
+            const filePath = await downloadWhatsAppMedia(message, messageId);
+            if (filePath) {
+                downloadedFiles.push(filePath);
+            }
+            // Add context for stickers
+            if (message.type === MessageTypes.STICKER && !messageText) {
+                messageText = '[Sticker]';
+            }
+        }
+
+        // Skip if no text and no media
+        if ((!messageText || messageText.trim().length === 0) && downloadedFiles.length === 0) {
+            return;
+        }
+
+        log('INFO', `📱 Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
 
         // Check for agents list command
         if (message.body.trim().match(/^[!/]agents$/i)) {
@@ -178,7 +251,7 @@ client.on('message_create', async (message: Message) => {
         }
 
         // Check for reset command
-        if (message.body.trim().match(/^[!/]reset$/i)) {
+        if (messageText.trim().match(/^[!/]reset$/i)) {
             log('INFO', '🔄 Reset command received');
 
             // Create reset flag
@@ -186,24 +259,29 @@ client.on('message_create', async (message: Message) => {
             fs.writeFileSync(resetFlagPath, 'reset');
 
             // Reply immediately
-            await message.reply('✅ Conversation reset! Next message will start a fresh conversation.');
+            await message.reply('Conversation reset! Next message will start a fresh conversation.');
             return;
         }
 
         // Show typing indicator
         await chat.sendStateTyping();
 
-        // Generate unique message ID
-        const messageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        // Build message text with file references
+        let fullMessage = messageText;
+        if (downloadedFiles.length > 0) {
+            const fileRefs = downloadedFiles.map(f => `[file: ${f}]`).join('\n');
+            fullMessage = fullMessage ? `${fullMessage}\n\n${fileRefs}` : fileRefs;
+        }
 
         // Write to incoming queue
         const queueData: QueueData = {
             channel: 'whatsapp',
             sender: sender,
             senderId: message.from,
-            message: message.body,
+            message: fullMessage,
             timestamp: Date.now(),
-            messageId: messageId
+            messageId: messageId,
+            files: downloadedFiles.length > 0 ? downloadedFiles : undefined,
         };
 
         const queueFile = path.join(QUEUE_INCOMING, `whatsapp_${messageId}.json`);
@@ -218,10 +296,10 @@ client.on('message_create', async (message: Message) => {
             timestamp: Date.now()
         });
 
-        // Clean up old pending messages (older than 5 minutes)
-        const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+        // Clean up old pending messages (older than 10 minutes)
+        const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
         for (const [id, data] of pendingMessages.entries()) {
-            if (data.timestamp < fiveMinutesAgo) {
+            if (data.timestamp < tenMinutesAgo) {
                 pendingMessages.delete(id);
             }
         }
@@ -232,7 +310,13 @@ client.on('message_create', async (message: Message) => {
 });
 
 // Watch for responses in outgoing queue
-function checkOutgoingQueue(): void {
+async function checkOutgoingQueue(): Promise<void> {
+    if (processingOutgoingQueue) {
+        return;
+    }
+
+    processingOutgoingQueue = true;
+
     try {
         const files = fs.readdirSync(QUEUE_OUTGOING)
             .filter(f => f.startsWith('whatsapp_') && f.endsWith('.json'));
@@ -247,9 +331,25 @@ function checkOutgoingQueue(): void {
                 // Find pending message
                 const pending = pendingMessages.get(messageId);
                 if (pending) {
-                    // Send response
-                    pending.message.reply(responseText);
-                    log('INFO', `✓ Sent response to ${sender} (${responseText.length} chars)`);
+                    // Send any attached files first
+                    if (responseData.files && responseData.files.length > 0) {
+                        for (const file of responseData.files) {
+                            try {
+                                if (!fs.existsSync(file)) continue;
+                                const media = MessageMedia.fromFilePath(file);
+                                await pending.chat.sendMessage(media);
+                                log('INFO', `Sent file to WhatsApp: ${path.basename(file)}`);
+                            } catch (fileErr) {
+                                log('ERROR', `Failed to send file ${file}: ${(fileErr as Error).message}`);
+                            }
+                        }
+                    }
+
+                    // Send text response
+                    if (responseText) {
+                        pending.message.reply(responseText);
+                    }
+                    log('INFO', `✓ Sent response to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
 
                     // Clean up
                     pendingMessages.delete(messageId);
@@ -266,6 +366,8 @@ function checkOutgoingQueue(): void {
         }
     } catch (error) {
         log('ERROR', `Outgoing queue error: ${(error as Error).message}`);
+    } finally {
+        processingOutgoingQueue = false;
     }
 }
 

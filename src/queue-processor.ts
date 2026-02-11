@@ -232,6 +232,7 @@ interface MessageData {
     timestamp: number;
     messageId: string;
     agent?: string; // optional: pre-routed agent id from channel client
+    files?: string[];
 }
 
 interface ResponseData {
@@ -242,6 +243,7 @@ interface ResponseData {
     timestamp: number;
     messageId: string;
     agent?: string; // which agent handled this
+    files?: string[];
 }
 
 // Logger
@@ -398,10 +400,25 @@ async function processMessage(messageFile: string): Promise<void> {
             response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
         }
 
-        // Clean response
+        // Detect file references in the response: [send_file: /path/to/file]
         response = response.trim();
+        const outboundFilesSet = new Set<string>();
+        const fileRefRegex = /\[send_file:\s*([^\]]+)\]/g;
+        let fileMatch;
+        while ((fileMatch = fileRefRegex.exec(response)) !== null) {
+            const filePath = fileMatch[1].trim();
+            if (fs.existsSync(filePath)) {
+                outboundFilesSet.add(filePath);
+            }
+        }
+        const outboundFiles = Array.from(outboundFilesSet);
 
-        // Limit response length
+        // Remove the [send_file: ...] tags from the response text
+        if (outboundFiles.length > 0) {
+            response = response.replace(fileRefRegex, '').trim();
+        }
+
+        // Limit response length after tags are parsed and removed
         if (response.length > 4000) {
             response = response.substring(0, 3900) + '\n\n[Response truncated...]';
         }
@@ -415,6 +432,7 @@ async function processMessage(messageFile: string): Promise<void> {
             timestamp: Date.now(),
             messageId,
             agent: agentId,
+            files: outboundFiles.length > 0 ? outboundFiles : undefined,
         };
 
         // For heartbeat messages, write to a separate location (they handle their own responses)

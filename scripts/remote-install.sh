@@ -148,10 +148,13 @@ if [ "$USE_BUNDLE" = false ]; then
     cd "$INSTALL_DIR"
 
     echo "Running npm install (this may take a few minutes)..."
-    PUPPETEER_SKIP_DOWNLOAD=true npm install --production --silent
+    PUPPETEER_SKIP_DOWNLOAD=true npm install --silent
 
     echo "Building TypeScript..."
     npm run build --silent
+
+    echo "Pruning development dependencies..."
+    npm prune --omit=dev --silent
 
     echo -e "${GREEN}✓ Dependencies installed${NC}"
     echo ""
