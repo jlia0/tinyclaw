@@ -1,0 +1,13 @@
+[package]
+name = "tinyclaw-channel-discord"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tinyclaw-core = { path = "../tinyclaw-core" }
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+dashmap = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
