@@ -171,8 +171,8 @@ team_add() {
     fi
 
     # Copy heartbeat.md
-    if [ -f "$SCRIPT_DIR/.tinyclaw/heartbeat.md" ]; then
-        cp "$SCRIPT_DIR/.tinyclaw/heartbeat.md" "$TEAMS_DIR/$TEAM_ID/"
+    if [ -f "$SCRIPT_DIR/heartbeat.md" ]; then
+        cp "$SCRIPT_DIR/heartbeat.md" "$TEAMS_DIR/$TEAM_ID/"
         echo "  → Copied heartbeat.md to team directory"
     fi
 

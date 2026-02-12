@@ -243,13 +243,7 @@ if [[ "$SETUP_TEAMS" =~ ^[yY] ]]; then
 
         NEW_TEAM_DIR="$WORKSPACE_PATH/$NEW_TEAM_ID"
 
-        read -rp "  System prompt (one line, or leave empty): " NEW_SYSPROMPT
-
-        TEAMS_JSON="$TEAMS_JSON, \"$NEW_TEAM_ID\": { \"name\": \"$NEW_TEAM_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_TEAM_DIR\""
-        if [ -n "$NEW_SYSPROMPT" ]; then
-            TEAMS_JSON="$TEAMS_JSON, \"system_prompt\": \"$NEW_SYSPROMPT\""
-        fi
-        TEAMS_JSON="$TEAMS_JSON }"
+        TEAMS_JSON="$TEAMS_JSON, \"$NEW_TEAM_ID\": { \"name\": \"$NEW_TEAM_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_TEAM_DIR\" }"
 
         # Track this team for directory creation later
         ADDITIONAL_TEAMS+=("$NEW_TEAM_ID")
@@ -323,8 +317,8 @@ mkdir -p "$TINYCLAW_HOME/logs"
 if [ -d "$PROJECT_ROOT/.claude" ]; then
     cp -r "$PROJECT_ROOT/.claude" "$TINYCLAW_HOME/"
 fi
-if [ -f "$PROJECT_ROOT/.tinyclaw/heartbeat.md" ]; then
-    cp "$PROJECT_ROOT/.tinyclaw/heartbeat.md" "$TINYCLAW_HOME/"
+if [ -f "$PROJECT_ROOT/heartbeat.md" ]; then
+    cp "$PROJECT_ROOT/heartbeat.md" "$TINYCLAW_HOME/"
 fi
 if [ -f "$PROJECT_ROOT/AGENTS.md" ]; then
     cp "$PROJECT_ROOT/AGENTS.md" "$TINYCLAW_HOME/"

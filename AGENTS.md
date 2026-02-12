@@ -3,7 +3,7 @@ TinyClaw - 24/7 Personal Assistant
 Running in persistent mode with:
 
 - Telegram, WhatsApp, Discord message integration
-- Heartbeat monitoring (with .tinyclaw/heartbeat.md file)
+- Heartbeat monitoring (with heartbeat.md file)
 - Media/file support across all channels
 
 Stay proactive and responsive to messages.

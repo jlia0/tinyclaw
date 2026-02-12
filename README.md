@@ -231,7 +231,7 @@ Each team operates in isolation:
 
 - **Separate workspace directory** - `~/tinyclaw-workspace/{team_id}/`
 - **Own conversation history** - Maintained by CLI
-- **Custom configuration** - `.claude/`, `heartbeat.md`, `AGENTS.md`
+- **Custom configuration** - `.claude/`, `heartbeat.md` (root), `AGENTS.md`
 - **Independent resets** - Reset individual team conversations
 
 <details>
