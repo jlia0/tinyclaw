@@ -1,0 +1,4 @@
+*.ts linguist-language=TypeScript
+
+# Ignore build artifacts in language stats if they are committed in the future.
+dist/** linguist-generated=true

@@ -1,0 +1,23 @@
+#!/bin/bash
+# TinyClaw CLI Wrapper
+# This wrapper allows tinyclaw to be run from any directory
+
+# Resolve the real installation directory (follow symlinks)
+TINYCLAW_BIN="$0"
+
+# Follow symlinks to find the real script location
+while [ -L "$TINYCLAW_BIN" ]; do
+    TINYCLAW_DIR="$(cd "$(dirname "$TINYCLAW_BIN")" && pwd)"
+    TINYCLAW_BIN="$(readlink "$TINYCLAW_BIN")"
+    # Handle relative symlinks
+    [[ "$TINYCLAW_BIN" != /* ]] && TINYCLAW_BIN="$TINYCLAW_DIR/$TINYCLAW_BIN"
+done
+
+# Get the directory where this wrapper is located
+TINYCLAW_DIR="$(cd "$(dirname "$TINYCLAW_BIN")" && pwd)"
+
+# The actual installation is one directory up from bin/
+export TINYCLAW_HOME="$(dirname "$TINYCLAW_DIR")"
+
+# Execute the main script with all arguments
+exec "$TINYCLAW_HOME/tinyclaw.sh" "$@"

@@ -5,18 +5,23 @@
  * Does NOT call Claude directly - that's handled by queue-processor
  */
 
-import { Client, Events, GatewayIntentBits, Partials, Message, DMChannel } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Partials, Message, DMChannel, AttachmentBuilder } from 'discord.js';
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
+import https from 'https';
+import http from 'http';
 
 const SCRIPT_DIR = path.resolve(__dirname, '..');
-const QUEUE_INCOMING = path.join(SCRIPT_DIR, '.tinyclaw/queue/incoming');
-const QUEUE_OUTGOING = path.join(SCRIPT_DIR, '.tinyclaw/queue/outgoing');
-const LOG_FILE = path.join(SCRIPT_DIR, '.tinyclaw/logs/discord.log');
+const TINYCLAW_HOME = path.join(require('os').homedir(), '.tinyclaw');
+const QUEUE_INCOMING = path.join(TINYCLAW_HOME, 'queue/incoming');
+const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
+const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/discord.log');
+const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
+const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
 
 // Ensure directories exist
-[QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE)].forEach(dir => {
+[QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), FILES_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -42,6 +47,7 @@ interface QueueData {
     message: string;
     timestamp: number;
     messageId: string;
+    files?: string[];
 }
 
 interface ResponseData {
@@ -51,10 +57,57 @@ interface ResponseData {
     originalMessage: string;
     timestamp: number;
     messageId: string;
+    files?: string[];
+}
+
+function sanitizeFileName(fileName: string): string {
+    const baseName = path.basename(fileName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+    return baseName.length > 0 ? baseName : 'file.bin';
+}
+
+function buildUniqueFilePath(dir: string, preferredName: string): string {
+    const cleanName = sanitizeFileName(preferredName);
+    const ext = path.extname(cleanName);
+    const stem = path.basename(cleanName, ext);
+    let candidate = path.join(dir, cleanName);
+    let counter = 1;
+    while (fs.existsSync(candidate)) {
+        candidate = path.join(dir, `${stem}_${counter}${ext}`);
+        counter++;
+    }
+    return candidate;
+}
+
+// Download a file from URL to local path
+function downloadFile(url: string, destPath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(destPath);
+        const request = (url.startsWith('https') ? https.get(url, handleResponse) : http.get(url, handleResponse));
+
+        function handleResponse(response: http.IncomingMessage): void {
+            if (response.statusCode === 301 || response.statusCode === 302) {
+                const redirectUrl = response.headers.location;
+                if (redirectUrl) {
+                    file.close();
+                    fs.unlinkSync(destPath);
+                    downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
+                    return;
+                }
+            }
+            response.pipe(file);
+            file.on('finish', () => { file.close(); resolve(); });
+        }
+
+        request.on('error', (err) => {
+            fs.unlink(destPath, () => {});
+            reject(err);
+        });
+    });
 }
 
 // Track pending messages (waiting for response)
 const pendingMessages = new Map<string, PendingMessage>();
+let processingOutgoingQueue = false;
 
 // Logger
 function log(level: string, message: string): void {
@@ -62,6 +115,30 @@ function log(level: string, message: string): void {
     const logMessage = `[${timestamp}] [${level}] ${message}\n`;
     console.log(logMessage.trim());
     fs.appendFileSync(LOG_FILE, logMessage);
+}
+
+// Load agents from settings for /agent command
+function getAgentListText(): string {
+    try {
+        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
+        const settings = JSON.parse(settingsData);
+        const agents = settings.agents;
+        if (!agents || Object.keys(agents).length === 0) {
+            return 'No agents configured. Using default single-agent mode.\n\nConfigure agents in `.tinyclaw/settings.json` or run `tinyclaw agent add`.';
+        }
+        let text = '**Available Agents:**\n';
+        for (const [id, agent] of Object.entries(agents) as [string, any][]) {
+            text += `\n**@${id}** - ${agent.name}`;
+            text += `\n  Provider: ${agent.provider}/${agent.model}`;
+            text += `\n  Directory: ${agent.working_directory}`;
+            if (agent.system_prompt) text += `\n  Has custom system prompt`;
+            if (agent.prompt_file) text += `\n  Prompt file: ${agent.prompt_file}`;
+        }
+        text += '\n\nUsage: Start your message with `@agent_id` to route to a specific agent.';
+        return text;
+    } catch {
+        return 'Could not load agent configuration.';
+    }
 }
 
 // Split long messages for Discord's 2000 char limit
@@ -131,17 +208,51 @@ client.on(Events.MessageCreate, async (message: Message) => {
             return;
         }
 
-        // Skip empty messages
-        if (!message.content || message.content.trim().length === 0) {
+        const hasAttachments = message.attachments.size > 0;
+        const hasContent = message.content && message.content.trim().length > 0;
+
+        // Skip messages with no content and no attachments
+        if (!hasContent && !hasAttachments) {
             return;
         }
 
-        const sender = message.author.displayName || message.author.username;
+        const sender = message.author.username;
 
-        log('INFO', `Message from ${sender}: ${message.content.substring(0, 50)}...`);
+        // Generate unique message ID
+        const messageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+
+        // Download any attachments
+        const downloadedFiles: string[] = [];
+        if (hasAttachments) {
+            for (const [, attachment] of message.attachments) {
+                try {
+                    const attachmentName = attachment.name || `discord_${messageId}_${Date.now()}.bin`;
+                    const filename = `discord_${messageId}_${attachmentName}`;
+                    const localPath = buildUniqueFilePath(FILES_DIR, filename);
+
+                    await downloadFile(attachment.url, localPath);
+                    downloadedFiles.push(localPath);
+                    log('INFO', `Downloaded attachment: ${path.basename(localPath)} (${attachment.contentType || 'unknown'})`);
+                } catch (dlErr) {
+                    log('ERROR', `Failed to download attachment ${attachment.name}: ${(dlErr as Error).message}`);
+                }
+            }
+        }
+
+        let messageText = message.content || '';
+
+        log('INFO', `Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
+
+        // Check for agent list command
+        if (message.content.trim().match(/^[!/]agent$/i)) {
+            log('INFO', 'Agent list command received');
+            const agentList = getAgentListText();
+            await message.reply(agentList);
+            return;
+        }
 
         // Check for reset command
-        if (message.content.trim().match(/^[!/]reset$/i)) {
+        if (messageText.trim().match(/^[!/]reset$/i)) {
             log('INFO', 'Reset command received');
 
             // Create reset flag
@@ -156,17 +267,22 @@ client.on(Events.MessageCreate, async (message: Message) => {
         // Show typing indicator
         await (message.channel as DMChannel).sendTyping();
 
-        // Generate unique message ID
-        const messageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        // Build message text with file references
+        let fullMessage = messageText;
+        if (downloadedFiles.length > 0) {
+            const fileRefs = downloadedFiles.map(f => `[file: ${f}]`).join('\n');
+            fullMessage = fullMessage ? `${fullMessage}\n\n${fileRefs}` : fileRefs;
+        }
 
         // Write to incoming queue
         const queueData: QueueData = {
             channel: 'discord',
             sender: sender,
             senderId: message.author.id,
-            message: message.content,
+            message: fullMessage,
             timestamp: Date.now(),
             messageId: messageId,
+            files: downloadedFiles.length > 0 ? downloadedFiles : undefined,
         };
 
         const queueFile = path.join(QUEUE_INCOMING, `discord_${messageId}.json`);
@@ -181,10 +297,10 @@ client.on(Events.MessageCreate, async (message: Message) => {
             timestamp: Date.now(),
         });
 
-        // Clean up old pending messages (older than 5 minutes)
-        const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+        // Clean up old pending messages (older than 10 minutes)
+        const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
         for (const [id, data] of pendingMessages.entries()) {
-            if (data.timestamp < fiveMinutesAgo) {
+            if (data.timestamp < tenMinutesAgo) {
                 pendingMessages.delete(id);
             }
         }
@@ -195,7 +311,13 @@ client.on(Events.MessageCreate, async (message: Message) => {
 });
 
 // Watch for responses in outgoing queue
-function checkOutgoingQueue(): void {
+async function checkOutgoingQueue(): Promise<void> {
+    if (processingOutgoingQueue) {
+        return;
+    }
+
+    processingOutgoingQueue = true;
+
     try {
         const files = fs.readdirSync(QUEUE_OUTGOING)
             .filter(f => f.startsWith('discord_') && f.endsWith('.json'));
@@ -210,16 +332,37 @@ function checkOutgoingQueue(): void {
                 // Find pending message
                 const pending = pendingMessages.get(messageId);
                 if (pending) {
-                    // Split message if needed (Discord 2000 char limit)
-                    const chunks = splitMessage(responseText);
-
-                    // First chunk as reply, rest as follow-up messages
-                    pending.message.reply(chunks[0]);
-                    for (let i = 1; i < chunks.length; i++) {
-                        pending.channel.send(chunks[i]);
+                    // Send any attached files
+                    if (responseData.files && responseData.files.length > 0) {
+                        const attachments: AttachmentBuilder[] = [];
+                        for (const file of responseData.files) {
+                            try {
+                                if (!fs.existsSync(file)) continue;
+                                attachments.push(new AttachmentBuilder(file));
+                            } catch (fileErr) {
+                                log('ERROR', `Failed to prepare file ${file}: ${(fileErr as Error).message}`);
+                            }
+                        }
+                        if (attachments.length > 0) {
+                            await pending.channel.send({ files: attachments });
+                            log('INFO', `Sent ${attachments.length} file(s) to Discord`);
+                        }
                     }
 
-                    log('INFO', `Sent response to ${sender} (${responseText.length} chars, ${chunks.length} message(s))`);
+                    // Split message if needed (Discord 2000 char limit)
+                    if (responseText) {
+                        const chunks = splitMessage(responseText);
+
+                        // First chunk as reply, rest as follow-up messages
+                        if (chunks.length > 0) {
+                            await pending.message.reply(chunks[0]!);
+                        }
+                        for (let i = 1; i < chunks.length; i++) {
+                            await pending.channel.send(chunks[i]!);
+                        }
+                    }
+
+                    log('INFO', `Sent response to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
 
                     // Clean up
                     pendingMessages.delete(messageId);
@@ -236,6 +379,8 @@ function checkOutgoingQueue(): void {
         }
     } catch (error) {
         log('ERROR', `Outgoing queue error: ${(error as Error).message}`);
+    } finally {
+        processingOutgoingQueue = false;
     }
 }
 

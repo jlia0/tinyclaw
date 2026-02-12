@@ -1,0 +1,146 @@
+name: Create Release Bundle
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Trigger on version tags like v1.0.0
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=$(git describe --tags --always)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Install dependencies
+        run: |
+          PUPPETEER_SKIP_DOWNLOAD=true npm ci --include=dev
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Prune development dependencies
+        run: npm prune --omit=dev
+
+      - name: Create bundle tarball
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          BUNDLE_NAME="tinyclaw-bundle.tar.gz"
+          TEMP_DIR=$(mktemp -d)
+          BUNDLE_DIR="$TEMP_DIR/tinyclaw"
+
+          mkdir -p "$BUNDLE_DIR"
+
+          # Copy necessary files
+          cp -r bin/ "$BUNDLE_DIR/"
+          cp -r src/ "$BUNDLE_DIR/"
+          cp -r dist/ "$BUNDLE_DIR/"
+          cp -r node_modules/ "$BUNDLE_DIR/"
+          cp -r scripts/ "$BUNDLE_DIR/"
+          cp -r lib/ "$BUNDLE_DIR/"
+
+          cp tinyclaw.sh "$BUNDLE_DIR/"
+
+          cp package.json "$BUNDLE_DIR/"
+          cp package-lock.json "$BUNDLE_DIR/"
+          cp tsconfig.json "$BUNDLE_DIR/"
+          cp README.md "$BUNDLE_DIR/"
+          cp .gitignore "$BUNDLE_DIR/"
+
+          # Make scripts executable
+          chmod +x "$BUNDLE_DIR/bin/tinyclaw"
+          chmod +x "$BUNDLE_DIR/tinyclaw.sh"
+          chmod +x "$BUNDLE_DIR/scripts/install.sh"
+          chmod +x "$BUNDLE_DIR/scripts/uninstall.sh"
+          chmod +x "$BUNDLE_DIR/scripts/bundle.sh"
+          chmod +x "$BUNDLE_DIR/scripts/remote-install.sh"
+          chmod +x "$BUNDLE_DIR/lib/setup-wizard.sh"
+          chmod +x "$BUNDLE_DIR/lib/heartbeat-cron.sh"
+          chmod +x "$BUNDLE_DIR/lib/update.sh"
+
+          # Create tarball
+          cd "$TEMP_DIR"
+          tar -czf "$GITHUB_WORKSPACE/$BUNDLE_NAME" tinyclaw/
+
+          # Get bundle info
+          BUNDLE_SIZE=$(du -h "$GITHUB_WORKSPACE/$BUNDLE_NAME" | cut -f1)
+          echo "Bundle created: $BUNDLE_NAME ($BUNDLE_SIZE)"
+          echo "bundle_name=$BUNDLE_NAME" >> $GITHUB_OUTPUT
+          echo "bundle_size=$BUNDLE_SIZE" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          cat > release_notes.md <<EOF
+          ## TinyClaw $VERSION
+
+          ### Installation
+
+          #### Quick Install (Recommended)
+
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/remote-install.sh | bash
+          \`\`\`
+
+          This will automatically download and install TinyClaw with all dependencies.
+
+          #### Manual Install
+
+          1. Download \`tinyclaw-bundle.tar.gz\`
+          2. Extract: \`tar -xzf tinyclaw-bundle.tar.gz\`
+          3. Install: \`cd tinyclaw && ./scripts/install.sh\`
+
+          ### What's Changed
+
+          See commits since last release for detailed changes.
+
+          ### Requirements
+
+          - Node.js v14+
+          - tmux
+          - Claude Code CLI
+          - Linux or macOS
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: github.ref_type == 'tag'
+        with:
+          body_path: release_notes.md
+          files: |
+            tinyclaw-bundle.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact (for non-tag builds)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinyclaw-bundle
+          path: tinyclaw-bundle.tar.gz
+          retention-days: 7

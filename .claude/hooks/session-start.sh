@@ -1,15 +1,13 @@
 #!/bin/bash
-# Session start - Just load TinyClaw context
+# Session start - Load TinyClaw context from AGENTS.md
 
-cat << 'EOF'
-🤖 TinyClaw - 24/7 Personal Assistant
+SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+AGENTS_FILE="$SCRIPT_DIR/AGENTS.md"
 
-Running in persistent mode with:
-
-- Telegram, WhatsApp, Discord message integration
-- Heartbeat monitoring (with .tinyclaw/heartbeat.md file)
-
-Stay proactive and responsive to messages.
-EOF
+if [ -f "$AGENTS_FILE" ]; then
+    cat "$AGENTS_FILE"
+else
+    echo "TinyClaw - AGENTS.md not found at $AGENTS_FILE"
+fi
 
 exit 0
