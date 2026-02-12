@@ -176,12 +176,12 @@ do_update() {
     echo ""
 
     # Download bundle
-    local bundle_url="https://github.com/$GITHUB_REPO/releases/download/v${latest_version}/tinyclaw-bundle-${latest_version}.tar.gz"
+    local bundle_url="https://github.com/$GITHUB_REPO/releases/download/v${latest_version}/tinyclaw-bundle.tar.gz"
     local temp_dir=$(mktemp -d)
     local bundle_file="$temp_dir/tinyclaw-bundle.tar.gz"
 
     echo -e "${BLUE}[1/4] Downloading...${NC}"
-    if ! curl -L -o "$bundle_file" "$bundle_url" 2>&1 | grep -v "^  "; then
+    if ! curl -fSL -o "$bundle_file" "$bundle_url" 2>&1 | grep -v "^  "; then
         echo -e "${RED}Error: Download failed${NC}"
         rm -rf "$temp_dir"
         return 1
