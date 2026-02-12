@@ -1,0 +1,30 @@
+[package]
+name = "tinyclaw"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tinyclaw"
+path = "src/main.rs"
+
+[dependencies]
+tinyclaw-core = { path = "../tinyclaw-core" }
+tinyclaw-inference = { path = "../tinyclaw-inference" }
+tinyclaw-channel-discord = { path = "../tinyclaw-channel-discord", optional = true }
+tinyclaw-channel-telegram = { path = "../tinyclaw-channel-telegram", optional = true }
+tinyclaw-http = { path = "../tinyclaw-http", optional = true }
+
+clap = { version = "4", features = ["derive"] }
+dialoguer = "0.11"
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+default = ["discord", "telegram", "http"]
+discord = ["dep:tinyclaw-channel-discord"]
+telegram = ["dep:tinyclaw-channel-telegram"]
+http = ["dep:tinyclaw-http"]

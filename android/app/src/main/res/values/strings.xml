@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TinyClaw</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="status_running">Status: Running</string>
+    <string name="status_stopped">Status: Stopped</string>
+    <string name="port_label">HTTP API: localhost:%1$d</string>
+</resources>

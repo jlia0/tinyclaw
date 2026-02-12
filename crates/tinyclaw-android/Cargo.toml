@@ -1,0 +1,19 @@
+[package]
+name = "tinyclaw-android"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tinyclaw-core = { path = "../tinyclaw-core" }
+tinyclaw-inference = { path = "../tinyclaw-inference" }
+tinyclaw-http = { path = "../tinyclaw-http" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", default-features = false }

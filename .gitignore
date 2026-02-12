@@ -4,6 +4,9 @@ node_modules/
 # TypeScript build output
 dist/
 
+# Rust build output
+target/
+
 # TinyClaw runtime files
 .tinyclaw/logs/
 .tinyclaw/channels

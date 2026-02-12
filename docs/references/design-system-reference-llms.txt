@@ -1,0 +1,17 @@
+TinyClaw Design System Reference (for LLM context)
+====================================================
+
+TinyClaw uses Material3 (Material You) on Android via the
+com.google.android.material:material dependency.  The theme is
+Theme.Material3.DayNight.NoActionBar defined in res/values/themes.xml.
+
+The CLI has no GUI — all interaction is via terminal text (clap for arg
+parsing, dialoguer for interactive prompts).
+
+There is no web frontend yet.  The bookmarklet is plain JavaScript injected
+into the user's current page.
+
+Color palette: not defined (uses Material3 defaults).
+Typography: not defined (uses Material3 defaults).
+Iconography: single vector drawable ic_notification.xml used for the
+foreground service notification.

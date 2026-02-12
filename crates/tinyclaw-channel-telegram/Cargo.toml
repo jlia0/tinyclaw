@@ -1,0 +1,13 @@
+[package]
+name = "tinyclaw-channel-telegram"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tinyclaw-core = { path = "../tinyclaw-core" }
+teloxide = { version = "0.13", features = ["macros"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+dashmap = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }

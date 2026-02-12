@@ -1,0 +1,12 @@
+UV / Python Reference (for LLM context)
+=========================================
+
+TinyClaw is a Rust project and does not use Python or uv.
+
+If Python tooling is ever needed (e.g., for model conversion scripts or
+benchmarking), prefer uv for virtual environment and dependency management:
+
+    uv venv .venv
+    uv pip install -r requirements.txt
+
+No Python code exists in the repository today.
