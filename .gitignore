@@ -20,6 +20,13 @@ target/
 # Environment variables
 .env
 
+# Android build artifacts (native .so is built by cargo, not committed)
+android/app/src/main/jniLibs/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+
 # OS files
 .DS_Store
 

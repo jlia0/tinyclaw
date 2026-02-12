@@ -5,9 +5,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 /// Initialize logging with both stdout and file output.
 /// Returns a guard that must be held for the lifetime of the application
 /// to ensure log messages are flushed.
-pub fn init_logging(
-    log_dir: &Path,
-) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
+pub fn init_logging(log_dir: &Path) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
     std::fs::create_dir_all(log_dir)?;
 
     let file_appender = rolling::never(log_dir, "tinyclaw.log");

@@ -5,5 +5,6 @@
     <string name="stop">Stop</string>
     <string name="status_running">Status: Running</string>
     <string name="status_stopped">Status: Stopped</string>
+    <string name="status_starting">Status: Starting\u2026</string>
     <string name="port_label">HTTP API: localhost:%1$d</string>
 </resources>

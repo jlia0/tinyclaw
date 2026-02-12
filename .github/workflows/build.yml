@@ -86,6 +86,12 @@ jobs:
       - name: Build Android library
         run: cargo ndk -t arm64-v8a build --release -p tinyclaw-android
 
+      - name: Stage .so for APK build
+        run: |
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          cp target/aarch64-linux-android/release/libtinyclaw_android.so \
+             android/app/src/main/jniLibs/arm64-v8a/
+
       - name: Upload library
         uses: actions/upload-artifact@v4
         with:
