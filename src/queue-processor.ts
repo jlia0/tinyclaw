@@ -185,6 +185,14 @@ function ensureAgentDirectory(agentDir: string): void {
     if (fs.existsSync(sourceAgents)) {
         fs.copyFileSync(sourceAgents, targetAgents);
     }
+
+    // Symlink skills directory into .claude/skills
+    const sourceSkills = path.join(SCRIPT_DIR, '.agents', 'skills');
+    const targetSkills = path.join(agentDir, '.claude', 'skills');
+    if (fs.existsSync(sourceSkills) && !fs.existsSync(targetSkills)) {
+        fs.mkdirSync(path.join(agentDir, '.claude'), { recursive: true });
+        fs.symlinkSync(sourceSkills, targetSkills);
+    }
 }
 
 /**
@@ -241,21 +249,37 @@ function isTeammate(
  * Extract the first valid @teammate mention from a response text.
  * Returns the teammate agent ID and the rest of the message, or null if no teammate mentioned.
  */
-function extractTeammateMention(
+function extractTeammateMentions(
     response: string,
     currentAgentId: string,
     teamId: string,
     teams: Record<string, TeamConfig>,
     agents: Record<string, AgentConfig>
-): { teammateId: string } | null {
+): { teammateId: string; message: string }[] {
+    const results: { teammateId: string; message: string }[] = [];
+    const seen = new Set<string>();
+
+    // Try tag format first: [@agent_id: message]
+    const tagRegex = /\[@(\S+?):\s*([\s\S]*?)\]/g;
+    let tagMatch: RegExpExecArray | null;
+    while ((tagMatch = tagRegex.exec(response)) !== null) {
+        const candidateId = tagMatch[1].toLowerCase();
+        if (!seen.has(candidateId) && isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
+            results.push({ teammateId: candidateId, message: tagMatch[2].trim() });
+            seen.add(candidateId);
+        }
+    }
+    if (results.length > 0) return results;
+
+    // Fallback: bare @mention (first match only, legacy single-handoff)
     const mentions = response.match(/@(\S+)/g) || [];
     for (const mention of mentions) {
         const candidateId = mention.slice(1).toLowerCase();
         if (isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
-            return { teammateId: candidateId };
+            return [{ teammateId: candidateId, message: response }];
         }
     }
-    return null;
+    return [];
 }
 
 /**
@@ -781,23 +805,73 @@ async function processMessage(messageFile: string): Promise<void> {
                     }
                 }
 
-                // Check if response mentions a teammate
-                const teammateMention = extractTeammateMention(
+                // Check if response mentions teammates
+                const teammateMentions = extractTeammateMentions(
                     stepResponse, currentAgentId, teamContext.teamId, teams, agents
                 );
 
-                if (!teammateMention) {
+                if (teammateMentions.length === 0) {
                     // No teammate mentioned — chain ends naturally
                     log('INFO', `Chain ended after ${chainSteps.length} step(s) — no teammate mentioned`);
                     emitEvent('team_chain_end', { teamId: teamContext.teamId, totalSteps: chainSteps.length, agents: chainSteps.map(s => s.agentId) });
                     break;
                 }
 
-                // Hand off to teammate
-                log('INFO', `@${currentAgentId} mentioned @${teammateMention.teammateId} — continuing chain`);
-                emitEvent('chain_handoff', { teamId: teamContext.teamId, fromAgent: currentAgentId, toAgent: teammateMention.teammateId, step: chainSteps.length });
-                currentAgentId = teammateMention.teammateId;
-                currentMessage = `[Message from teammate @${chainSteps[chainSteps.length - 1].agentId}]:\n${stepResponse}`;
+                if (teammateMentions.length === 1) {
+                    // Single handoff — sequential chain (existing behavior)
+                    const mention = teammateMentions[0];
+                    log('INFO', `@${currentAgentId} mentioned @${mention.teammateId} — continuing chain`);
+                    emitEvent('chain_handoff', { teamId: teamContext.teamId, fromAgent: currentAgentId, toAgent: mention.teammateId, step: chainSteps.length });
+                    currentAgentId = mention.teammateId;
+                    currentMessage = `[Message from teammate @${chainSteps[chainSteps.length - 1].agentId}]:\n${mention.message}`;
+                } else {
+                    // Fan-out — invoke multiple teammates in parallel
+                    log('INFO', `@${currentAgentId} mentioned ${teammateMentions.length} teammates — fan-out`);
+                    for (const mention of teammateMentions) {
+                        emitEvent('chain_handoff', { teamId: teamContext.teamId, fromAgent: currentAgentId, toAgent: mention.teammateId, step: chainSteps.length });
+                    }
+
+                    const fanOutResults = await Promise.all(
+                        teammateMentions.map(async (mention) => {
+                            const mAgent = agents[mention.teammateId];
+                            if (!mAgent) return { agentId: mention.teammateId, response: `Error: agent ${mention.teammateId} not found` };
+
+                            const mResetFlag = getAgentResetFlag(mention.teammateId, workspacePath);
+                            const mShouldReset = fs.existsSync(mResetFlag);
+                            if (mShouldReset) fs.unlinkSync(mResetFlag);
+
+                            emitEvent('chain_step_start', { teamId: teamContext.teamId, step: chainSteps.length + 1, agentId: mention.teammateId, agentName: mAgent.name });
+
+                            let mResponse: string;
+                            try {
+                                const mMessage = `[Message from teammate @${currentAgentId}]:\n${mention.message}`;
+                                mResponse = await invokeAgent(mAgent, mention.teammateId, mMessage, workspacePath, mShouldReset, agents, teams);
+                            } catch (error) {
+                                log('ERROR', `Fan-out error (agent: ${mention.teammateId}): ${(error as Error).message}`);
+                                mResponse = "Sorry, I encountered an error processing this request.";
+                            }
+
+                            emitEvent('chain_step_done', { teamId: teamContext.teamId, step: chainSteps.length + 1, agentId: mention.teammateId, responseLength: mResponse.length, responseText: mResponse });
+                            return { agentId: mention.teammateId, response: mResponse };
+                        })
+                    );
+
+                    for (const result of fanOutResults) {
+                        chainSteps.push(result);
+
+                        // Collect files from fan-out responses
+                        const fanFileRegex = /\[send_file:\s*([^\]]+)\]/g;
+                        let fanFileMatch: RegExpExecArray | null;
+                        while ((fanFileMatch = fanFileRegex.exec(result.response)) !== null) {
+                            const filePath = fanFileMatch[1].trim();
+                            if (fs.existsSync(filePath)) allFiles.add(filePath);
+                        }
+                    }
+
+                    log('INFO', `Fan-out complete — ${fanOutResults.length} responses collected`);
+                    emitEvent('team_chain_end', { teamId: teamContext.teamId, totalSteps: chainSteps.length, agents: chainSteps.map(s => s.agentId) });
+                    break;
+                }
             }
 
             // Aggregate responses

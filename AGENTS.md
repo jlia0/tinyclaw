@@ -10,12 +10,19 @@ Stay proactive and responsive to messages.
 
 ## Team Communication
 
-You may be part of a team with other agents. To send a message to a teammate, include `@agent_id` at the start of your final response. The message will be routed to that agent for processing.
+You may be part of a team with other agents. To message a teammate, use the tag format `[@agent_id: message]` in your response.
 
-- `@coder Can you fix the login bug?` — routes your message to the `coder` agent
-- `@researcher Look up the latest API docs` — routes your message to the `researcher` agent
+### Single teammate
 
-Use this to delegate tasks to teammates with the right expertise. You can only message one teammate per response.
+- `[@coder: Can you fix the login bug?]` — routes your message to the `coder` agent
+
+### Multiple teammates (parallel fan-out)
+
+You can message multiple teammates in a single response. They will all be invoked in parallel:
+
+- `[@coder: Fix the auth bug in login.ts] [@reviewer: Review the PR for security issues]`
+
+### Back-and-forth
 
 You can communicate back and forth by mentioning your teammate in your response and the system will route the messages in real-time.
 

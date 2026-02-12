@@ -194,6 +194,12 @@ agent_add() {
         echo "  → Copied CLAUDE.md to .claude/ directory"
     fi
 
+    # Symlink skills directory into .claude/skills
+    if [ -d "$SCRIPT_DIR/.agents/skills" ] && [ ! -e "$AGENTS_DIR/$AGENT_ID/.claude/skills" ]; then
+        ln -s "$SCRIPT_DIR/.agents/skills" "$AGENTS_DIR/$AGENT_ID/.claude/skills"
+        echo "  → Linked skills to .claude/skills/"
+    fi
+
     echo ""
     echo -e "${GREEN}✓ Agent '${AGENT_ID}' created!${NC}"
     echo -e "  Directory: $AGENTS_DIR/$AGENT_ID"
