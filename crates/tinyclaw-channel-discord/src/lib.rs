@@ -39,8 +39,9 @@ impl ChannelClient for DiscordClient {
             pending: pending.clone(),
         };
 
-        let intents =
-            GatewayIntents::DIRECT_MESSAGES | GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILDS;
+        let intents = GatewayIntents::DIRECT_MESSAGES
+            | GatewayIntents::MESSAGE_CONTENT
+            | GatewayIntents::GUILDS;
 
         let mut client = serenity::Client::builder(&self.token, intents)
             .event_handler(handler)
@@ -126,7 +127,11 @@ impl EventHandler for DiscordHandler {
             return;
         }
 
-        let sender = msg.author.global_name.as_deref().unwrap_or(&msg.author.name);
+        let sender = msg
+            .author
+            .global_name
+            .as_deref()
+            .unwrap_or(&msg.author.name);
 
         // Handle reset command
         if content.eq_ignore_ascii_case("/reset") || content.eq_ignore_ascii_case("!reset") {
@@ -164,8 +169,7 @@ impl EventHandler for DiscordHandler {
         tracing::info!(sender = %sender, "Discord message queued: {}", message_id);
 
         // Track pending for response delivery
-        self.pending
-            .insert(message_id, (msg.channel_id, msg.id));
+        self.pending.insert(message_id, (msg.channel_id, msg.id));
 
         // Clean up old pending messages (older than 5 minutes)
         let five_minutes_ago = now_millis() - (5 * 60 * 1000);
@@ -194,9 +198,9 @@ async fn poll_outgoing(
                 let _ = channel_id
                     .send_message(
                         http,
-                        CreateMessage::new()
-                            .content(first)
-                            .reference_message(MessageReference::from((channel_id, original_msg_id))),
+                        CreateMessage::new().content(first).reference_message(
+                            MessageReference::from((channel_id, original_msg_id)),
+                        ),
                     )
                     .await;
             }

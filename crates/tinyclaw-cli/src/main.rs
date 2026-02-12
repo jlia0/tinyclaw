@@ -8,7 +8,10 @@ use tinyclaw_core::message::{Channel, IncomingMessage};
 use tinyclaw_core::queue::QueueDir;
 
 #[derive(Parser)]
-#[command(name = "tinyclaw", about = "Local AI assistant with multi-channel support")]
+#[command(
+    name = "tinyclaw",
+    about = "Local AI assistant with multi-channel support"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -165,8 +168,7 @@ async fn cmd_start(cli: &Cli) -> anyhow::Result<()> {
     // Spawn HTTP API if enabled
     #[cfg(feature = "http")]
     if settings.http.enabled {
-        let http =
-            tinyclaw_http::HttpServer::new(queue.clone(), settings.http.clone());
+        let http = tinyclaw_http::HttpServer::new(queue.clone(), settings.http.clone());
         let rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
             if let Err(e) = http.start(rx).await {
@@ -190,7 +192,10 @@ async fn cmd_start(cli: &Cli) -> anyhow::Result<()> {
     println!("TinyClaw started. Press Ctrl+C to stop.");
     println!();
     println!("Channels: {:?}", settings.channels.enabled);
-    println!("Model: {} ({})", settings.models.local.model, settings.models.local.backend);
+    println!(
+        "Model: {} ({})",
+        settings.models.local.model, settings.models.local.backend
+    );
     if settings.http.enabled {
         println!("HTTP API: http://0.0.0.0:{}", settings.http.port);
     }
@@ -401,10 +406,7 @@ async fn cmd_status(cli: &Cli) -> anyhow::Result<()> {
             println!("  Model: {}", settings.models.local.model);
             println!("  Backend: {}", settings.models.local.backend);
             println!("  Channels: {:?}", settings.channels.enabled);
-            println!(
-                "  Heartbeat: {}s",
-                settings.monitoring.heartbeat_interval
-            );
+            println!("  Heartbeat: {}s", settings.monitoring.heartbeat_interval);
             if settings.http.enabled {
                 println!("  HTTP API: port {}", settings.http.port);
             }
@@ -490,7 +492,9 @@ async fn cmd_model(cli: &Cli, name: Option<&str>) -> anyhow::Result<()> {
             println!("Current model: {}", settings.models.local.model);
             println!("Backend: {}", settings.models.local.backend);
             println!();
-            println!("Available models: gemma3-1b, gemma-3n-e2b, gemma-3n-e4b, phi-4-mini, qwen2.5-1.5b");
+            println!(
+                "Available models: gemma3-1b, gemma-3n-e2b, gemma-3n-e4b, phi-4-mini, qwen2.5-1.5b"
+            );
             println!("Switch with: tinyclaw model <name>");
         }
     }
@@ -570,10 +574,7 @@ async fn cmd_bookmarklet(cli: &Cli) -> anyhow::Result<()> {
     if settings.freehold.enabled {
         println!();
         println!("With freehold enabled, this bookmarklet works from any network.");
-        println!(
-            "Relay: {}",
-            settings.freehold.relay
-        );
+        println!("Relay: {}", settings.freehold.relay);
     }
 
     Ok(())
@@ -648,9 +649,7 @@ WantedBy=multi-user.target
         println!("{}", plist);
         println!();
         println!("To install:");
-        println!(
-            "  cp <this-file> ~/Library/LaunchAgents/com.tinyclaw.agent.plist"
-        );
+        println!("  cp <this-file> ~/Library/LaunchAgents/com.tinyclaw.agent.plist");
         println!("  launchctl load ~/Library/LaunchAgents/com.tinyclaw.agent.plist");
     }
 
@@ -659,7 +658,11 @@ WantedBy=multi-user.target
         println!("Windows service setup:");
         println!();
         println!("Option 1: Use NSSM (recommended):");
-        println!("  nssm install TinyClaw \"{}\" start --data-dir \"{}\"", exe_path.display(), data_dir_str);
+        println!(
+            "  nssm install TinyClaw \"{}\" start --data-dir \"{}\"",
+            exe_path.display(),
+            data_dir_str
+        );
         println!("  nssm start TinyClaw");
         println!();
         println!("Option 2: Use Task Scheduler:");
@@ -670,7 +673,11 @@ WantedBy=multi-user.target
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         println!("Service installation not supported for this platform.");
-        println!("Run manually: {} start --data-dir {}", exe_path.display(), data_dir_str);
+        println!(
+            "Run manually: {} start --data-dir {}",
+            exe_path.display(),
+            data_dir_str
+        );
     }
 
     Ok(())

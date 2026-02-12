@@ -12,8 +12,12 @@ tinyclaw-inference = { path = "../tinyclaw-inference" }
 tinyclaw-http = { path = "../tinyclaw-http" }
 tokio = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = { version = "0.21", default-features = false }
+android_logger = "0.14"
+log = "0.4"
+tracing-log = "0.2"

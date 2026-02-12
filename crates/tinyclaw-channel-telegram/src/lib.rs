@@ -86,8 +86,8 @@ impl ChannelClient for TelegramClient {
         let queue_handler = queue.clone();
         let pending_handler = pending.clone();
 
-        let handler = Update::filter_message().endpoint(
-            move |bot: Bot, msg: teloxide::types::Message| {
+        let handler =
+            Update::filter_message().endpoint(move |bot: Bot, msg: teloxide::types::Message| {
                 let queue = queue_handler.clone();
                 let pending = pending_handler.clone();
                 async move {
@@ -166,14 +166,12 @@ impl ChannelClient for TelegramClient {
 
                     respond(())
                 }
-            },
-        );
+            });
 
         tracing::info!("Telegram bot starting...");
 
         // Run dispatcher with shutdown
-        let mut dispatcher = Dispatcher::builder(bot, handler)
-            .build();
+        let mut dispatcher = Dispatcher::builder(bot, handler).build();
 
         tokio::select! {
             _ = dispatcher.dispatch() => {}
