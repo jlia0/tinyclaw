@@ -1,0 +1,19 @@
+Nixpacks Reference (for LLM context)
+======================================
+
+TinyClaw does not currently use Nixpacks for deployment.  The primary
+deployment methods are:
+
+1. Cargo build from source (cargo build --release -p tinyclaw).
+2. Pre-built binaries from GitHub Actions artifacts.
+3. systemd / launchd / NSSM service installation via `tinyclaw install-service`.
+4. Android APK (manual build via Android Studio or Gradle CLI).
+
+If Nixpacks support is added in the future, the build plan should:
+- Install Rust stable toolchain.
+- Run `cargo build --release -p tinyclaw`.
+- Copy the binary to the output directory.
+- Set the start command to `./tinyclaw start`.
+
+No Node.js runtime is needed for the Rust build (the legacy TypeScript in
+src/ requires Node.js but is not the primary build path).
