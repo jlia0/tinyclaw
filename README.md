@@ -7,9 +7,11 @@ Run multiple AI agents simultaneously with isolated workspaces and conversation 
 ## ✨ Features
 
 - ✅ **Multi-agent** - Run multiple isolated AI agents with specialized roles
+- ✅ **Team collaboration** - Agents hand off work to teammates via chain execution and fan-out
 - ✅ **Multiple AI providers** - Anthropic Claude (Sonnet/Opus) and OpenAI (GPT/Codex)
 - ✅ **Multi-channel** - Discord, WhatsApp, and Telegram
 - ✅ **Parallel processing** - Agents process messages concurrently
+- ✅ **Live TUI dashboard** - Real-time team visualizer for monitoring agent chains
 - ✅ **Persistent sessions** - Conversation context maintained across restarts
 - ✅ **File-based queue** - No race conditions, reliable message handling
 - ✅ **24/7 operation** - Runs in tmux for always-on availability
@@ -125,12 +127,13 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 
 ### Team Commands
 
-| Command             | Description                | Example                    |
-| ------------------- | -------------------------- | -------------------------- |
-| `team list`         | List all configured teams  | `tinyclaw team list`       |
-| `team add`          | Add new team (interactive) | `tinyclaw team add`        |
-| `team show <id>`    | Show team configuration    | `tinyclaw team show dev`   |
-| `team remove <id>`  | Remove a team              | `tinyclaw team remove dev` |
+| Command                  | Description                              | Example                       |
+| ------------------------ | ---------------------------------------- | ----------------------------- |
+| `team list`              | List all configured teams                | `tinyclaw team list`          |
+| `team add`               | Add new team (interactive)               | `tinyclaw team add`           |
+| `team show <id>`         | Show team configuration                  | `tinyclaw team show dev`      |
+| `team remove <id>`       | Remove a team                            | `tinyclaw team remove dev`    |
+| `team visualize [id]`    | Live TUI dashboard for team chains       | `tinyclaw team visualize dev` |
 
 ### Configuration Commands
 
@@ -326,6 +329,9 @@ tinyclaw/
 │   ├── logs/             # All logs
 │   ├── channels/         # Channel state
 │   ├── files/            # Uploaded files
+│   ├── chats/            # Team chain chat history
+│   │   └── {team_id}/    # Per-team chat logs
+│   ├── events/           # Real-time event files
 │   ├── .claude/          # Template for agents
 │   ├── heartbeat.md      # Template for agents
 │   └── AGENTS.md         # Template for agents
@@ -367,6 +373,13 @@ Located at `.tinyclaw/settings.json`:
       "provider": "anthropic",
       "model": "sonnet",
       "working_directory": "/Users/me/tinyclaw-workspace/assistant"
+    }
+  },
+  "teams": {
+    "dev": {
+      "name": "Development Team",
+      "agents": ["coder", "reviewer"],
+      "leader_agent": "coder"
     }
   },
   "monitoring": {
@@ -425,6 +438,8 @@ Claude: "Don't forget to call mom!"
 # → Combined response sent back to user
 ```
 
+Teams support sequential chains (single handoff) and parallel fan-out (multiple teammate mentions). See [docs/TEAMS.md](docs/TEAMS.md) for details.
+
 ### Cross-Device Access
 
 - WhatsApp on phone
@@ -437,6 +452,7 @@ All channels share agent conversations!
 ## 📚 Documentation
 
 - [AGENTS.md](docs/AGENTS.md) - Agent management and routing
+- [TEAMS.md](docs/TEAMS.md) - Team collaboration, chain execution, and visualizer
 - [QUEUE.md](docs/QUEUE.md) - Queue system and message flow
 - [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
