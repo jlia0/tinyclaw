@@ -37,6 +37,12 @@ start_daemon() {
         npm run build
     fi
 
+    # Run dbmate migrations if available
+    if command -v dbmate &> /dev/null; then
+        local db_path="$TINYCLAW_HOME/tinyclaw.db"
+        DATABASE_URL="sqlite:$db_path" dbmate --migrations-dir "$SCRIPT_DIR/db/migrations" --no-dump-schema up 2>/dev/null || true
+    fi
+
     # Load settings or run setup wizard
     if ! load_settings; then
         echo -e "${YELLOW}No configuration found. Running setup wizard...${NC}"
