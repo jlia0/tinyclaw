@@ -6,6 +6,28 @@ GITHUB_REPO="jlia0/tinyclaw"
 UPDATE_CHECK_CACHE="$HOME/.tinyclaw/.update_check"
 UPDATE_CHECK_TTL=3600  # Check once per hour
 
+verify_sha256() {
+    local file_path="$1"
+    local checksum_file="$2"
+    local expected actual
+
+    expected=$(awk '{print $1}' "$checksum_file" 2>/dev/null | head -n1)
+    if [ -z "$expected" ]; then
+        return 1
+    fi
+
+    if command -v shasum &> /dev/null; then
+        actual=$(shasum -a 256 "$file_path" | awk '{print $1}')
+    elif command -v sha256sum &> /dev/null; then
+        actual=$(sha256sum "$file_path" | awk '{print $1}')
+    else
+        echo -e "${RED}Error: shasum or sha256sum is required to verify updates${NC}"
+        return 1
+    fi
+
+    [ "$actual" = "$expected" ]
+}
+
 # Get current version
 get_current_version() {
     if [ -f "$SCRIPT_DIR/package.json" ]; then
@@ -177,10 +199,12 @@ do_update() {
 
     # Download bundle
     local bundle_url="https://github.com/$GITHUB_REPO/releases/download/v${latest_version}/tinyclaw-bundle.tar.gz"
+    local checksum_url="https://github.com/$GITHUB_REPO/releases/download/v${latest_version}/tinyclaw-bundle.sha256"
     local temp_dir=$(mktemp -d)
     local bundle_file="$temp_dir/tinyclaw-bundle.tar.gz"
+    local checksum_file="$temp_dir/tinyclaw-bundle.sha256"
 
-    echo -e "${BLUE}[1/4] Downloading...${NC}"
+    echo -e "${BLUE}[1/5] Downloading...${NC}"
     if ! curl -fSL -o "$bundle_file" "$bundle_url" 2>&1 | grep -v "^  "; then
         echo -e "${RED}Error: Download failed${NC}"
         rm -rf "$temp_dir"
@@ -189,8 +213,22 @@ do_update() {
     echo -e "${GREEN}✓ Downloaded${NC}"
     echo ""
 
+    echo -e "${BLUE}[2/5] Verifying integrity...${NC}"
+    if ! curl -fsSL -o "$checksum_file" "$checksum_url"; then
+        echo -e "${RED}Error: Could not download checksum file${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    if ! verify_sha256 "$bundle_file" "$checksum_file"; then
+        echo -e "${RED}Error: Checksum verification failed${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    echo -e "${GREEN}✓ Checksum verified${NC}"
+    echo ""
+
     # Backup current installation
-    echo -e "${BLUE}[2/4] Backing up current installation...${NC}"
+    echo -e "${BLUE}[3/5] Backing up current installation...${NC}"
     local backup_dir="$HOME/.tinyclaw/backups/v${current_version}-$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$backup_dir"
 
@@ -206,7 +244,7 @@ do_update() {
     echo ""
 
     # Extract new version
-    echo -e "${BLUE}[3/4] Installing new version...${NC}"
+    echo -e "${BLUE}[4/5] Installing new version...${NC}"
     cd "$temp_dir"
     tar -xzf "$bundle_file"
 
@@ -234,7 +272,7 @@ do_update() {
     # Clear update cache
     rm -f "$UPDATE_CHECK_CACHE"
 
-    echo -e "${BLUE}[4/4] Update complete!${NC}"
+    echo -e "${BLUE}[5/5] Update complete!${NC}"
     echo ""
     echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║   Updated to v${latest_version}!${NC}"

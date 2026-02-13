@@ -17,6 +17,31 @@ echo -e "${GREEN}  TinyClaw - Setup Wizard${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
+if ! command -v jq &> /dev/null; then
+    echo -e "${RED}Error: jq is required for setup.${NC}"
+    echo "Install with: brew install jq (macOS) or apt-get install jq (Linux)"
+    exit 1
+fi
+
+csv_to_json_array() {
+    local csv="$1"
+    local values=()
+    IFS=',' read -ra raw_values <<< "$csv"
+    for raw in "${raw_values[@]}"; do
+        local value
+        value="$(echo "$raw" | tr -d '[:space:]')"
+        if [ -n "$value" ]; then
+            values+=("$value")
+        fi
+    done
+
+    if [ ${#values[@]} -eq 0 ]; then
+        jq -n '[]'
+    else
+        jq -n --args "${values[@]}" '$ARGS.positional'
+    fi
+}
+
 # --- Channel registry ---
 # To add a new channel, add its ID here and fill in the config arrays below.
 ALL_CHANNELS=(telegram discord whatsapp)
@@ -184,13 +209,19 @@ echo "Users route messages with '@agent_id message' in chat."
 echo ""
 read -rp "Set up additional agents? [y/N]: " SETUP_AGENTS
 
-AGENTS_JSON=""
-# Always create the default agent
 DEFAULT_AGENT_DIR="$WORKSPACE_PATH/$DEFAULT_AGENT_NAME"
 # Capitalize first letter of agent name (proper bash method)
 DEFAULT_AGENT_DISPLAY="$(tr '[:lower:]' '[:upper:]' <<< "${DEFAULT_AGENT_NAME:0:1}")${DEFAULT_AGENT_NAME:1}"
-AGENTS_JSON='"agents": {'
-AGENTS_JSON="$AGENTS_JSON \"$DEFAULT_AGENT_NAME\": { \"name\": \"$DEFAULT_AGENT_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_AGENT_DIR\" }"
+declare -a ALL_AGENT_IDS=("$DEFAULT_AGENT_NAME")
+declare -A AGENT_NAME_MAP=()
+declare -A AGENT_PROVIDER_MAP=()
+declare -A AGENT_MODEL_MAP=()
+declare -A AGENT_DIR_MAP=()
+
+AGENT_NAME_MAP["$DEFAULT_AGENT_NAME"]="$DEFAULT_AGENT_DISPLAY"
+AGENT_PROVIDER_MAP["$DEFAULT_AGENT_NAME"]="$PROVIDER"
+AGENT_MODEL_MAP["$DEFAULT_AGENT_NAME"]="$MODEL"
+AGENT_DIR_MAP["$DEFAULT_AGENT_NAME"]="$DEFAULT_AGENT_DIR"
 
 ADDITIONAL_AGENTS=()  # Track additional agent IDs for directory creation
 
@@ -240,8 +271,11 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
         fi
 
         NEW_AGENT_DIR="$WORKSPACE_PATH/$NEW_AGENT_ID"
-
-        AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_AGENT_DIR\" }"
+        ALL_AGENT_IDS+=("$NEW_AGENT_ID")
+        AGENT_NAME_MAP["$NEW_AGENT_ID"]="$NEW_AGENT_NAME"
+        AGENT_PROVIDER_MAP["$NEW_AGENT_ID"]="$NEW_PROVIDER"
+        AGENT_MODEL_MAP["$NEW_AGENT_ID"]="$NEW_MODEL"
+        AGENT_DIR_MAP["$NEW_AGENT_ID"]="$NEW_AGENT_DIR"
 
         # Track this agent for directory creation later
         ADDITIONAL_AGENTS+=("$NEW_AGENT_ID")
@@ -250,59 +284,111 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
     done
 fi
 
-AGENTS_JSON="$AGENTS_JSON },"
+# Security defaults
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  Security Defaults${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo "To reduce abuse risk, TinyClaw enforces per-channel sender allowlists by default."
+echo "Add trusted sender IDs now (comma-separated), or leave blank to block that channel until configured."
+echo ""
 
-# Build enabled channels array JSON
-CHANNELS_JSON="["
-for i in "${!ENABLED_CHANNELS[@]}"; do
-    if [ $i -gt 0 ]; then
-        CHANNELS_JSON="${CHANNELS_JSON}, "
-    fi
-    CHANNELS_JSON="${CHANNELS_JSON}\"${ENABLED_CHANNELS[$i]}\""
+declare -A ALLOWED_SENDERS_JSON=()
+for ch in "${ENABLED_CHANNELS[@]}"; do
+    read -rp "Trusted sender IDs for ${CHANNEL_DISPLAY[$ch]}: " sender_ids
+    ALLOWED_SENDERS_JSON["$ch"]="$(csv_to_json_array "$sender_ids")"
 done
-CHANNELS_JSON="${CHANNELS_JSON}]"
+
+echo ""
+read -rp "Allow dangerous agent permission-bypass flags? [y/N]: " ALLOW_DANGEROUS_INPUT
+if [[ "$ALLOW_DANGEROUS_INPUT" =~ ^[yY] ]]; then
+    ALLOW_DANGEROUS_FLAGS=true
+else
+    ALLOW_DANGEROUS_FLAGS=false
+fi
+
+read -rp "Persist full team chat transcripts to disk? [y/N]: " PERSIST_CHATS_INPUT
+if [[ "$PERSIST_CHATS_INPUT" =~ ^[yY] ]]; then
+    PERSIST_TEAM_CHATS=true
+else
+    PERSIST_TEAM_CHATS=false
+fi
+echo ""
+
+# Build enabled channels and agents JSON safely via jq
+CHANNELS_ENABLED_JSON="$(jq -n --args "${ENABLED_CHANNELS[@]}" '$ARGS.positional')"
+AGENTS_OBJECT='{}'
+for agent_id in "${ALL_AGENT_IDS[@]}"; do
+    AGENTS_OBJECT="$(jq -c \
+        --argjson current "$AGENTS_OBJECT" \
+        --arg id "$agent_id" \
+        --arg name "${AGENT_NAME_MAP[$agent_id]}" \
+        --arg provider "${AGENT_PROVIDER_MAP[$agent_id]}" \
+        --arg model "${AGENT_MODEL_MAP[$agent_id]}" \
+        --arg workdir "${AGENT_DIR_MAP[$agent_id]}" \
+        '$current + {($id): {name: $name, provider: $provider, model: $model, working_directory: $workdir}}' \
+    )"
+done
 
 # Build channel configs with tokens
 DISCORD_TOKEN="${TOKENS[discord]:-}"
 TELEGRAM_TOKEN="${TOKENS[telegram]:-}"
 
-# Write settings.json with layered structure
-# Use jq to build valid JSON to avoid escaping issues with agent prompts
-if [ "$PROVIDER" = "anthropic" ]; then
-    MODELS_SECTION='"models": { "provider": "anthropic", "anthropic": { "model": "'"${MODEL}"'" } }'
-else
-    MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
-fi
+# Build allowed_senders object (all channels present for consistency).
+ALLOWLIST_DISCORD="${ALLOWED_SENDERS_JSON[discord]:-[]}"
+ALLOWLIST_TELEGRAM="${ALLOWED_SENDERS_JSON[telegram]:-[]}"
+ALLOWLIST_WHATSAPP="${ALLOWED_SENDERS_JSON[whatsapp]:-[]}"
 
-cat > "$SETTINGS_FILE" <<EOF
-{
-  "workspace": {
-    "path": "${WORKSPACE_PATH}",
-    "name": "${WORKSPACE_NAME}"
-  },
-  "channels": {
-    "enabled": ${CHANNELS_JSON},
-    "discord": {
-      "bot_token": "${DISCORD_TOKEN}"
-    },
-    "telegram": {
-      "bot_token": "${TELEGRAM_TOKEN}"
-    },
-    "whatsapp": {}
-  },
-  ${AGENTS_JSON}
-  ${MODELS_SECTION},
-  "monitoring": {
-    "heartbeat_interval": ${HEARTBEAT_INTERVAL}
-  }
-}
-EOF
+mkdir -p "$(dirname "$SETTINGS_FILE")"
 
-# Normalize JSON with jq (fix any formatting issues)
-if command -v jq &> /dev/null; then
-    tmp_file="$SETTINGS_FILE.tmp"
-    jq '.' "$SETTINGS_FILE" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$SETTINGS_FILE"
-fi
+jq -n \
+    --arg workspacePath "$WORKSPACE_PATH" \
+    --arg workspaceName "$WORKSPACE_NAME" \
+    --argjson channelsEnabled "$CHANNELS_ENABLED_JSON" \
+    --arg discordToken "$DISCORD_TOKEN" \
+    --arg telegramToken "$TELEGRAM_TOKEN" \
+    --argjson agents "$AGENTS_OBJECT" \
+    --arg provider "$PROVIDER" \
+    --arg model "$MODEL" \
+    --argjson heartbeatInterval "$HEARTBEAT_INTERVAL" \
+    --argjson allowlistDiscord "$ALLOWLIST_DISCORD" \
+    --argjson allowlistTelegram "$ALLOWLIST_TELEGRAM" \
+    --argjson allowlistWhatsapp "$ALLOWLIST_WHATSAPP" \
+    --argjson allowDangerous "$ALLOW_DANGEROUS_FLAGS" \
+    --argjson persistTeamChats "$PERSIST_TEAM_CHATS" \
+    '{
+        workspace: {
+            path: $workspacePath,
+            name: $workspaceName
+        },
+        channels: {
+            enabled: $channelsEnabled,
+            discord: { bot_token: $discordToken },
+            telegram: { bot_token: $telegramToken },
+            whatsapp: {}
+        },
+        agents: $agents,
+        models: (
+            if $provider == "anthropic"
+            then { provider: "anthropic", anthropic: { model: $model } }
+            else { provider: "openai", openai: { model: $model } }
+            end
+        ),
+        monitoring: {
+            heartbeat_interval: $heartbeatInterval
+        },
+        security: {
+            require_sender_allowlist: true,
+            allowed_senders: {
+                discord: $allowlistDiscord,
+                telegram: $allowlistTelegram,
+                whatsapp: $allowlistWhatsapp
+            },
+            allow_dangerous_agent_flags: $allowDangerous,
+            allow_outbound_file_paths_outside_files_dir: false,
+            persist_team_chats: $persistTeamChats
+        }
+    }' > "$SETTINGS_FILE"
 
 # Create workspace directory
 mkdir -p "$WORKSPACE_PATH"

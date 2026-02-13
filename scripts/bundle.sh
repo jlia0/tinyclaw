@@ -33,6 +33,7 @@ if [ -n "$GIT_TAG" ]; then
 fi
 
 BUNDLE_NAME="tinyclaw-bundle-${VERSION}.tar.gz"
+CHECKSUM_NAME="tinyclaw-bundle-${VERSION}.sha256"
 TEMP_DIR=$(mktemp -d)
 BUNDLE_DIR="$TEMP_DIR/tinyclaw"
 
@@ -113,6 +114,15 @@ cd "$SCRIPT_DIR"
 rm -rf "$TEMP_DIR"
 
 BUNDLE_SIZE=$(du -h "$BUNDLE_NAME" | cut -f1)
+
+if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$BUNDLE_NAME" | awk '{print $1}' > "$CHECKSUM_NAME"
+elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$BUNDLE_NAME" | awk '{print $1}' > "$CHECKSUM_NAME"
+else
+    echo -e "${YELLOW}⚠ Could not generate checksum (missing shasum/sha256sum)${NC}"
+fi
+
 echo -e "${GREEN}✓ Bundle created: $BUNDLE_NAME ($BUNDLE_SIZE)${NC}"
 echo ""
 

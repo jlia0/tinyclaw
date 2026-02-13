@@ -12,10 +12,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import { MessageData, ResponseData, QueueFile, ChainStep, TeamConfig } from './lib/types';
+import { MessageData, ResponseData, QueueFile, ChainStep, TeamConfig, Settings } from './lib/types';
 import {
     QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING,
-    LOG_FILE, RESET_FLAG, EVENTS_DIR, CHATS_DIR,
+    LOG_FILE, RESET_FLAG, EVENTS_DIR, CHATS_DIR, FILES_DIR,
     getSettings, getAgents, getTeams
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
@@ -23,11 +23,56 @@ import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammate
 import { invokeAgent } from './lib/invoke';
 
 // Ensure directories exist
-[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, path.dirname(LOG_FILE)].forEach(dir => {
+[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, path.dirname(LOG_FILE), FILES_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
 });
+
+function redactForLogs(text: string, maxLength: number): string {
+    const redacted = text
+        .replace(/\[file:\s*[^\]]+\]/gi, '[file]')
+        .replace(/\[send_file:\s*[^\]]+\]/gi, '[send_file]');
+    return redacted.length > maxLength ? `${redacted.substring(0, maxLength)}...` : redacted;
+}
+
+function pathInDirectory(candidatePath: string, directoryPath: string): boolean {
+    try {
+        const resolvedDir = fs.realpathSync(directoryPath);
+        const resolvedFile = fs.realpathSync(candidatePath);
+        if (resolvedFile === resolvedDir) return true;
+        const dirWithSep = resolvedDir.endsWith(path.sep) ? resolvedDir : `${resolvedDir}${path.sep}`;
+        return resolvedFile.startsWith(dirWithSep);
+    } catch {
+        return false;
+    }
+}
+
+function isSafeOutboundFile(filePath: string, settings: Settings): boolean {
+    if (!fs.existsSync(filePath)) return false;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return false;
+
+    if (settings.security?.allow_outbound_file_paths_outside_files_dir === true) {
+        return true;
+    }
+    return pathInDirectory(filePath, FILES_DIR);
+}
+
+function isSenderAuthorized(messageData: MessageData, settings: Settings): boolean {
+    if (messageData.channel === 'heartbeat') return true;
+
+    const requireAllowlist = settings.security?.require_sender_allowlist !== false;
+    if (!requireAllowlist) return true;
+
+    const allowedByChannel = settings.security?.allowed_senders || {};
+    const allowed = (allowedByChannel as Record<string, string[]>)[messageData.channel] || [];
+    if (allowed.includes('*')) return true;
+
+    const senderId = (messageData.senderId || '').trim();
+    if (!senderId) return false;
+    return allowed.includes(senderId);
+}
 
 // Process a single message
 async function processMessage(messageFile: string): Promise<void> {
@@ -39,15 +84,33 @@ async function processMessage(messageFile: string): Promise<void> {
 
         // Read message
         const messageData: MessageData = JSON.parse(fs.readFileSync(processingFile, 'utf8'));
-        const { channel, sender, message: rawMessage, timestamp, messageId } = messageData;
+        const { channel, sender, senderId, message: rawMessage, messageId } = messageData;
+        const safeMessagePreview = redactForLogs(rawMessage, 120);
 
-        log('INFO', `Processing [${channel}] from ${sender}: ${rawMessage.substring(0, 50)}...`);
-        emitEvent('message_received', { channel, sender, message: rawMessage.substring(0, 120), messageId });
+        log('INFO', `Processing [${channel}] from ${sender}: ${redactForLogs(rawMessage, 50)}...`);
+        emitEvent('message_received', { channel, sender, message: safeMessagePreview, messageId });
 
         // Get settings, agents, and teams
         const settings = getSettings();
         const agents = getAgents(settings);
         const teams = getTeams(settings);
+        const allowDangerousFlags = settings.security?.allow_dangerous_agent_flags === true;
+
+        if (!isSenderAuthorized(messageData, settings)) {
+            const responseFile = path.join(QUEUE_OUTGOING, path.basename(processingFile));
+            const responseData: ResponseData = {
+                channel,
+                sender,
+                message: `Access denied. Sender is not allowlisted for ${channel}. Sender ID: ${senderId || 'unknown'}`,
+                originalMessage: rawMessage,
+                timestamp: Date.now(),
+                messageId,
+            };
+            fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
+            fs.unlinkSync(processingFile);
+            log('WARN', `Blocked unauthorized sender on ${channel}: ${sender} (${senderId || 'unknown'})`);
+            return;
+        }
 
         // Get workspace path from settings
         const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
@@ -138,7 +201,9 @@ async function processMessage(messageFile: string): Promise<void> {
         if (!teamContext) {
             // No team context — single agent invocation (backward compatible)
             try {
-                finalResponse = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+                finalResponse = await invokeAgent(
+                    agent, agentId, message, workspacePath, shouldReset, agents, teams, allowDangerousFlags
+                );
             } catch (error) {
                 const provider = agent.provider || 'anthropic';
                 log('ERROR', `${provider === 'openai' ? 'Codex' : 'Claude'} error (agent: ${agentId}): ${(error as Error).message}`);
@@ -176,7 +241,9 @@ async function processMessage(messageFile: string): Promise<void> {
 
                 let stepResponse: string;
                 try {
-                    stepResponse = await invokeAgent(currentAgent, currentAgentId, currentMessage, workspacePath, currentShouldReset, agents, teams);
+                    stepResponse = await invokeAgent(
+                        currentAgent, currentAgentId, currentMessage, workspacePath, currentShouldReset, agents, teams, allowDangerousFlags
+                    );
                 } catch (error) {
                     const provider = currentAgent.provider || 'anthropic';
                     log('ERROR', `${provider === 'openai' ? 'Codex' : 'Claude'} error (agent: ${currentAgentId}): ${(error as Error).message}`);
@@ -184,15 +251,23 @@ async function processMessage(messageFile: string): Promise<void> {
                 }
 
                 chainSteps.push({ agentId: currentAgentId, response: stepResponse });
-                emitEvent('chain_step_done', { teamId: teamContext.teamId, step: chainSteps.length, agentId: currentAgentId, responseLength: stepResponse.length, responseText: stepResponse });
+                emitEvent('chain_step_done', {
+                    teamId: teamContext.teamId,
+                    step: chainSteps.length,
+                    agentId: currentAgentId,
+                    responseLength: stepResponse.length,
+                    responsePreview: redactForLogs(stepResponse, 120),
+                });
 
                 // Collect files from this step
                 const stepFileRegex = /\[send_file:\s*([^\]]+)\]/g;
                 let stepFileMatch: RegExpExecArray | null;
                 while ((stepFileMatch = stepFileRegex.exec(stepResponse)) !== null) {
                     const filePath = stepFileMatch[1].trim();
-                    if (fs.existsSync(filePath)) {
+                    if (isSafeOutboundFile(filePath, settings)) {
                         allFiles.add(filePath);
+                    } else {
+                        log('WARN', `Blocked unsafe outbound file path from @${currentAgentId}: ${filePath}`);
                     }
                 }
 
@@ -236,13 +311,21 @@ async function processMessage(messageFile: string): Promise<void> {
                             let mResponse: string;
                             try {
                                 const mMessage = `[Message from teammate @${currentAgentId}]:\n${mention.message}`;
-                                mResponse = await invokeAgent(mAgent, mention.teammateId, mMessage, workspacePath, mShouldReset, agents, teams);
+                                mResponse = await invokeAgent(
+                                    mAgent, mention.teammateId, mMessage, workspacePath, mShouldReset, agents, teams, allowDangerousFlags
+                                );
                             } catch (error) {
                                 log('ERROR', `Fan-out error (agent: ${mention.teammateId}): ${(error as Error).message}`);
                                 mResponse = "Sorry, I encountered an error processing this request.";
                             }
 
-                            emitEvent('chain_step_done', { teamId: teamContext!.teamId, step: chainSteps.length + 1, agentId: mention.teammateId, responseLength: mResponse.length, responseText: mResponse });
+                            emitEvent('chain_step_done', {
+                                teamId: teamContext!.teamId,
+                                step: chainSteps.length + 1,
+                                agentId: mention.teammateId,
+                                responseLength: mResponse.length,
+                                responsePreview: redactForLogs(mResponse, 120),
+                            });
                             return { agentId: mention.teammateId, response: mResponse };
                         })
                     );
@@ -255,7 +338,11 @@ async function processMessage(messageFile: string): Promise<void> {
                         let fanFileMatch: RegExpExecArray | null;
                         while ((fanFileMatch = fanFileRegex.exec(result.response)) !== null) {
                             const filePath = fanFileMatch[1].trim();
-                            if (fs.existsSync(filePath)) allFiles.add(filePath);
+                            if (isSafeOutboundFile(filePath, settings)) {
+                                allFiles.add(filePath);
+                            } else {
+                                log('WARN', `Blocked unsafe outbound file path from @${result.agentId}: ${filePath}`);
+                            }
                         }
                     }
 
@@ -274,42 +361,44 @@ async function processMessage(messageFile: string): Promise<void> {
                     .join('\n\n---\n\n');
             }
 
-            // Write chain chat history to .tinyclaw/chats
-            try {
-                const teamChatsDir = path.join(CHATS_DIR, teamContext.teamId);
-                if (!fs.existsSync(teamChatsDir)) {
-                    fs.mkdirSync(teamChatsDir, { recursive: true });
-                }
-                const chatLines: string[] = [];
-                chatLines.push(`# Team Chain: ${teamContext.team.name} (@${teamContext.teamId})`);
-                chatLines.push(`**Date:** ${new Date().toISOString()}`);
-                chatLines.push(`**Channel:** ${channel} | **Sender:** ${sender}`);
-                chatLines.push(`**Steps:** ${chainSteps.length}`);
-                chatLines.push('');
-                chatLines.push('---');
-                chatLines.push('');
-                chatLines.push(`## User Message`);
-                chatLines.push('');
-                chatLines.push(rawMessage);
-                chatLines.push('');
-                for (let i = 0; i < chainSteps.length; i++) {
-                    const step = chainSteps[i];
-                    const stepAgent = agents[step.agentId];
-                    const stepLabel = stepAgent ? `${stepAgent.name} (@${step.agentId})` : `@${step.agentId}`;
+            // Persist full team chats only when explicitly enabled.
+            if (settings.security?.persist_team_chats === true) {
+                try {
+                    const teamChatsDir = path.join(CHATS_DIR, teamContext.teamId);
+                    if (!fs.existsSync(teamChatsDir)) {
+                        fs.mkdirSync(teamChatsDir, { recursive: true });
+                    }
+                    const chatLines: string[] = [];
+                    chatLines.push(`# Team Chain: ${teamContext.team.name} (@${teamContext.teamId})`);
+                    chatLines.push(`**Date:** ${new Date().toISOString()}`);
+                    chatLines.push(`**Channel:** ${channel} | **Sender:** ${sender}`);
+                    chatLines.push(`**Steps:** ${chainSteps.length}`);
+                    chatLines.push('');
                     chatLines.push('---');
                     chatLines.push('');
-                    chatLines.push(`## Step ${i + 1}: ${stepLabel}`);
+                    chatLines.push(`## User Message`);
                     chatLines.push('');
-                    chatLines.push(step.response);
+                    chatLines.push(redactForLogs(rawMessage, 4000));
                     chatLines.push('');
+                    for (let i = 0; i < chainSteps.length; i++) {
+                        const step = chainSteps[i];
+                        const stepAgent = agents[step.agentId];
+                        const stepLabel = stepAgent ? `${stepAgent.name} (@${step.agentId})` : `@${step.agentId}`;
+                        chatLines.push('---');
+                        chatLines.push('');
+                        chatLines.push(`## Step ${i + 1}: ${stepLabel}`);
+                        chatLines.push('');
+                        chatLines.push(redactForLogs(step.response, 4000));
+                        chatLines.push('');
+                    }
+                    const now = new Date();
+                    const dateTime = now.toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
+                    const chatFilename = `${dateTime}.md`;
+                    fs.writeFileSync(path.join(teamChatsDir, chatFilename), chatLines.join('\n'));
+                    log('INFO', `Chain chat history saved to ${chatFilename}`);
+                } catch (e) {
+                    log('ERROR', `Failed to save chain chat history: ${(e as Error).message}`);
                 }
-                const now = new Date();
-                const dateTime = now.toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
-                const chatFilename = `${dateTime}.md`;
-                fs.writeFileSync(path.join(teamChatsDir, chatFilename), chatLines.join('\n'));
-                log('INFO', `Chain chat history saved to ${chatFilename}`);
-            } catch (e) {
-                log('ERROR', `Failed to save chain chat history: ${(e as Error).message}`);
             }
         }
 
@@ -320,16 +409,16 @@ async function processMessage(messageFile: string): Promise<void> {
         let fileMatch: RegExpExecArray | null;
         while ((fileMatch = fileRefRegex.exec(finalResponse)) !== null) {
             const filePath = fileMatch[1].trim();
-            if (fs.existsSync(filePath)) {
+            if (isSafeOutboundFile(filePath, settings)) {
                 outboundFilesSet.add(filePath);
+            } else {
+                log('WARN', `Blocked unsafe outbound file path in final response: ${filePath}`);
             }
         }
         const outboundFiles = Array.from(outboundFilesSet);
 
-        // Remove the [send_file: ...] tags from the response text
-        if (outboundFiles.length > 0) {
-            finalResponse = finalResponse.replace(fileRefRegex, '').trim();
-        }
+        // Always remove [send_file: ...] tags from user-facing response text.
+        finalResponse = finalResponse.replace(fileRefRegex, '').trim();
 
         // Limit response length after tags are parsed and removed
         if (finalResponse.length > 4000) {
@@ -356,7 +445,7 @@ async function processMessage(messageFile: string): Promise<void> {
         fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
 
         log('INFO', `✓ Response ready [${channel}] ${sender} via agent:${agentId} (${finalResponse.length} chars)`);
-        emitEvent('response_ready', { channel, sender, agentId, responseLength: finalResponse.length, responseText: finalResponse, messageId });
+        emitEvent('response_ready', { channel, sender, agentId, responseLength: finalResponse.length, messageId });
 
         // Clean up processing file
         fs.unlinkSync(processingFile);

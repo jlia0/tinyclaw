@@ -54,7 +54,8 @@ export async function invokeAgent(
     workspacePath: string,
     shouldReset: boolean,
     agents: Record<string, AgentConfig> = {},
-    teams: Record<string, TeamConfig> = {}
+    teams: Record<string, TeamConfig> = {},
+    allowDangerousFlags = false
 ): Promise<string> {
     // Ensure agent directory exists with config files
     const agentDir = path.join(workspacePath, agentId);
@@ -93,7 +94,12 @@ export async function invokeAgent(
         if (modelId) {
             codexArgs.push('--model', modelId);
         }
-        codexArgs.push('--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json', message);
+        codexArgs.push('--skip-git-repo-check');
+        if (allowDangerousFlags) {
+            codexArgs.push('--dangerously-bypass-approvals-and-sandbox');
+            log('WARN', `Dangerous Codex flags enabled for agent: ${agentId}`);
+        }
+        codexArgs.push('--json', message);
 
         const codexOutput = await runCommand('codex', codexArgs, workingDir);
 
@@ -123,7 +129,11 @@ export async function invokeAgent(
         }
 
         const modelId = resolveClaudeModel(agent.model);
-        const claudeArgs = ['--dangerously-skip-permissions'];
+        const claudeArgs: string[] = [];
+        if (allowDangerousFlags) {
+            claudeArgs.push('--dangerously-skip-permissions');
+            log('WARN', `Dangerous Claude flags enabled for agent: ${agentId}`);
+        }
         if (modelId) {
             claudeArgs.push('--model', modelId);
         }

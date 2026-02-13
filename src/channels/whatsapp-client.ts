@@ -21,6 +21,7 @@ const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/whatsapp.log');
 const SESSION_DIR = path.join(SCRIPT_DIR, '.tinyclaw/whatsapp-session');
 const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
+const MAX_DOWNLOAD_BYTES = Number(process.env.TINYCLAW_MAX_DOWNLOAD_BYTES || (25 * 1024 * 1024));
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), SESSION_DIR, FILES_DIR].forEach(dir => {
@@ -79,11 +80,35 @@ function extFromMime(mime?: string): string {
     return map[mime] || `.${mime.split('/')[1] || 'bin'}`;
 }
 
+function pathInDirectory(candidatePath: string, directoryPath: string): boolean {
+    try {
+        const resolvedDir = fs.realpathSync(directoryPath);
+        const resolvedFile = fs.realpathSync(candidatePath);
+        if (resolvedFile === resolvedDir) return true;
+        const dirWithSep = resolvedDir.endsWith(path.sep) ? resolvedDir : `${resolvedDir}${path.sep}`;
+        return resolvedFile.startsWith(dirWithSep);
+    } catch {
+        return false;
+    }
+}
+
+function isAllowedOutgoingFile(filePath: string): boolean {
+    if (!fs.existsSync(filePath)) return false;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return false;
+    return pathInDirectory(filePath, FILES_DIR);
+}
+
 // Download media from a WhatsApp message and save to FILES_DIR
 async function downloadWhatsAppMedia(message: Message, queueMessageId: string): Promise<string | null> {
     try {
         const media = await message.downloadMedia();
         if (!media || !media.data) return null;
+        const approxBytes = Math.floor((media.data.length * 3) / 4);
+        if (approxBytes > MAX_DOWNLOAD_BYTES) {
+            log('WARN', `Rejected oversized media (${approxBytes} bytes)`);
+            return null;
+        }
 
         const ext = message.type === MessageTypes.DOCUMENT && (message as any)._data?.filename
             ? path.extname((message as any)._data.filename)
@@ -157,6 +182,19 @@ function getAgentListText(): string {
         return text;
     } catch {
         return 'Could not load agent configuration.';
+    }
+}
+
+function isSenderAllowed(senderId: string): boolean {
+    try {
+        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
+        const settings = JSON.parse(settingsData);
+        const requireAllowlist = settings?.security?.require_sender_allowlist !== false;
+        if (!requireAllowlist) return true;
+        const allowed: string[] = settings?.security?.allowed_senders?.whatsapp || [];
+        return allowed.includes('*') || allowed.includes(senderId);
+    } catch {
+        return false;
     }
 }
 
@@ -240,9 +278,16 @@ client.on('message_create', async (message: Message) => {
         const chat = await message.getChat();
         const contact = await message.getContact();
         const sender = contact.pushname || contact.name || message.from;
+        const senderId = message.from;
 
         // Skip group messages
         if (chat.isGroup) {
+            return;
+        }
+
+        if (!isSenderAllowed(senderId)) {
+            log('WARN', `Blocked unauthorized sender: ${sender} (${senderId})`);
+            await message.reply(`Access denied. Sender ID ${senderId} is not allowlisted.`);
             return;
         }
 
@@ -311,7 +356,7 @@ client.on('message_create', async (message: Message) => {
         const queueData: QueueData = {
             channel: 'whatsapp',
             sender: sender,
-            senderId: message.from,
+            senderId: senderId,
             message: fullMessage,
             timestamp: Date.now(),
             messageId: messageId,
@@ -369,7 +414,10 @@ async function checkOutgoingQueue(): Promise<void> {
                     if (responseData.files && responseData.files.length > 0) {
                         for (const file of responseData.files) {
                             try {
-                                if (!fs.existsSync(file)) continue;
+                                if (!isAllowedOutgoingFile(file)) {
+                                    log('WARN', `Blocked unsafe outbound file path: ${file}`);
+                                    continue;
+                                }
                                 const media = MessageMedia.fromFilePath(file);
                                 await pending.chat.sendMessage(media);
                                 log('INFO', `Sent file to WhatsApp: ${path.basename(file)}`);

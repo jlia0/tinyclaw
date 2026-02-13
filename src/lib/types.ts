@@ -41,6 +41,17 @@ export interface Settings {
     monitoring?: {
         heartbeat_interval?: number;
     };
+    security?: {
+        require_sender_allowlist?: boolean;
+        allowed_senders?: {
+            discord?: string[];
+            telegram?: string[];
+            whatsapp?: string[];
+        };
+        allow_dangerous_agent_flags?: boolean;
+        allow_outbound_file_paths_outside_files_dir?: boolean;
+        persist_team_chats?: boolean;
+    };
 }
 
 export interface MessageData {

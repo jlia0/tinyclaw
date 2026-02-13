@@ -16,6 +16,28 @@ GITHUB_REPO="jlia0/tinyclaw"
 DEFAULT_BRANCH="main"
 INSTALL_DIR=""
 
+verify_sha256() {
+    local file_path="$1"
+    local checksum_file="$2"
+    local expected actual
+
+    expected=$(awk '{print $1}' "$checksum_file" 2>/dev/null | head -n1)
+    if [ -z "$expected" ]; then
+        return 1
+    fi
+
+    if command -v shasum >/dev/null 2>&1; then
+        actual=$(shasum -a 256 "$file_path" | awk '{print $1}')
+    elif command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$file_path" | awk '{print $1}')
+    else
+        echo -e "${RED}✗ Missing checksum tool (shasum or sha256sum)${NC}"
+        return 1
+    fi
+
+    [ "$actual" = "$expected" ]
+}
+
 echo ""
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║     TinyClaw Remote Installer         ║${NC}"
@@ -99,13 +121,14 @@ LATEST_RELEASE=$(curl -fsSL "https://api.github.com/repos/$GITHUB_REPO/releases/
 
 if [ -n "$LATEST_RELEASE" ]; then
     BUNDLE_URL="https://github.com/$GITHUB_REPO/releases/download/$LATEST_RELEASE/tinyclaw-bundle.tar.gz"
+    CHECKSUM_URL="https://github.com/$GITHUB_REPO/releases/download/$LATEST_RELEASE/tinyclaw-bundle.sha256"
 
     # Check if bundle exists
-    if curl -fsSL -I "$BUNDLE_URL" >/dev/null 2>&1; then
+    if curl -fsSL -I "$BUNDLE_URL" >/dev/null 2>&1 && curl -fsSL -I "$CHECKSUM_URL" >/dev/null 2>&1; then
         echo -e "${GREEN}✓ Pre-built bundle available ($LATEST_RELEASE)${NC}"
         USE_BUNDLE=true
     else
-        echo -e "${YELLOW}⚠ No pre-built bundle found, will build from source${NC}"
+        echo -e "${YELLOW}⚠ No verified pre-built bundle found, will build from source${NC}"
         USE_BUNDLE=false
     fi
 else
@@ -120,14 +143,21 @@ echo -e "${BLUE}[4/6] Downloading TinyClaw...${NC}"
 if [ "$USE_BUNDLE" = true ]; then
     # Download and extract bundle
     mkdir -p "$INSTALL_DIR"
+    TMP_DIR=$(mktemp -d)
+    BUNDLE_FILE="$TMP_DIR/tinyclaw-bundle.tar.gz"
+    CHECKSUM_FILE="$TMP_DIR/tinyclaw-bundle.sha256"
 
-    echo "Downloading bundle..."
-    if curl -fsSL "$BUNDLE_URL" | tar -xz -C "$INSTALL_DIR" --strip-components=1; then
+    echo "Downloading bundle and checksum..."
+    if curl -fsSL -o "$BUNDLE_FILE" "$BUNDLE_URL" \
+        && curl -fsSL -o "$CHECKSUM_FILE" "$CHECKSUM_URL" \
+        && verify_sha256 "$BUNDLE_FILE" "$CHECKSUM_FILE" \
+        && tar -xzf "$BUNDLE_FILE" -C "$INSTALL_DIR" --strip-components=1; then
         echo -e "${GREEN}✓ Bundle extracted${NC}"
     else
-        echo -e "${RED}✗ Failed to download bundle, falling back to source install${NC}"
+        echo -e "${RED}✗ Failed to verify bundle integrity, falling back to source install${NC}"
         USE_BUNDLE=false
     fi
+    rm -rf "$TMP_DIR"
 else
     # Clone from GitHub
     if ! command_exists git; then

@@ -22,6 +22,9 @@ const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
 const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/discord.log');
 const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
+const MAX_DOWNLOAD_BYTES = Number(process.env.TINYCLAW_MAX_DOWNLOAD_BYTES || (25 * 1024 * 1024));
+const DOWNLOAD_TIMEOUT_MS = Number(process.env.TINYCLAW_DOWNLOAD_TIMEOUT_MS || 30000);
+const MAX_REDIRECTS = 5;
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), FILES_DIR].forEach(dir => {
@@ -81,28 +84,115 @@ function buildUniqueFilePath(dir: string, preferredName: string): string {
     return candidate;
 }
 
+function pathInDirectory(candidatePath: string, directoryPath: string): boolean {
+    try {
+        const resolvedDir = fs.realpathSync(directoryPath);
+        const resolvedFile = fs.realpathSync(candidatePath);
+        if (resolvedFile === resolvedDir) return true;
+        const dirWithSep = resolvedDir.endsWith(path.sep) ? resolvedDir : `${resolvedDir}${path.sep}`;
+        return resolvedFile.startsWith(dirWithSep);
+    } catch {
+        return false;
+    }
+}
+
+function isAllowedOutgoingFile(filePath: string): boolean {
+    if (!fs.existsSync(filePath)) return false;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return false;
+    return pathInDirectory(filePath, FILES_DIR);
+}
+
 // Download a file from URL to local path
-function downloadFile(url: string, destPath: string): Promise<void> {
+function downloadFile(url: string, destPath: string, redirectCount = 0): Promise<void> {
     return new Promise((resolve, reject) => {
+        if (redirectCount > MAX_REDIRECTS) {
+            reject(new Error('Too many redirects while downloading file'));
+            return;
+        }
+
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(url);
+        } catch {
+            reject(new Error('Invalid download URL'));
+            return;
+        }
+        if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+            reject(new Error(`Unsupported URL protocol: ${parsedUrl.protocol}`));
+            return;
+        }
+
         const file = fs.createWriteStream(destPath);
-        const request = (url.startsWith('https') ? https.get(url, handleResponse) : http.get(url, handleResponse));
+        let totalBytes = 0;
+        let settled = false;
+        const cleanupFile = () => fs.unlink(destPath, () => {});
+
+        const request = (parsedUrl.protocol === 'https:' ? https.get(url, handleResponse) : http.get(url, handleResponse));
+        request.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
+            if (settled) return;
+            settled = true;
+            request.destroy(new Error('Download timeout'));
+            file.destroy();
+            cleanupFile();
+            reject(new Error('Download timeout'));
+        });
 
         function handleResponse(response: http.IncomingMessage): void {
-            if (response.statusCode === 301 || response.statusCode === 302) {
+            if ([301, 302, 303, 307, 308].includes(response.statusCode || 0)) {
                 const redirectUrl = response.headers.location;
                 if (redirectUrl) {
+                    settled = true;
+                    const absoluteRedirect = new URL(redirectUrl, parsedUrl).toString();
                     file.close();
-                    fs.unlinkSync(destPath);
-                    downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
+                    cleanupFile();
+                    downloadFile(absoluteRedirect, destPath, redirectCount + 1).then(resolve).catch(reject);
                     return;
                 }
             }
+
+            if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
+                settled = true;
+                file.destroy();
+                cleanupFile();
+                reject(new Error(`Download failed with status ${response.statusCode}`));
+                return;
+            }
+
+            response.on('data', (chunk: Buffer) => {
+                totalBytes += chunk.length;
+                if (totalBytes > MAX_DOWNLOAD_BYTES && !settled) {
+                    settled = true;
+                    response.destroy(new Error('Download exceeded size limit'));
+                    request.destroy(new Error('Download exceeded size limit'));
+                    file.destroy();
+                    cleanupFile();
+                    reject(new Error(`Download exceeds max size (${MAX_DOWNLOAD_BYTES} bytes)`));
+                }
+            });
+
             response.pipe(file);
-            file.on('finish', () => { file.close(); resolve(); });
+            file.on('finish', () => {
+                if (settled) return;
+                settled = true;
+                file.close();
+                resolve();
+            });
         }
 
         request.on('error', (err) => {
-            fs.unlink(destPath, () => {});
+            if (settled) return;
+            settled = true;
+            cleanupFile();
+            file.destroy();
+            reject(err);
+        });
+
+        file.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            request.destroy();
+            cleanupFile();
             reject(err);
         });
     });
@@ -163,6 +253,19 @@ function getAgentListText(): string {
         return text;
     } catch {
         return 'Could not load agent configuration.';
+    }
+}
+
+function isSenderAllowed(senderId: string): boolean {
+    try {
+        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
+        const settings = JSON.parse(settingsData);
+        const requireAllowlist = settings?.security?.require_sender_allowlist !== false;
+        if (!requireAllowlist) return true;
+        const allowed: string[] = settings?.security?.allowed_senders?.discord || [];
+        return allowed.includes('*') || allowed.includes(senderId);
+    } catch {
+        return false;
     }
 }
 
@@ -242,6 +345,13 @@ client.on(Events.MessageCreate, async (message: Message) => {
         }
 
         const sender = message.author.username;
+        const senderId = message.author.id;
+
+        if (!isSenderAllowed(senderId)) {
+            log('WARN', `Blocked unauthorized sender: ${sender} (${senderId})`);
+            await message.reply(`Access denied. Sender ID ${senderId} is not allowlisted.`);
+            return;
+        }
 
         // Generate unique message ID
         const messageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -311,7 +421,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         const queueData: QueueData = {
             channel: 'discord',
             sender: sender,
-            senderId: message.author.id,
+            senderId: senderId,
             message: fullMessage,
             timestamp: Date.now(),
             messageId: messageId,
@@ -370,7 +480,10 @@ async function checkOutgoingQueue(): Promise<void> {
                         const attachments: AttachmentBuilder[] = [];
                         for (const file of responseData.files) {
                             try {
-                                if (!fs.existsSync(file)) continue;
+                                if (!isAllowedOutgoingFile(file)) {
+                                    log('WARN', `Blocked unsafe outbound file path: ${file}`);
+                                    continue;
+                                }
                                 attachments.push(new AttachmentBuilder(file));
                             } catch (fileErr) {
                                 log('ERROR', `Failed to prepare file ${file}: ${(fileErr as Error).message}`);

@@ -18,23 +18,22 @@ start_daemon() {
         PUPPETEER_SKIP_DOWNLOAD=true npm install
     fi
 
-    # Build TypeScript if any src file is newer than its dist counterpart
+    # Build TypeScript if source changed since last build stamp.
     local needs_build=false
-    if [ ! -d "$SCRIPT_DIR/dist" ]; then
+    local build_stamp="$SCRIPT_DIR/dist/.build-stamp"
+    if [ ! -d "$SCRIPT_DIR/dist" ] || [ ! -f "$build_stamp" ]; then
         needs_build=true
     else
-        for ts_file in "$SCRIPT_DIR"/src/*.ts; do
-            local js_file="$SCRIPT_DIR/dist/$(basename "${ts_file%.ts}.js")"
-            if [ ! -f "$js_file" ] || [ "$ts_file" -nt "$js_file" ]; then
-                needs_build=true
-                break
-            fi
-        done
+        if find "$SCRIPT_DIR/src" -type f \( -name "*.ts" -o -name "*.tsx" \) -newer "$build_stamp" | grep -q .; then
+            needs_build=true
+        fi
     fi
     if [ "$needs_build" = true ]; then
         echo -e "${YELLOW}Building TypeScript...${NC}"
         cd "$SCRIPT_DIR"
         npm run build
+        mkdir -p "$SCRIPT_DIR/dist"
+        touch "$build_stamp"
     fi
 
     # Load settings or run setup wizard

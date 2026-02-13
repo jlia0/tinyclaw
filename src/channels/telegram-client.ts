@@ -24,6 +24,9 @@ const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
 const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/telegram.log');
 const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
+const MAX_DOWNLOAD_BYTES = Number(process.env.TINYCLAW_MAX_DOWNLOAD_BYTES || (25 * 1024 * 1024));
+const DOWNLOAD_TIMEOUT_MS = Number(process.env.TINYCLAW_DOWNLOAD_TIMEOUT_MS || 30000);
+const MAX_REDIRECTS = 5;
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), FILES_DIR].forEach(dir => {
@@ -90,6 +93,25 @@ function buildUniqueFilePath(dir: string, preferredName: string): string {
     return candidate;
 }
 
+function pathInDirectory(candidatePath: string, directoryPath: string): boolean {
+    try {
+        const resolvedDir = fs.realpathSync(directoryPath);
+        const resolvedFile = fs.realpathSync(candidatePath);
+        if (resolvedFile === resolvedDir) return true;
+        const dirWithSep = resolvedDir.endsWith(path.sep) ? resolvedDir : `${resolvedDir}${path.sep}`;
+        return resolvedFile.startsWith(dirWithSep);
+    } catch {
+        return false;
+    }
+}
+
+function isAllowedOutgoingFile(filePath: string): boolean {
+    if (!fs.existsSync(filePath)) return false;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return false;
+    return pathInDirectory(filePath, FILES_DIR);
+}
+
 // Track pending messages (waiting for response)
 const pendingMessages = new Map<string, PendingMessage>();
 let processingOutgoingQueue = false;
@@ -148,6 +170,19 @@ function getAgentListText(): string {
     }
 }
 
+function isSenderAllowed(senderId: string): boolean {
+    try {
+        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
+        const settings = JSON.parse(settingsData);
+        const requireAllowlist = settings?.security?.require_sender_allowlist !== false;
+        if (!requireAllowlist) return true;
+        const allowed: string[] = settings?.security?.allowed_senders?.telegram || [];
+        return allowed.includes('*') || allowed.includes(senderId);
+    } catch {
+        return false;
+    }
+}
+
 // Split long messages for Telegram's 4096 char limit
 function splitMessage(text: string, maxLength = 4096): string[] {
     if (text.length <= maxLength) {
@@ -184,27 +219,95 @@ function splitMessage(text: string, maxLength = 4096): string[] {
 }
 
 // Download a file from URL to local path
-function downloadFile(url: string, destPath: string): Promise<void> {
+function downloadFile(url: string, destPath: string, redirectCount = 0): Promise<void> {
     return new Promise((resolve, reject) => {
+        if (redirectCount > MAX_REDIRECTS) {
+            reject(new Error('Too many redirects while downloading file'));
+            return;
+        }
+
+        let parsedUrl: URL;
+        try {
+            parsedUrl = new URL(url);
+        } catch {
+            reject(new Error('Invalid download URL'));
+            return;
+        }
+        if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+            reject(new Error(`Unsupported URL protocol: ${parsedUrl.protocol}`));
+            return;
+        }
+
         const file = fs.createWriteStream(destPath);
-        const request = (url.startsWith('https') ? https.get(url, handleResponse) : http.get(url, handleResponse));
+        let totalBytes = 0;
+        let settled = false;
+        const cleanupFile = () => fs.unlink(destPath, () => {});
+
+        const request = (parsedUrl.protocol === 'https:' ? https.get(url, handleResponse) : http.get(url, handleResponse));
+        request.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
+            if (settled) return;
+            settled = true;
+            request.destroy(new Error('Download timeout'));
+            file.destroy();
+            cleanupFile();
+            reject(new Error('Download timeout'));
+        });
 
         function handleResponse(response: http.IncomingMessage): void {
-            if (response.statusCode === 301 || response.statusCode === 302) {
+            if ([301, 302, 303, 307, 308].includes(response.statusCode || 0)) {
                 const redirectUrl = response.headers.location;
                 if (redirectUrl) {
+                    settled = true;
+                    const absoluteRedirect = new URL(redirectUrl, parsedUrl).toString();
                     file.close();
-                    fs.unlinkSync(destPath);
-                    downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
+                    cleanupFile();
+                    downloadFile(absoluteRedirect, destPath, redirectCount + 1).then(resolve).catch(reject);
                     return;
                 }
             }
+
+            if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
+                settled = true;
+                file.destroy();
+                cleanupFile();
+                reject(new Error(`Download failed with status ${response.statusCode}`));
+                return;
+            }
+
+            response.on('data', (chunk: Buffer) => {
+                totalBytes += chunk.length;
+                if (totalBytes > MAX_DOWNLOAD_BYTES && !settled) {
+                    settled = true;
+                    response.destroy(new Error('Download exceeded size limit'));
+                    request.destroy(new Error('Download exceeded size limit'));
+                    file.destroy();
+                    cleanupFile();
+                    reject(new Error(`Download exceeds max size (${MAX_DOWNLOAD_BYTES} bytes)`));
+                }
+            });
+
             response.pipe(file);
-            file.on('finish', () => { file.close(); resolve(); });
+            file.on('finish', () => {
+                if (settled) return;
+                settled = true;
+                file.close();
+                resolve();
+            });
         }
 
         request.on('error', (err) => {
-            fs.unlink(destPath, () => {}); // Clean up on error
+            if (settled) return;
+            settled = true;
+            cleanupFile();
+            file.destroy();
+            reject(err);
+        });
+
+        file.on('error', (err) => {
+            if (settled) return;
+            settled = true;
+            request.destroy();
+            cleanupFile();
             reject(err);
         });
     });
@@ -331,6 +434,14 @@ bot.on('message', async (msg: TelegramBot.Message) => {
             : 'Unknown';
         const senderId = msg.from ? msg.from.id.toString() : msg.chat.id.toString();
 
+        if (!isSenderAllowed(senderId)) {
+            log('WARN', `Blocked unauthorized sender: ${sender} (${senderId})`);
+            await bot.sendMessage(msg.chat.id, `Access denied. Sender ID ${senderId} is not allowlisted.`, {
+                reply_to_message_id: msg.message_id,
+            });
+            return;
+        }
+
         log('INFO', `Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
 
         // Check for agent list command
@@ -440,7 +551,10 @@ async function checkOutgoingQueue(): Promise<void> {
                     if (responseData.files && responseData.files.length > 0) {
                         for (const file of responseData.files) {
                             try {
-                                if (!fs.existsSync(file)) continue;
+                                if (!isAllowedOutgoingFile(file)) {
+                                    log('WARN', `Blocked unsafe outbound file path: ${file}`);
+                                    continue;
+                                }
                                 const ext = path.extname(file).toLowerCase();
                                 if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
                                     await bot.sendPhoto(pending.chatId, file);

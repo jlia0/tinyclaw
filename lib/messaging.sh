@@ -9,7 +9,12 @@ send_message() {
     log "[$source] Sending: ${message:0:50}..."
 
     cd "$SCRIPT_DIR"
-    RESPONSE=$(claude --dangerously-skip-permissions -c -p "$message" 2>&1)
+    local claude_cmd=(claude -c -p "$message")
+    if [ "${TINYCLAW_ALLOW_DANGEROUS_FLAGS:-0}" = "1" ]; then
+        claude_cmd=(claude --dangerously-skip-permissions -c -p "$message")
+        log "[$source] WARNING: dangerous permissions flag enabled via TINYCLAW_ALLOW_DANGEROUS_FLAGS=1"
+    fi
+    RESPONSE=$("${claude_cmd[@]}" 2>&1)
 
     echo "$RESPONSE"
 

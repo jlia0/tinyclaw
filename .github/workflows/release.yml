@@ -48,6 +48,7 @@ jobs:
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
           BUNDLE_NAME="tinyclaw-bundle.tar.gz"
+          CHECKSUM_NAME="tinyclaw-bundle.sha256"
           TEMP_DIR=$(mktemp -d)
           BUNDLE_DIR="$TEMP_DIR/tinyclaw"
 
@@ -89,11 +90,17 @@ jobs:
           # Create tarball
           cd "$TEMP_DIR"
           tar -czf "$GITHUB_WORKSPACE/$BUNDLE_NAME" tinyclaw/
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$GITHUB_WORKSPACE/$BUNDLE_NAME" | awk '{print $1}' > "$GITHUB_WORKSPACE/$CHECKSUM_NAME"
+          else
+            sha256sum "$GITHUB_WORKSPACE/$BUNDLE_NAME" | awk '{print $1}' > "$GITHUB_WORKSPACE/$CHECKSUM_NAME"
+          fi
 
           # Get bundle info
           BUNDLE_SIZE=$(du -h "$GITHUB_WORKSPACE/$BUNDLE_NAME" | cut -f1)
           echo "Bundle created: $BUNDLE_NAME ($BUNDLE_SIZE)"
           echo "bundle_name=$BUNDLE_NAME" >> $GITHUB_OUTPUT
+          echo "checksum_name=$CHECKSUM_NAME" >> $GITHUB_OUTPUT
           echo "bundle_size=$BUNDLE_SIZE" >> $GITHUB_OUTPUT
 
       - name: Generate release notes
@@ -138,6 +145,7 @@ jobs:
           body_path: release_notes.md
           files: |
             tinyclaw-bundle.tar.gz
+            tinyclaw-bundle.sha256
           draft: false
           prerelease: false
         env:
@@ -148,5 +156,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tinyclaw-bundle
-          path: tinyclaw-bundle.tar.gz
+          path: |
+            tinyclaw-bundle.tar.gz
+            tinyclaw-bundle.sha256
           retention-days: 7
