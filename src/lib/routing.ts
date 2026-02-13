@@ -46,7 +46,10 @@ export function extractTeammateMentions(
     const results: { teammateId: string; message: string }[] = [];
     const seen = new Set<string>();
 
-    // Try tag format first: [@agent_id: message]
+    // TODO: Support cross-team communication — allow agents to mention agents
+    // on other teams or use [@team_id: message] to route to another team's leader.
+
+    // Tag format: [@agent_id: message]
     const tagRegex = /\[@(\S+?):\s*([\s\S]*?)\]/g;
     let tagMatch: RegExpExecArray | null;
     while ((tagMatch = tagRegex.exec(response)) !== null) {
@@ -56,17 +59,7 @@ export function extractTeammateMentions(
             seen.add(candidateId);
         }
     }
-    if (results.length > 0) return results;
-
-    // Fallback: bare @mention (first match only, legacy single-handoff)
-    const mentions = response.match(/@(\S+)/g) || [];
-    for (const mention of mentions) {
-        const candidateId = mention.slice(1).toLowerCase();
-        if (isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
-            return [{ teammateId: candidateId, message: response }];
-        }
-    }
-    return [];
+    return results;
 }
 
 /**
@@ -153,7 +146,7 @@ export function parseAgentRouting(
         }
 
         // Match by team name (case-insensitive)
-        for (const [id, config] of Object.entries(teams)) {
+        for (const [, config] of Object.entries(teams)) {
             if (config.name.toLowerCase() === candidateId) {
                 return { agentId: config.leader_agent, message: match[2], isTeam: true };
             }

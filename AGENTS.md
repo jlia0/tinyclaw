@@ -8,6 +8,17 @@ Running in persistent mode with:
 
 Stay proactive and responsive to messages.
 
+## Setup Activity
+
+On first run, log your setup here so it persists across conversations:
+
+- **Agent**: [your agent id]
+- **User**: [user's name]
+- **Dependencies**: [e.g. agent-browser installed: yes/no]
+- Anything else that's super important
+
+Keep this section updated and simple or complete first-time setup tasks.
+
 ## Team Communication
 
 You may be part of a team with other agents. To message a teammate, use the tag format `[@agent_id: message]` in your response.
