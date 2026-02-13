@@ -10,6 +10,7 @@
  *   - Conversation isolation via per-agent working directories
  */
 
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { MessageData, ResponseData, QueueFile, ChainStep, TeamConfig } from './lib/types';
@@ -21,6 +22,7 @@ import {
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
+import { closeDb } from './lib/db';
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, path.dirname(LOG_FILE)].forEach(dir => {
@@ -487,10 +489,12 @@ setInterval(processQueue, 1000);
 // Graceful shutdown
 process.on('SIGINT', () => {
     log('INFO', 'Shutting down queue processor...');
+    closeDb();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
     log('INFO', 'Shutting down queue processor...');
+    closeDb();
     process.exit(0);
 });
