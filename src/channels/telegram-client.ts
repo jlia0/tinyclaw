@@ -117,13 +117,40 @@ function loadPendingMessages(): void {
 }
 
 function savePendingMessages(): void {
+    const tempFile = `${PENDING_FILE}.tmp`;
     try {
         const obj: Record<string, PendingMessage> = {};
         for (const [id, msg] of pendingMessages.entries()) {
             obj[id] = msg;
         }
-        fs.writeFileSync(PENDING_FILE, JSON.stringify(obj, null, 2));
+        const payload = JSON.stringify(obj, null, 2);
+
+        // Crash-safe persistence: write+fsync temp file, then atomic rename.
+        fs.writeFileSync(tempFile, payload, 'utf8');
+        const tempFd = fs.openSync(tempFile, 'r');
+        try {
+            fs.fsyncSync(tempFd);
+        } finally {
+            fs.closeSync(tempFd);
+        }
+
+        fs.renameSync(tempFile, PENDING_FILE);
+
+        // Best-effort directory sync so rename metadata is durable.
+        const dirFd = fs.openSync(path.dirname(PENDING_FILE), 'r');
+        try {
+            fs.fsyncSync(dirFd);
+        } finally {
+            fs.closeSync(dirFd);
+        }
     } catch (error) {
+        try {
+            if (fs.existsSync(tempFile)) {
+                fs.unlinkSync(tempFile);
+            }
+        } catch {
+            // Ignore cleanup errors.
+        }
         log('WARN', `Failed to save pending messages: ${(error as Error).message}`);
     }
 }
