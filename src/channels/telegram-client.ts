@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import https from 'https';
 import http from 'http';
+import { ensureSenderPaired } from '../lib/pairing';
 
 const SCRIPT_DIR = path.resolve(__dirname, '..', '..');
 const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
@@ -24,6 +25,7 @@ const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
 const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/telegram.log');
 const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
+const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), FILES_DIR].forEach(dir => {
@@ -243,6 +245,15 @@ function extFromMime(mime?: string): string {
     return map[mime] || '';
 }
 
+function pairingMessage(code: string): string {
+    return [
+        'This sender is not paired yet.',
+        `Your pairing code: ${code}`,
+        'Ask the TinyClaw owner to approve you with:',
+        `tinyclaw pairing approve ${code}`,
+    ].join('\n');
+}
+
 // Initialize Telegram bot (polling mode)
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
@@ -329,9 +340,18 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         const sender = msg.from
             ? (msg.from.first_name + (msg.from.last_name ? ` ${msg.from.last_name}` : ''))
             : 'Unknown';
-        const senderId = msg.from ? msg.from.id.toString() : msg.chat.id.toString();
+        const senderId = msg.chat.id.toString();
 
         log('INFO', `Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
+
+        const pairing = ensureSenderPaired(PAIRING_FILE, 'telegram', senderId, sender);
+        if (!pairing.approved && pairing.code) {
+            log('INFO', `Blocked unpaired Telegram sender ${sender} (${senderId}) with code ${pairing.code}`);
+            await bot.sendMessage(msg.chat.id, pairingMessage(pairing.code), {
+                reply_to_message_id: msg.message_id,
+            });
+            return;
+        }
 
         // Check for agent list command
         if (msg.text && msg.text.trim().match(/^[!/]agent$/i)) {

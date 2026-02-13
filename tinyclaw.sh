@@ -346,6 +346,17 @@ case "${1:-}" in
                 ;;
         esac
         ;;
+    pairing)
+        if [ ! -f "$SCRIPT_DIR/dist/pairing-cli.js" ] || [ "$SCRIPT_DIR/src/pairing-cli.ts" -nt "$SCRIPT_DIR/dist/pairing-cli.js" ]; then
+            echo -e "${BLUE}Building pairing CLI...${NC}"
+            cd "$SCRIPT_DIR" && npm run build:main >/dev/null 2>&1
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}Failed to build pairing CLI.${NC}"
+                exit 1
+            fi
+        fi
+        node "$SCRIPT_DIR/dist/pairing-cli.js" "${@:2}"
+        ;;
     attach)
         tmux attach -t "$TMUX_SESSION"
         ;;
@@ -359,7 +370,7 @@ case "${1:-}" in
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
         echo -e "${BLUE}TinyClaw - Claude Code + Messaging Channels${NC}"
         echo ""
-        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset|channels|provider|model|agent|team|update|attach}"
+        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset|channels|provider|model|agent|team|pairing|update|attach}"
         echo ""
         echo "Commands:"
         echo "  start                    Start TinyClaw"
@@ -375,6 +386,7 @@ case "${1:-}" in
         echo "  model [name]             Show or switch AI model"
         echo "  agent {list|add|remove|show|reset}  Manage agents"
         echo "  team {list|add|remove|show|visualize}  Manage teams"
+        echo "  pairing {pending|approved|list|approve <code>}  Manage sender approvals"
         echo "  update                   Update TinyClaw to latest version"
         echo "  attach                   Attach to tmux session"
         echo ""
@@ -387,6 +399,8 @@ case "${1:-}" in
         echo "  $0 agent add"
         echo "  $0 team list"
         echo "  $0 team visualize dev"
+        echo "  $0 pairing pending"
+        echo "  $0 pairing approve ABCD1234"
         echo "  $0 send '@coder fix the bug'"
         echo "  $0 send '@dev fix the auth bug'"
         echo "  $0 channels reset whatsapp"

@@ -9,6 +9,7 @@ import { Client, LocalAuth, Message, Chat, MessageMedia, MessageTypes } from 'wh
 import qrcode from 'qrcode-terminal';
 import fs from 'fs';
 import path from 'path';
+import { ensureSenderPaired } from '../lib/pairing';
 
 const SCRIPT_DIR = path.resolve(__dirname, '..', '..');
 const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
@@ -21,6 +22,7 @@ const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/whatsapp.log');
 const SESSION_DIR = path.join(SCRIPT_DIR, '.tinyclaw/whatsapp-session');
 const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
+const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), SESSION_DIR, FILES_DIR].forEach(dir => {
@@ -160,6 +162,15 @@ function getAgentListText(): string {
     }
 }
 
+function pairingMessage(code: string): string {
+    return [
+        'This sender is not paired yet.',
+        `Your pairing code: ${code}`,
+        'Ask the TinyClaw owner to approve you with:',
+        `tinyclaw pairing approve ${code}`,
+    ].join('\n');
+}
+
 // Initialize WhatsApp client
 const client = new Client({
     authStrategy: new LocalAuth({
@@ -267,6 +278,13 @@ client.on('message_create', async (message: Message) => {
         }
 
         log('INFO', `📱 Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
+
+        const pairing = ensureSenderPaired(PAIRING_FILE, 'whatsapp', message.from, sender);
+        if (!pairing.approved && pairing.code) {
+            log('INFO', `Blocked unpaired WhatsApp sender ${sender} (${message.from}) with code ${pairing.code}`);
+            await message.reply(pairingMessage(pairing.code));
+            return;
+        }
 
         // Check for agent list command
         if (message.body.trim().match(/^[!/]agent$/i)) {

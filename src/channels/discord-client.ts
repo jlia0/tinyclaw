@@ -11,6 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import https from 'https';
 import http from 'http';
+import { ensureSenderPaired } from '../lib/pairing';
 
 const SCRIPT_DIR = path.resolve(__dirname, '..', '..');
 const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
@@ -22,6 +23,7 @@ const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
 const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/discord.log');
 const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
+const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), FILES_DIR].forEach(dir => {
@@ -201,6 +203,15 @@ function splitMessage(text: string, maxLength = 2000): string[] {
     return chunks;
 }
 
+function pairingMessage(code: string): string {
+    return [
+        'This sender is not paired yet.',
+        `Your pairing code: ${code}`,
+        'Ask the TinyClaw owner to approve you with:',
+        `tinyclaw pairing approve ${code}`,
+    ].join('\n');
+}
+
 // Initialize Discord client
 const client = new Client({
     intents: [
@@ -267,6 +278,13 @@ client.on(Events.MessageCreate, async (message: Message) => {
         let messageText = message.content || '';
 
         log('INFO', `Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
+
+        const pairing = ensureSenderPaired(PAIRING_FILE, 'discord', message.author.id, sender);
+        if (!pairing.approved && pairing.code) {
+            log('INFO', `Blocked unpaired Discord sender ${sender} (${message.author.id}) with code ${pairing.code}`);
+            await message.reply(pairingMessage(pairing.code));
+            return;
+        }
 
         // Check for agent list command
         if (message.content.trim().match(/^[!/]agent$/i)) {
