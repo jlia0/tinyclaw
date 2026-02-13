@@ -9,7 +9,7 @@ Run multiple AI agents simultaneously with isolated workspaces and conversation 
 - ✅ **Multi-agent** - Run multiple isolated AI agents with specialized roles
 - ✅ **Team collaboration** - Agents hand off work to teammates via chain execution and fan-out
 - ✅ **Multiple AI providers** - Anthropic Claude (Sonnet/Opus) and OpenAI (GPT/Codex)
-- ✅ **Multi-channel** - Discord, WhatsApp, and Telegram
+- ✅ **Multi-channel** - Discord, WhatsApp, Telegram, and Voice (Telnyx/ClawdTalk)
 - ✅ **Parallel processing** - Agents process messages concurrently
 - ✅ **Live TUI dashboard** - Real-time team visualizer for monitoring agent chains
 - ✅ **Persistent sessions** - Conversation context maintained across restarts
@@ -96,6 +96,16 @@ After starting TinyClaw, scan the QR code:
 
 📱 Settings → Linked Devices → Link a Device
 ```
+
+### Voice Setup (Telnyx/ClawdTalk)
+
+1. Create a [Telnyx account](https://telnyx.com)
+2. Create an API key at [Portal > API Keys](https://portal.telnyx.com/#/app/api-keys)
+3. Configure a [Voice Profile](https://portal.telnyx.com/#/app/voice/profiles)
+4. Purchase a [Phone Number](https://portal.telnyx.com/#/app/numbers)
+5. Set webhook URL in your voice profile
+
+See [docs/VOICE.md](docs/VOICE.md) for detailed setup instructions.
 
 </details>
 
@@ -187,7 +197,7 @@ export TINYCLAW_SKIP_UPDATE_CHECK=1
 
 ### In-Chat Commands
 
-These commands work in Discord, Telegram, and WhatsApp:
+These commands work in Discord, Telegram, WhatsApp, and Voice calls:
 
 | Command             | Description                                  | Example                              |
 | ------------------- | -------------------------------------------- | ------------------------------------ |
@@ -266,7 +276,7 @@ See [docs/AGENTS.md](docs/AGENTS.md) for:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Message Channels                         │
-│         (Discord, Telegram, WhatsApp, Heartbeat)            │
+│    (Discord, Telegram, WhatsApp, Voice/Telnyx, Heartbeat)   │
 └────────────────────┬────────────────────────────────────────┘
                      │ Write message.json
                      ↓
@@ -454,6 +464,7 @@ All channels share agent conversations!
 - [AGENTS.md](docs/AGENTS.md) - Agent management and routing
 - [TEAMS.md](docs/TEAMS.md) - Team collaboration, chain execution, and visualizer
 - [QUEUE.md](docs/QUEUE.md) - Queue system and message flow
+- [VOICE.md](docs/VOICE.md) - Voice channel setup (Telnyx/ClawdTalk)
 - [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ## 🐛 Troubleshooting
@@ -493,6 +504,7 @@ tinyclaw logs all
 - Inspired by [OpenClaw](https://openclaw.ai/) by Peter Steinberger
 - Built on [Claude Code](https://claude.com/claude-code) and [Codex CLI](https://docs.openai.com/codex)
 - Uses [discord.js](https://discord.js.org/), [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js), [node-telegram-bot-api](https://github.com/yagop/node-telegram-bot-api)
+- Voice powered by [Telnyx](https://telnyx.com) and [ClawdTalk](https://clawdtalk.com)
 
 ## 📄 License
 

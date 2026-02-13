@@ -26,6 +26,13 @@ export interface Settings {
         discord?: { bot_token?: string };
         telegram?: { bot_token?: string };
         whatsapp?: {};
+        voice?: {
+            api_key?: string;
+            public_key?: string;
+            connection_id?: string;
+            phone_number?: string;
+            webhook_port?: number;
+        };
     };
     models?: {
         provider?: string; // 'anthropic' or 'openai'

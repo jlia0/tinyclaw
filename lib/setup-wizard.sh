@@ -19,24 +19,28 @@ echo ""
 
 # --- Channel registry ---
 # To add a new channel, add its ID here and fill in the config arrays below.
-ALL_CHANNELS=(telegram discord whatsapp)
+ALL_CHANNELS=(telegram discord whatsapp voice)
 
 declare -A CHANNEL_DISPLAY=(
     [telegram]="Telegram"
     [discord]="Discord"
     [whatsapp]="WhatsApp"
+    [voice]="Voice (Telnyx/ClawdTalk)"
 )
 declare -A CHANNEL_TOKEN_KEY=(
     [discord]="discord_bot_token"
     [telegram]="telegram_bot_token"
+    [voice]="telnyx_api_key"
 )
 declare -A CHANNEL_TOKEN_PROMPT=(
     [discord]="Enter your Discord bot token:"
     [telegram]="Enter your Telegram bot token:"
+    [voice]="Enter your Telnyx API key:"
 )
 declare -A CHANNEL_TOKEN_HELP=(
     [discord]="(Get one at: https://discord.com/developers/applications)"
     [telegram]="(Create a bot via @BotFather on Telegram to get a token)"
+    [voice]="(Get one at: https://portal.telnyx.com/#/app/api-keys)"
 )
 
 # Channel selection - simple checklist
@@ -265,6 +269,18 @@ CHANNELS_JSON="${CHANNELS_JSON}]"
 # Build channel configs with tokens
 DISCORD_TOKEN="${TOKENS[discord]:-}"
 TELEGRAM_TOKEN="${TOKENS[telegram]:-}"
+VOICE_API_KEY="${TOKENS[voice]:-}"
+
+# Collect additional voice configuration if voice is enabled
+VOICE_CONNECTION_ID=""
+VOICE_PHONE_NUMBER=""
+if [[ " ${ENABLED_CHANNELS[*]} " =~ " voice " ]] && [ -n "$VOICE_API_KEY" ]; then
+    echo ""
+    echo -e "${YELLOW}Voice channel configuration:${NC}"
+    echo ""
+    read -rp "  Telnyx Connection ID: " VOICE_CONNECTION_ID
+    read -rp "  Telnyx Phone Number (E.164 format, e.g., +15551234567): " VOICE_PHONE_NUMBER
+fi
 
 # Write settings.json with layered structure
 # Use jq to build valid JSON to avoid escaping issues with agent prompts
@@ -288,7 +304,12 @@ cat > "$SETTINGS_FILE" <<EOF
     "telegram": {
       "bot_token": "${TELEGRAM_TOKEN}"
     },
-    "whatsapp": {}
+    "whatsapp": {},
+    "voice": {
+      "api_key": "${VOICE_API_KEY}",
+      "connection_id": "${VOICE_CONNECTION_ID}",
+      "phone_number": "${VOICE_PHONE_NUMBER}"
+    }
   },
   ${AGENTS_JSON}
   ${MODELS_SECTION},

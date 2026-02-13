@@ -9,10 +9,12 @@
     "whatsapp": "node dist/channels/whatsapp-client.js",
     "discord": "node dist/channels/discord-client.js",
     "telegram": "node dist/channels/telegram-client.js",
+    "voice": "node dist/channels/telnyx-voice-client.js",
     "queue": "node dist/queue-processor.js",
     "visualize": "node dist/visualizer/team-visualizer.js"
   },
   "dependencies": {
+    "telnyx": "^2.0.0",
     "@types/react": "^19.2.14",
     "discord.js": "^14.16.0",
     "dotenv": "^16.4.0",

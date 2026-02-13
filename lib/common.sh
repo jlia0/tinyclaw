@@ -31,30 +31,35 @@ NC='\033[0m'
 # --- Channel registry ---
 # Single source of truth. Add new channels here and everything else adapts.
 
-ALL_CHANNELS=(discord whatsapp telegram)
+ALL_CHANNELS=(discord whatsapp telegram voice)
 
 declare -A CHANNEL_DISPLAY=(
     [discord]="Discord"
     [whatsapp]="WhatsApp"
     [telegram]="Telegram"
+    [voice]="Voice (Telnyx)"
 )
 declare -A CHANNEL_SCRIPT=(
     [discord]="dist/channels/discord-client.js"
     [whatsapp]="dist/channels/whatsapp-client.js"
     [telegram]="dist/channels/telegram-client.js"
+    [voice]="dist/channels/telnyx-voice-client.js"
 )
 declare -A CHANNEL_ALIAS=(
     [discord]="dc"
     [whatsapp]="wa"
     [telegram]="tg"
+    [voice]="vc"
 )
 declare -A CHANNEL_TOKEN_KEY=(
     [discord]="discord_bot_token"
     [telegram]="telegram_bot_token"
+    [voice]="api_key"
 )
 declare -A CHANNEL_TOKEN_ENV=(
     [discord]="DISCORD_BOT_TOKEN"
     [telegram]="TELEGRAM_BOT_TOKEN"
+    [voice]="TELNYX_API_KEY"
 )
 
 # Runtime state: filled by load_settings
@@ -105,7 +110,11 @@ load_settings() {
     for ch in "${ALL_CHANNELS[@]}"; do
         local token_key="${CHANNEL_TOKEN_KEY[$ch]:-}"
         if [ -n "$token_key" ]; then
-            CHANNEL_TOKENS[$ch]=$(jq -r ".channels.${ch}.bot_token // empty" "$SETTINGS_FILE" 2>/dev/null)
+            if [ "$ch" = "voice" ]; then
+                CHANNEL_TOKENS[$ch]=$(jq -r ".channels.voice.api_key // empty" "$SETTINGS_FILE" 2>/dev/null)
+            else
+                CHANNEL_TOKENS[$ch]=$(jq -r ".channels.${ch}.bot_token // empty" "$SETTINGS_FILE" 2>/dev/null)
+            fi
         fi
     done
 
