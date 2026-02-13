@@ -96,6 +96,38 @@ pairing_approve_code() {
     echo "Approved ${sender} (${channel}:${sender_id})"
 }
 
+pairing_unpair_sender() {
+    local channel="$1"
+    local sender_id="$2"
+
+    if [ -z "$channel" ] || [ -z "$sender_id" ]; then
+        echo "Usage: $0 pairing unpair <channel> <sender_id>"
+        exit 1
+    fi
+
+    local pairing_file
+    pairing_file="$(pairing_file_path)"
+
+    local exists
+    exists=$(jq -r --arg channel "$channel" --arg senderId "$sender_id" \
+        'any((.approved // [])[]; .channel == $channel and .senderId == $senderId)' \
+        "$pairing_file" 2>/dev/null)
+
+    if [ "$exists" != "true" ]; then
+        echo "Approved sender not found: ${channel}:${sender_id}"
+        exit 1
+    fi
+
+    local tmp_file
+    tmp_file="${pairing_file}.tmp"
+
+    jq --arg channel "$channel" --arg senderId "$sender_id" '
+        .approved = [(.approved // [])[] | select(.channel != $channel or .senderId != $senderId)]
+    ' "$pairing_file" > "$tmp_file" && mv "$tmp_file" "$pairing_file"
+
+    echo "Unpaired ${channel}:${sender_id}"
+}
+
 pairing_command() {
     if ! command -v jq &> /dev/null; then
         echo -e "${RED}Error: jq is required for pairing commands${NC}"
@@ -120,8 +152,11 @@ pairing_command() {
         approve)
             pairing_approve_code "$2"
             ;;
+        unpair)
+            pairing_unpair_sender "$2" "$3"
+            ;;
         *)
-            echo "Usage: $0 pairing {pending|approved|list|approve <code>}"
+            echo "Usage: $0 pairing {pending|approved|list|approve <code>|unpair <channel> <sender_id>}"
             exit 1
             ;;
     esac
