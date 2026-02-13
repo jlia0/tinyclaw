@@ -29,6 +29,19 @@ import { invokeAgent } from './lib/invoke';
     }
 });
 
+// Files currently queued in a promise chain — prevents duplicate processing across ticks
+const queuedFiles = new Set<string>();
+
+// Recover orphaned files from processing/ on startup (crash recovery)
+function recoverOrphanedFiles() {
+    for (const f of fs.readdirSync(QUEUE_PROCESSING).filter(f => f.endsWith('.json'))) {
+        try {
+            fs.renameSync(path.join(QUEUE_PROCESSING, f), path.join(QUEUE_INCOMING, f));
+            log('INFO', `Recovered orphaned file: ${f}`);
+        } catch {}
+    }
+}
+
 // Process a single message
 async function processMessage(messageFile: string): Promise<void> {
     const processingFile = path.join(QUEUE_PROCESSING, path.basename(messageFile));
@@ -420,6 +433,10 @@ async function processQueue(): Promise<void> {
 
             // Process messages in parallel by agent (sequential within each agent)
             for (const file of files) {
+                // Skip files already queued in a promise chain
+                if (queuedFiles.has(file.name)) continue;
+                queuedFiles.add(file.name);
+
                 // Determine target agent
                 const agentId = peekAgentId(file.path);
 
@@ -431,6 +448,9 @@ async function processQueue(): Promise<void> {
                     .then(() => processMessage(file.path))
                     .catch(error => {
                         log('ERROR', `Error processing message for agent ${agentId}: ${error.message}`);
+                    })
+                    .finally(() => {
+                        queuedFiles.delete(file.name);
                     });
 
                 // Update the chain
@@ -477,6 +497,7 @@ if (!fs.existsSync(EVENTS_DIR)) {
 
 // Main loop
 log('INFO', 'Queue processor started');
+recoverOrphanedFiles();
 log('INFO', `Watching: ${QUEUE_INCOMING}`);
 logAgentConfig();
 emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), teams: Object.keys(getTeams(getSettings())) });
