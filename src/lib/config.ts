@@ -17,10 +17,59 @@ export const EVENTS_DIR = path.join(TINYCLAW_HOME, 'events');
 export const CHATS_DIR = path.join(TINYCLAW_HOME, 'chats');
 export const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
 
+/**
+ * Attempt to fix common JSON issues (trailing commas, comments, BOM).
+ * Returns the fixed string or null if unfixable.
+ */
+function tryFixJson(raw: string): string | null {
+    let c = raw;
+    // Strip BOM
+    c = c.replace(/^\uFEFF/, '');
+    // Strip single-line comments but preserve strings
+    c = c.replace(/("(?:[^"\\]|\\.)*")|\/\/.*$/gm, (m, g) => g || '');
+    // Strip multi-line comments
+    c = c.replace(/\/\*[\s\S]*?\*\//g, '');
+    // Remove trailing commas before } or ]
+    c = c.replace(/,(\s*[}\]])/g, '$1');
+    c = c.trim();
+    if (!c) return null;
+    try {
+        JSON.parse(c);
+        return c;
+    } catch {
+        return null;
+    }
+}
+
 export function getSettings(): Settings {
     try {
         const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings: Settings = JSON.parse(settingsData);
+        let settings: Settings;
+
+        try {
+            settings = JSON.parse(settingsData);
+        } catch (parseError) {
+            // JSON is invalid — attempt auto-fix
+            const fileExists = fs.existsSync(SETTINGS_FILE);
+            if (fileExists) {
+                console.error(`[WARN] settings.json contains invalid JSON: ${(parseError as Error).message}`);
+
+                const fixed = tryFixJson(settingsData);
+                if (fixed) {
+                    // Write the fixed JSON back and create a backup
+                    const backupPath = SETTINGS_FILE + '.bak';
+                    fs.copyFileSync(SETTINGS_FILE, backupPath);
+                    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(JSON.parse(fixed), null, 2) + '\n');
+                    console.error(`[WARN] Auto-fixed settings.json (backup: ${backupPath})`);
+                    settings = JSON.parse(fixed);
+                } else {
+                    console.error(`[ERROR] Could not auto-fix settings.json — returning empty config`);
+                    return {};
+                }
+            } else {
+                return {};
+            }
+        }
 
         // Auto-detect provider if not specified
         if (!settings?.models?.provider) {
