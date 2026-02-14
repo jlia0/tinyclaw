@@ -115,10 +115,10 @@ export async function invokeAgent(
     } else if (provider === 'opencode') {
         // OpenCode CLI — non-interactive mode via `opencode run`.
         // Outputs JSONL with --format json; extract "text" type events for the response.
-        // Model is configured via .opencode.json in the working directory, not CLI args.
+        // Model passed via --model in provider/model format (e.g. opencode/claude-sonnet-4-5).
         // Supports -c flag for conversation continuation (resumes last session).
-        const modelDisplay = resolveOpenCodeModel(agent.model);
-        log('INFO', `Using OpenCode CLI (agent: ${agentId}, model: ${modelDisplay})`);
+        const modelId = resolveOpenCodeModel(agent.model);
+        log('INFO', `Using OpenCode CLI (agent: ${agentId}, model: ${modelId})`);
 
         const continueConversation = !shouldReset;
 
@@ -127,6 +127,9 @@ export async function invokeAgent(
         }
 
         const opencodeArgs = ['run', '--format', 'json'];
+        if (modelId) {
+            opencodeArgs.push('--model', modelId);
+        }
         if (continueConversation) {
             opencodeArgs.push('-c');
         }

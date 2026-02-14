@@ -119,24 +119,28 @@ if [ "$PROVIDER" = "anthropic" ]; then
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
     echo ""
 elif [ "$PROVIDER" = "opencode" ]; then
-    # OpenCode reads model from .opencode.json; ask for a label
-    echo "OpenCode model (configured via .opencode.json in agent directory)?"
+    echo "Which OpenCode model? (provider/model format)"
     echo ""
-    echo "  1) Claude Sonnet"
-    echo "  2) Claude Opus"
-    echo "  3) GPT-4o"
-    echo "  4) o3"
+    echo "  1) opencode/claude-sonnet-4-5  (recommended)"
+    echo "  2) opencode/claude-opus-4-6"
+    echo "  3) opencode/gemini-3-flash"
+    echo "  4) opencode/gemini-3-pro"
+    echo "  5) anthropic/claude-sonnet-4-5"
+    echo "  6) anthropic/claude-opus-4-6"
+    echo "  7) openai/gpt-5.3-codex"
     echo ""
-    read -rp "Choose [1-4, default: 1]: " MODEL_CHOICE
+    read -rp "Choose [1-7, default: 1]: " MODEL_CHOICE
 
     case "$MODEL_CHOICE" in
-        2) MODEL="opus" ;;
-        3) MODEL="gpt-4o" ;;
-        4) MODEL="o3" ;;
-        *) MODEL="sonnet" ;;
+        2) MODEL="opencode/claude-opus-4-6" ;;
+        3) MODEL="opencode/gemini-3-flash" ;;
+        4) MODEL="opencode/gemini-3-pro" ;;
+        5) MODEL="anthropic/claude-sonnet-4-5" ;;
+        6) MODEL="anthropic/claude-opus-4-6" ;;
+        7) MODEL="openai/gpt-5.3-codex" ;;
+        *) MODEL="opencode/claude-sonnet-4-5" ;;
     esac
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
-    echo -e "${YELLOW}  Note: Set the actual model in .opencode.json in the agent's working directory.${NC}"
     echo ""
 else
     # OpenAI models
@@ -254,13 +258,13 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
                 *) NEW_MODEL="sonnet" ;;
             esac
         elif [ "$NEW_PROVIDER" = "opencode" ]; then
-            echo "  Model: 1) Claude Sonnet  2) Claude Opus  3) GPT-4o  4) o3"
+            echo "  Model: 1) opencode/claude-sonnet-4-5  2) opencode/claude-opus-4-6  3) opencode/gemini-3-flash  4) anthropic/claude-sonnet-4-5"
             read -rp "  Choose [1-4, default: 1]: " NEW_MODEL_CHOICE
             case "$NEW_MODEL_CHOICE" in
-                2) NEW_MODEL="opus" ;;
-                3) NEW_MODEL="gpt-4o" ;;
-                4) NEW_MODEL="o3" ;;
-                *) NEW_MODEL="sonnet" ;;
+                2) NEW_MODEL="opencode/claude-opus-4-6" ;;
+                3) NEW_MODEL="opencode/gemini-3-flash" ;;
+                4) NEW_MODEL="anthropic/claude-sonnet-4-5" ;;
+                *) NEW_MODEL="opencode/claude-sonnet-4-5" ;;
             esac
         else
             echo "  Model: 1) GPT-5.3 Codex  2) GPT-5.2"

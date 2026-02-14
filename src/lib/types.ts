@@ -87,11 +87,24 @@ export const CODEX_MODEL_IDS: Record<string, string> = {
     'gpt-5.3-codex': 'gpt-5.3-codex',
 };
 
-// OpenCode model IDs — opencode reads its model from .opencode.json config,
-// so these are pass-through mappings used for display/logging only.
+// OpenCode model IDs in provider/model format (passed via --model / -m flag).
+// Falls back to the raw model string from settings if no mapping is found.
 export const OPENCODE_MODEL_IDS: Record<string, string> = {
-    'sonnet': 'claude-sonnet-4-5',
-    'opus': 'claude-opus-4-6',
-    'gpt-4o': 'gpt-4o',
-    'o3': 'o3',
+    'opencode/claude-opus-4-6': 'opencode/claude-opus-4-6',
+    'opencode/claude-sonnet-4-5': 'opencode/claude-sonnet-4-5',
+    'opencode/gemini-3-flash': 'opencode/gemini-3-flash',
+    'opencode/gemini-3-pro': 'opencode/gemini-3-pro',
+    'opencode/glm-5': 'opencode/glm-5',
+    'opencode/kimi-k2.5': 'opencode/kimi-k2.5',
+    'opencode/kimi-k2.5-free': 'opencode/kimi-k2.5-free',
+    'opencode/minimax-m2.5': 'opencode/minimax-m2.5',
+    'opencode/minimax-m2.5-free': 'opencode/minimax-m2.5-free',
+    'anthropic/claude-opus-4-6': 'anthropic/claude-opus-4-6',
+    'anthropic/claude-sonnet-4-5': 'anthropic/claude-sonnet-4-5',
+    'openai/gpt-5.2': 'openai/gpt-5.2',
+    'openai/gpt-5.3-codex': 'openai/gpt-5.3-codex',
+    'openai/gpt-5.3-codex-spark': 'openai/gpt-5.3-codex-spark',
+    // Shorthand aliases
+    'sonnet': 'opencode/claude-sonnet-4-5',
+    'opus': 'opencode/claude-opus-4-6',
 };

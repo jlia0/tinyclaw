@@ -127,17 +127,23 @@ agent_add() {
             *) AGENT_MODEL="sonnet" ;;
         esac
     elif [ "$AGENT_PROVIDER" = "opencode" ]; then
-        echo "Model (configured via .opencode.json in agent directory):"
-        echo "  1) Claude Sonnet"
-        echo "  2) Claude Opus"
-        echo "  3) GPT-4o"
-        echo "  4) o3"
-        read -rp "Choose [1-4, default: 1]: " AGENT_MODEL_CHOICE
+        echo "Model (provider/model format):"
+        echo "  1) opencode/claude-sonnet-4-5"
+        echo "  2) opencode/claude-opus-4-6"
+        echo "  3) opencode/gemini-3-flash"
+        echo "  4) opencode/gemini-3-pro"
+        echo "  5) anthropic/claude-sonnet-4-5"
+        echo "  6) anthropic/claude-opus-4-6"
+        echo "  7) openai/gpt-5.3-codex"
+        read -rp "Choose [1-7, default: 1]: " AGENT_MODEL_CHOICE
         case "$AGENT_MODEL_CHOICE" in
-            2) AGENT_MODEL="opus" ;;
-            3) AGENT_MODEL="gpt-4o" ;;
-            4) AGENT_MODEL="o3" ;;
-            *) AGENT_MODEL="sonnet" ;;
+            2) AGENT_MODEL="opencode/claude-opus-4-6" ;;
+            3) AGENT_MODEL="opencode/gemini-3-flash" ;;
+            4) AGENT_MODEL="opencode/gemini-3-pro" ;;
+            5) AGENT_MODEL="anthropic/claude-sonnet-4-5" ;;
+            6) AGENT_MODEL="anthropic/claude-opus-4-6" ;;
+            7) AGENT_MODEL="openai/gpt-5.3-codex" ;;
+            *) AGENT_MODEL="opencode/claude-sonnet-4-5" ;;
         esac
     else
         echo "Model:"
