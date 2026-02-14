@@ -12,13 +12,12 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo ""
-echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}============================================================${NC}"
 echo -e "${GREEN}  TinyClaw - Setup Wizard${NC}"
-echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}============================================================${NC}"
 echo ""
 
 # --- Channel registry ---
-# To add a new channel, add its ID here and fill in the config arrays below.
 ALL_CHANNELS=(telegram discord whatsapp)
 
 declare -A CHANNEL_DISPLAY=(
@@ -39,7 +38,6 @@ declare -A CHANNEL_TOKEN_HELP=(
     [telegram]="(Create a bot via @BotFather on Telegram to get a token)"
 )
 
-# Channel selection - simple checklist
 echo "Which messaging channels (Telegram, Discord, WhatsApp) do you want to enable?"
 echo ""
 
@@ -48,7 +46,7 @@ for ch in "${ALL_CHANNELS[@]}"; do
     read -rp "  Enable ${CHANNEL_DISPLAY[$ch]}? [y/N]: " choice
     if [[ "$choice" =~ ^[yY] ]]; then
         ENABLED_CHANNELS+=("$ch")
-        echo -e "    ${GREEN}✓ ${CHANNEL_DISPLAY[$ch]} enabled${NC}"
+        echo -e "    ${GREEN}[OK] ${CHANNEL_DISPLAY[$ch]} enabled${NC}"
     fi
 done
 echo ""
@@ -73,12 +71,11 @@ for ch in "${ENABLED_CHANNELS[@]}"; do
             exit 1
         fi
         TOKENS[$ch]="$token_value"
-        echo -e "${GREEN}✓ ${CHANNEL_DISPLAY[$ch]} token saved${NC}"
+        echo -e "${GREEN}[OK] ${CHANNEL_DISPLAY[$ch]} token saved${NC}"
         echo ""
     fi
 done
 
-# Provider selection
 echo "Which AI provider?"
 echo ""
 echo "  1) Anthropic (Claude)  (recommended)"
@@ -94,10 +91,12 @@ case "$PROVIDER_CHOICE" in
         exit 1
         ;;
 esac
-echo -e "${GREEN}✓ Provider: $PROVIDER${NC}"
+echo -e "${GREEN}[OK] Provider: $PROVIDER${NC}"
 echo ""
 
 # Model selection based on provider
+OPENAI_BASE_URL=""
+OPENAI_API_KEY=""
 if [ "$PROVIDER" = "anthropic" ]; then
     echo "Which Claude model?"
     echo ""
@@ -114,30 +113,40 @@ if [ "$PROVIDER" = "anthropic" ]; then
             exit 1
             ;;
     esac
-    echo -e "${GREEN}✓ Model: $MODEL${NC}"
+    echo -e "${GREEN}[OK] Model: $MODEL${NC}"
     echo ""
 else
-    # OpenAI models
     echo "Which OpenAI model?"
     echo ""
     echo "  1) GPT-5.3 Codex  (recommended)"
     echo "  2) GPT-5.2"
+    echo "  3) Custom model name"
     echo ""
-    read -rp "Choose [1-2]: " MODEL_CHOICE
+    read -rp "Choose [1-3]: " MODEL_CHOICE
 
     case "$MODEL_CHOICE" in
         1) MODEL="gpt-5.3-codex" ;;
         2) MODEL="gpt-5.2" ;;
+        3)
+            read -rp "Enter OpenAI-compatible model name: " MODEL
+            if [ -z "$MODEL" ]; then
+                echo -e "${RED}Model name cannot be empty${NC}"
+                exit 1
+            fi
+            ;;
         *)
             echo -e "${RED}Invalid choice${NC}"
             exit 1
             ;;
     esac
-    echo -e "${GREEN}✓ Model: $MODEL${NC}"
+    echo -e "${GREEN}[OK] Model: $MODEL${NC}"
+    echo ""
+
+    read -rp "OpenAI-compatible base URL (optional, e.g. https://api.openai.com/v1): " OPENAI_BASE_URL
+    read -rp "OpenAI API key (optional, saved in settings.json): " OPENAI_API_KEY
     echo ""
 fi
 
-# Heartbeat interval
 echo "Heartbeat interval (seconds)?"
 echo -e "${YELLOW}(How often Claude checks in proactively)${NC}"
 echo ""
@@ -148,36 +157,31 @@ if ! [[ "$HEARTBEAT_INTERVAL" =~ ^[0-9]+$ ]]; then
     echo -e "${RED}Invalid interval, using default 3600${NC}"
     HEARTBEAT_INTERVAL=3600
 fi
-echo -e "${GREEN}✓ Heartbeat interval: ${HEARTBEAT_INTERVAL}s${NC}"
+echo -e "${GREEN}[OK] Heartbeat interval: ${HEARTBEAT_INTERVAL}s${NC}"
 echo ""
 
-# Workspace configuration
 echo "Workspace name (where agent directories will be stored)?"
 echo -e "${YELLOW}(Creates ~/your-workspace-name/)${NC}"
 echo ""
 read -rp "Workspace name [default: tinyclaw-workspace]: " WORKSPACE_INPUT
 WORKSPACE_NAME=${WORKSPACE_INPUT:-tinyclaw-workspace}
-# Clean workspace name
 WORKSPACE_NAME=$(echo "$WORKSPACE_NAME" | tr ' ' '-' | tr -cd 'a-zA-Z0-9_-')
 WORKSPACE_PATH="$HOME/$WORKSPACE_NAME"
-echo -e "${GREEN}✓ Workspace: $WORKSPACE_PATH${NC}"
+echo -e "${GREEN}[OK] Workspace: $WORKSPACE_PATH${NC}"
 echo ""
 
-# Default agent name
 echo "Name your default agent?"
 echo -e "${YELLOW}(The main AI assistant you'll interact with)${NC}"
 echo ""
 read -rp "Default agent name [default: assistant]: " DEFAULT_AGENT_INPUT
 DEFAULT_AGENT_NAME=${DEFAULT_AGENT_INPUT:-assistant}
-# Clean agent name
 DEFAULT_AGENT_NAME=$(echo "$DEFAULT_AGENT_NAME" | tr ' ' '-' | tr -cd 'a-zA-Z0-9_-' | tr '[:upper:]' '[:lower:]')
-echo -e "${GREEN}✓ Default agent: $DEFAULT_AGENT_NAME${NC}"
+echo -e "${GREEN}[OK] Default agent: $DEFAULT_AGENT_NAME${NC}"
 echo ""
 
-# --- Additional Agents (optional) ---
-echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}============================================================${NC}"
 echo -e "${GREEN}  Additional Agents (Optional)${NC}"
-echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}============================================================${NC}"
 echo ""
 echo "You can set up multiple agents with different roles, models, and working directories."
 echo "Users route messages with '@agent_id message' in chat."
@@ -185,18 +189,30 @@ echo ""
 read -rp "Set up additional agents? [y/N]: " SETUP_AGENTS
 
 AGENTS_JSON=""
-# Always create the default agent
 DEFAULT_AGENT_DIR="$WORKSPACE_PATH/$DEFAULT_AGENT_NAME"
-# Capitalize first letter of agent name (proper bash method)
 DEFAULT_AGENT_DISPLAY="$(tr '[:lower:]' '[:upper:]' <<< "${DEFAULT_AGENT_NAME:0:1}")${DEFAULT_AGENT_NAME:1}"
 AGENTS_JSON='"agents": {'
-AGENTS_JSON="$AGENTS_JSON \"$DEFAULT_AGENT_NAME\": { \"name\": \"$DEFAULT_AGENT_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_AGENT_DIR\" }"
 
-ADDITIONAL_AGENTS=()  # Track additional agent IDs for directory creation
+DEFAULT_OPENAI_JSON=""
+if [ "$PROVIDER" = "openai" ] && { [ -n "$OPENAI_BASE_URL" ] || [ -n "$OPENAI_API_KEY" ]; }; then
+    DEFAULT_OPENAI_JSON=', "openai": {'
+    if [ -n "$OPENAI_BASE_URL" ]; then
+        DEFAULT_OPENAI_JSON="$DEFAULT_OPENAI_JSON \"base_url\": \"$OPENAI_BASE_URL\""
+    fi
+    if [ -n "$OPENAI_API_KEY" ]; then
+        if [ -n "$OPENAI_BASE_URL" ]; then
+            DEFAULT_OPENAI_JSON="$DEFAULT_OPENAI_JSON, "
+        fi
+        DEFAULT_OPENAI_JSON="$DEFAULT_OPENAI_JSON \"api_key\": \"$OPENAI_API_KEY\""
+    fi
+    DEFAULT_OPENAI_JSON="$DEFAULT_OPENAI_JSON }"
+fi
+
+AGENTS_JSON="$AGENTS_JSON \"$DEFAULT_AGENT_NAME\": { \"name\": \"$DEFAULT_AGENT_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_AGENT_DIR\"${DEFAULT_OPENAI_JSON} }"
+
+ADDITIONAL_AGENTS=()
 
 if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
-
-    # Add more agents
     ADDING_AGENTS=true
     while [ "$ADDING_AGENTS" = true ]; do
         echo ""
@@ -223,6 +239,9 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
             *) NEW_PROVIDER="anthropic" ;;
         esac
 
+        NEW_OPENAI_BASE_URL=""
+        NEW_OPENAI_API_KEY=""
+
         if [ "$NEW_PROVIDER" = "anthropic" ]; then
             echo "  Model: 1) Sonnet  2) Opus"
             read -rp "  Choose [1-2, default: 1]: " NEW_MODEL_CHOICE
@@ -231,22 +250,44 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
                 *) NEW_MODEL="sonnet" ;;
             esac
         else
-            echo "  Model: 1) GPT-5.3 Codex  2) GPT-5.2"
-            read -rp "  Choose [1-2, default: 1]: " NEW_MODEL_CHOICE
+            echo "  Model: 1) GPT-5.3 Codex  2) GPT-5.2  3) Custom model name"
+            read -rp "  Choose [1-3, default: 1]: " NEW_MODEL_CHOICE
             case "$NEW_MODEL_CHOICE" in
                 2) NEW_MODEL="gpt-5.2" ;;
+                3)
+                    read -rp "  Enter model name: " NEW_MODEL
+                    if [ -z "$NEW_MODEL" ]; then
+                        echo -e "${RED}  Model name cannot be empty, skipping${NC}"
+                        continue
+                    fi
+                    ;;
                 *) NEW_MODEL="gpt-5.3-codex" ;;
             esac
+
+            read -rp "  OpenAI-compatible base URL (optional): " NEW_OPENAI_BASE_URL
+            read -rp "  OpenAI API key (optional, saved in settings.json): " NEW_OPENAI_API_KEY
         fi
 
         NEW_AGENT_DIR="$WORKSPACE_PATH/$NEW_AGENT_ID"
+        NEW_OPENAI_JSON=""
+        if [ "$NEW_PROVIDER" = "openai" ] && { [ -n "$NEW_OPENAI_BASE_URL" ] || [ -n "$NEW_OPENAI_API_KEY" ]; }; then
+            NEW_OPENAI_JSON=', "openai": {'
+            if [ -n "$NEW_OPENAI_BASE_URL" ]; then
+                NEW_OPENAI_JSON="$NEW_OPENAI_JSON \"base_url\": \"$NEW_OPENAI_BASE_URL\""
+            fi
+            if [ -n "$NEW_OPENAI_API_KEY" ]; then
+                if [ -n "$NEW_OPENAI_BASE_URL" ]; then
+                    NEW_OPENAI_JSON="$NEW_OPENAI_JSON, "
+                fi
+                NEW_OPENAI_JSON="$NEW_OPENAI_JSON \"api_key\": \"$NEW_OPENAI_API_KEY\""
+            fi
+            NEW_OPENAI_JSON="$NEW_OPENAI_JSON }"
+        fi
 
-        AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_AGENT_DIR\" }"
+        AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_AGENT_DIR\"${NEW_OPENAI_JSON} }"
 
-        # Track this agent for directory creation later
         ADDITIONAL_AGENTS+=("$NEW_AGENT_ID")
-
-        echo -e "  ${GREEN}✓ Agent '${NEW_AGENT_ID}' added${NC}"
+        echo -e "  ${GREEN}[OK] Agent '${NEW_AGENT_ID}' added${NC}"
     done
 fi
 
@@ -262,16 +303,20 @@ for i in "${!ENABLED_CHANNELS[@]}"; do
 done
 CHANNELS_JSON="${CHANNELS_JSON}]"
 
-# Build channel configs with tokens
 DISCORD_TOKEN="${TOKENS[discord]:-}"
 TELEGRAM_TOKEN="${TOKENS[telegram]:-}"
 
-# Write settings.json with layered structure
-# Use jq to build valid JSON to avoid escaping issues with agent prompts
 if [ "$PROVIDER" = "anthropic" ]; then
     MODELS_SECTION='"models": { "provider": "anthropic", "anthropic": { "model": "'"${MODEL}"'" } }'
 else
-    MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
+    MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'"'
+    if [ -n "$OPENAI_BASE_URL" ]; then
+        MODELS_SECTION="$MODELS_SECTION, \"base_url\": \"$OPENAI_BASE_URL\""
+    fi
+    if [ -n "$OPENAI_API_KEY" ]; then
+        MODELS_SECTION="$MODELS_SECTION, \"api_key\": \"$OPENAI_API_KEY\""
+    fi
+    MODELS_SECTION="$MODELS_SECTION } }"
 fi
 
 cat > "$SETTINGS_FILE" <<EOF
@@ -298,17 +343,14 @@ cat > "$SETTINGS_FILE" <<EOF
 }
 EOF
 
-# Normalize JSON with jq (fix any formatting issues)
 if command -v jq &> /dev/null; then
     tmp_file="$SETTINGS_FILE.tmp"
     jq '.' "$SETTINGS_FILE" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$SETTINGS_FILE"
 fi
 
-# Create workspace directory
 mkdir -p "$WORKSPACE_PATH"
-echo -e "${GREEN}✓ Created workspace: $WORKSPACE_PATH${NC}"
+echo -e "${GREEN}[OK] Created workspace: $WORKSPACE_PATH${NC}"
 
-# Create ~/.tinyclaw with templates
 TINYCLAW_HOME="$HOME/.tinyclaw"
 mkdir -p "$TINYCLAW_HOME"
 mkdir -p "$TINYCLAW_HOME/logs"
@@ -321,9 +363,8 @@ fi
 if [ -f "$PROJECT_ROOT/AGENTS.md" ]; then
     cp "$PROJECT_ROOT/AGENTS.md" "$TINYCLAW_HOME/"
 fi
-echo -e "${GREEN}✓ Created ~/.tinyclaw with templates${NC}"
+echo -e "${GREEN}[OK] Created ~/.tinyclaw with templates${NC}"
 
-# Create default agent directory with config files
 mkdir -p "$DEFAULT_AGENT_DIR"
 if [ -d "$TINYCLAW_HOME/.claude" ]; then
     cp -r "$TINYCLAW_HOME/.claude" "$DEFAULT_AGENT_DIR/"
@@ -334,13 +375,11 @@ fi
 if [ -f "$TINYCLAW_HOME/AGENTS.md" ]; then
     cp "$TINYCLAW_HOME/AGENTS.md" "$DEFAULT_AGENT_DIR/"
 fi
-echo -e "${GREEN}✓ Created default agent directory: $DEFAULT_AGENT_DIR${NC}"
+echo -e "${GREEN}[OK] Created default agent directory: $DEFAULT_AGENT_DIR${NC}"
 
-# Create ~/.tinyclaw/files directory for file exchange
 mkdir -p "$TINYCLAW_HOME/files"
-echo -e "${GREEN}✓ Created files directory: $TINYCLAW_HOME/files${NC}"
+echo -e "${GREEN}[OK] Created files directory: $TINYCLAW_HOME/files${NC}"
 
-# Create directories for additional agents
 for agent_id in "${ADDITIONAL_AGENTS[@]}"; do
     AGENT_DIR="$WORKSPACE_PATH/$agent_id"
     mkdir -p "$AGENT_DIR"
@@ -353,10 +392,10 @@ for agent_id in "${ADDITIONAL_AGENTS[@]}"; do
     if [ -f "$TINYCLAW_HOME/AGENTS.md" ]; then
         cp "$TINYCLAW_HOME/AGENTS.md" "$AGENT_DIR/"
     fi
-    echo -e "${GREEN}✓ Created agent directory: $AGENT_DIR${NC}"
+    echo -e "${GREEN}[OK] Created agent directory: $AGENT_DIR${NC}"
 done
 
-echo -e "${GREEN}✓ Configuration saved to ~/.tinyclaw/settings.json${NC}"
+echo -e "${GREEN}[OK] Configuration saved to ~/.tinyclaw/settings.json${NC}"
 echo ""
 echo "You can manage agents later with:"
 echo -e "  ${GREEN}tinyclaw agent list${NC}    - List agents"

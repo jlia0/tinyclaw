@@ -6,11 +6,13 @@ import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent-setup';
 
-export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
+export async function runCommand(command: string, args: string[], cwd?: string, envOverrides?: NodeJS.ProcessEnv): Promise<string> {
     return new Promise((resolve, reject) => {
+        const env = envOverrides ? { ...process.env, ...envOverrides } : process.env;
         const child = spawn(command, args, {
             cwd: cwd || SCRIPT_DIR,
             stdio: ['ignore', 'pipe', 'pipe'],
+            env,
         });
 
         let stdout = '';
@@ -41,6 +43,26 @@ export async function runCommand(command: string, args: string[], cwd?: string):
             reject(new Error(errorMessage));
         });
     });
+}
+
+function buildOpenAIEnvOverrides(agent: AgentConfig): NodeJS.ProcessEnv | undefined {
+    const baseUrl = agent.openai?.base_url?.trim();
+    const apiKey = agent.openai?.api_key?.trim();
+
+    if (!baseUrl && !apiKey) {
+        return undefined;
+    }
+
+    const env: NodeJS.ProcessEnv = {};
+    if (baseUrl) {
+        env.OPENAI_BASE_URL = baseUrl;
+        // Keep alias for CLIs that still look for OPENAI_API_BASE.
+        env.OPENAI_API_BASE = baseUrl;
+    }
+    if (apiKey) {
+        env.OPENAI_API_KEY = apiKey;
+    }
+    return env;
 }
 
 /**
@@ -95,7 +117,15 @@ export async function invokeAgent(
         }
         codexArgs.push('--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json', message);
 
-        const codexOutput = await runCommand('codex', codexArgs, workingDir);
+        const openAIEnv = buildOpenAIEnvOverrides(agent);
+        if (openAIEnv?.OPENAI_BASE_URL) {
+            log('INFO', `Using custom OpenAI-compatible endpoint for agent ${agentId}: ${openAIEnv.OPENAI_BASE_URL}`);
+        }
+        if (openAIEnv?.OPENAI_API_KEY) {
+            log('INFO', `Using custom OpenAI API key for agent ${agentId}`);
+        }
+
+        const codexOutput = await runCommand('codex', codexArgs, workingDir, openAIEnv);
 
         // Parse JSONL output and extract final agent_message
         let response = '';

@@ -77,8 +77,9 @@ The setup wizard will guide you through:
 3. **Workspace setup** - Name your workspace directory
 4. **Default agent** - Configure your main AI assistant
 5. **AI provider** - Select Anthropic (Claude) or OpenAI
-6. **Model selection** - Choose model (e.g., Sonnet, Opus, GPT-5.3)
-7. **Heartbeat interval** - Set proactive check-in frequency
+6. **Model selection** - Choose model (e.g., Sonnet, Opus, GPT-5.3, or custom OpenAI-compatible model)
+7. **OpenAI endpoint (optional)** - Set custom OpenAI-compatible `base_url` and `api_key`
+8. **Heartbeat interval** - Set proactive check-in frequency
 
 <details>
 <summary><b>📱 Channel Setup Guides</b></summary>
@@ -277,7 +278,11 @@ Agents are configured in `.tinyclaw/settings.json`:
       "name": "Technical Writer",
       "provider": "openai",
       "model": "gpt-5.3-codex",
-      "working_directory": "/Users/me/tinyclaw-workspace/writer"
+      "working_directory": "/Users/me/tinyclaw-workspace/writer",
+      "openai": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key": "your-api-key"
+      }
     }
   }
 }
@@ -289,6 +294,7 @@ Each agent operates in isolation:
 - **Own conversation history** - Maintained by CLI
 - **Custom configuration** - `.claude/`, `heartbeat.md` (root), `AGENTS.md`
 - **Independent resets** - Reset individual agent conversations
+- **Optional OpenAI-compatible endpoints** - Set `openai.base_url`/`openai.api_key` per OpenAI agent
 
 <details>
 <summary><b>📖 Learn more about agents</b></summary>
@@ -427,6 +433,21 @@ Located at `.tinyclaw/settings.json`:
   },
   "monitoring": {
     "heartbeat_interval": 3600
+  }
+}
+```
+
+For OpenAI-compatible providers, you can also configure endpoint defaults in `models.openai` (applies to default/fallback agent and as defaults for OpenAI agents):
+
+```json
+{
+  "models": {
+    "provider": "openai",
+    "openai": {
+      "model": "gpt-5.3-codex",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "your-api-key"
+    }
   }
 }
 ```

@@ -3,6 +3,10 @@ export interface AgentConfig {
     provider: string;       // 'anthropic' or 'openai'
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
+    openai?: {
+        base_url?: string;
+        api_key?: string;
+    };
 }
 
 export interface TeamConfig {
@@ -34,6 +38,8 @@ export interface Settings {
         };
         openai?: {
             model?: string;
+            base_url?: string;
+            api_key?: string;
         };
     };
     agents?: Record<string, AgentConfig>;

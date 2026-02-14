@@ -44,9 +44,10 @@ export function getSettings(): Settings {
  */
 export function getDefaultAgentFromModels(settings: Settings): AgentConfig {
     const provider = settings?.models?.provider || 'anthropic';
+    const openAISettings = settings?.models?.openai;
     let model = '';
     if (provider === 'openai') {
-        model = settings?.models?.openai?.model || 'gpt-5.3-codex';
+        model = openAISettings?.model || 'gpt-5.3-codex';
     } else {
         model = settings?.models?.anthropic?.model || 'sonnet';
     }
@@ -55,12 +56,21 @@ export function getDefaultAgentFromModels(settings: Settings): AgentConfig {
     const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
     const defaultAgentDir = path.join(workspacePath, 'default');
 
-    return {
+    const defaultAgent: AgentConfig = {
         name: 'Default',
         provider,
         model,
         working_directory: defaultAgentDir,
     };
+
+    if (provider === 'openai' && (openAISettings?.base_url || openAISettings?.api_key)) {
+        defaultAgent.openai = {
+            ...(openAISettings.base_url ? { base_url: openAISettings.base_url } : {}),
+            ...(openAISettings.api_key ? { api_key: openAISettings.api_key } : {}),
+        };
+    }
+
+    return defaultAgent;
 }
 
 /**
@@ -69,7 +79,28 @@ export function getDefaultAgentFromModels(settings: Settings): AgentConfig {
  */
 export function getAgents(settings: Settings): Record<string, AgentConfig> {
     if (settings.agents && Object.keys(settings.agents).length > 0) {
-        return settings.agents;
+        const openAISettings = settings?.models?.openai;
+        return Object.fromEntries(
+            Object.entries(settings.agents).map(([id, agent]) => {
+                if (agent.provider !== 'openai') {
+                    return [id, agent];
+                }
+
+                const mergedOpenAI = {
+                    ...(openAISettings?.base_url ? { base_url: openAISettings.base_url } : {}),
+                    ...(openAISettings?.api_key ? { api_key: openAISettings.api_key } : {}),
+                    ...(agent.openai || {}),
+                };
+
+                return [
+                    id,
+                    {
+                        ...agent,
+                        ...(Object.keys(mergedOpenAI).length > 0 ? { openai: mergedOpenAI } : {}),
+                    }
+                ];
+            })
+        );
     }
     // Fall back to default agent from models section
     return { default: getDefaultAgentFromModels(settings) };

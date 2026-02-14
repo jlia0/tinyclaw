@@ -28,10 +28,13 @@ agent_list() {
     echo "================="
     echo ""
 
-    jq -r '(.agents // {}) | to_entries[] | "\(.key)|\(.value.name)|\(.value.provider)|\(.value.model)|\(.value.working_directory)"' "$SETTINGS_FILE" 2>/dev/null | \
-    while IFS='|' read -r id name provider model workdir; do
+    jq -r '(.agents // {}) | to_entries[] | "\(.key)|\(.value.name)|\(.value.provider)|\(.value.model)|\(.value.working_directory)|\(.value.openai.base_url // "")"' "$SETTINGS_FILE" 2>/dev/null | \
+    while IFS='|' read -r id name provider model workdir openai_base_url; do
         echo -e "  ${GREEN}@${id}${NC} - ${name}"
         echo "    Provider:  ${provider}/${model}"
+        if [ -n "$openai_base_url" ]; then
+            echo "    Endpoint:  ${openai_base_url}"
+        fi
         echo "    Directory: ${workdir}"
         echo ""
     done
@@ -115,6 +118,8 @@ agent_add() {
 
     # Model
     echo ""
+    AGENT_OPENAI_BASE_URL=""
+    AGENT_OPENAI_API_KEY=""
     if [ "$AGENT_PROVIDER" = "anthropic" ]; then
         echo "Model:"
         echo "  1) Sonnet (fast)"
@@ -128,11 +133,21 @@ agent_add() {
         echo "Model:"
         echo "  1) GPT-5.3 Codex"
         echo "  2) GPT-5.2"
-        read -rp "Choose [1-2, default: 1]: " AGENT_MODEL_CHOICE
+        echo "  3) Custom model name"
+        read -rp "Choose [1-3, default: 1]: " AGENT_MODEL_CHOICE
         case "$AGENT_MODEL_CHOICE" in
             2) AGENT_MODEL="gpt-5.2" ;;
+            3)
+                read -rp "Enter OpenAI-compatible model name: " AGENT_MODEL
+                if [ -z "$AGENT_MODEL" ]; then
+                    echo -e "${RED}Model name cannot be empty${NC}"
+                    exit 1
+                fi
+                ;;
             *) AGENT_MODEL="gpt-5.3-codex" ;;
         esac
+        read -rp "OpenAI-compatible base URL (optional): " AGENT_OPENAI_BASE_URL
+        read -rp "OpenAI API key (optional, saved in settings.json): " AGENT_OPENAI_API_KEY
     fi
 
     # Working directory - automatically set to agent directory
@@ -148,12 +163,23 @@ agent_add() {
         --arg provider "$AGENT_PROVIDER" \
         --arg model "$AGENT_MODEL" \
         --arg workdir "$AGENT_WORKDIR" \
+        --arg base_url "$AGENT_OPENAI_BASE_URL" \
+        --arg api_key "$AGENT_OPENAI_API_KEY" \
         '{
             name: $name,
             provider: $provider,
             model: $model,
             working_directory: $workdir
-        }')
+        } |
+        if $provider == "openai" and ($base_url != "" or $api_key != "") then
+            .openai = (
+                {}
+                + (if $base_url != "" then {base_url: $base_url} else {} end)
+                + (if $api_key != "" then {api_key: $api_key} else {} end)
+            )
+        else
+            .
+        end')
 
     # Ensure agents section exists and add the new agent
     jq --arg id "$AGENT_ID" --argjson agent "$agent_json" \
@@ -171,7 +197,7 @@ agent_add() {
     # Copy .claude directory
     if [ -d "$SCRIPT_DIR/.claude" ]; then
         cp -r "$SCRIPT_DIR/.claude" "$AGENTS_DIR/$AGENT_ID/"
-        echo "  → Copied .claude/ to agent directory"
+        echo "  -> Copied .claude/ to agent directory"
     else
         mkdir -p "$AGENTS_DIR/$AGENT_ID/.claude"
     fi
@@ -179,36 +205,36 @@ agent_add() {
     # Copy heartbeat.md
     if [ -f "$SCRIPT_DIR/heartbeat.md" ]; then
         cp "$SCRIPT_DIR/heartbeat.md" "$AGENTS_DIR/$AGENT_ID/"
-        echo "  → Copied heartbeat.md to agent directory"
+        echo "  -> Copied heartbeat.md to agent directory"
     fi
 
     # Copy AGENTS.md
     if [ -f "$SCRIPT_DIR/AGENTS.md" ]; then
         cp "$SCRIPT_DIR/AGENTS.md" "$AGENTS_DIR/$AGENT_ID/"
-        echo "  → Copied AGENTS.md to agent directory"
+        echo "  -> Copied AGENTS.md to agent directory"
     fi
 
     # Copy AGENTS.md content into .claude/CLAUDE.md as well
     if [ -f "$SCRIPT_DIR/AGENTS.md" ]; then
         cp "$SCRIPT_DIR/AGENTS.md" "$AGENTS_DIR/$AGENT_ID/.claude/CLAUDE.md"
-        echo "  → Copied CLAUDE.md to .claude/ directory"
+        echo "  -> Copied CLAUDE.md to .claude/ directory"
     fi
 
     # Symlink skills directory into .claude/skills
     if [ -d "$SCRIPT_DIR/.agents/skills" ] && [ ! -e "$AGENTS_DIR/$AGENT_ID/.claude/skills" ]; then
         ln -s "$SCRIPT_DIR/.agents/skills" "$AGENTS_DIR/$AGENT_ID/.claude/skills"
-        echo "  → Linked skills to .claude/skills/"
+        echo "  -> Linked skills to .claude/skills/"
     fi
 
     # Create .tinyclaw directory and copy SOUL.md
     mkdir -p "$AGENTS_DIR/$AGENT_ID/.tinyclaw"
     if [ -f "$SCRIPT_DIR/SOUL.md" ]; then
         cp "$SCRIPT_DIR/SOUL.md" "$AGENTS_DIR/$AGENT_ID/.tinyclaw/SOUL.md"
-        echo "  → Copied SOUL.md to .tinyclaw/"
+        echo "  -> Copied SOUL.md to .tinyclaw/"
     fi
 
     echo ""
-    echo -e "${GREEN}✓ Agent '${AGENT_ID}' created!${NC}"
+    echo -e "${GREEN}[OK] Agent '${AGENT_ID}' created!${NC}"
     echo -e "  Directory: $AGENTS_DIR/$AGENT_ID"
     echo ""
     echo -e "${BLUE}Next steps:${NC}"
@@ -253,7 +279,7 @@ agent_remove() {
         rm -rf "$AGENTS_DIR/$agent_id"
     fi
 
-    echo -e "${GREEN}✓ Agent '${agent_id}' removed.${NC}"
+    echo -e "${GREEN}[OK] Agent '${agent_id}' removed.${NC}"
 }
 
 # Reset a specific agent's conversation
@@ -279,7 +305,7 @@ agent_reset() {
     local agent_name
     agent_name=$(jq -r "(.agents // {}).\"${agent_id}\".name" "$SETTINGS_FILE" 2>/dev/null)
 
-    echo -e "${GREEN}✓ Reset flag set for agent '${agent_id}' (${agent_name})${NC}"
+    echo -e "${GREEN}[OK] Reset flag set for agent '${agent_id}' (${agent_name})${NC}"
     echo ""
     echo "The next message to @${agent_id} will start a fresh conversation."
 }

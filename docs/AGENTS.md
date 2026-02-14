@@ -97,6 +97,10 @@ Each agent has its own configuration in `.tinyclaw/settings.json`:
       "provider": "openai",
       "model": "gpt-5.3-codex",
       "working_directory": "/Users/me/tinyclaw-workspace/writer",
+      "openai": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key": "your-api-key"
+      },
       "prompt_file": "/path/to/writer-prompt.md"
     },
     "assistant": {
@@ -182,6 +186,8 @@ claude --dangerously-skip-permissions \
 **OpenAI (Codex):**
 ```bash
 cd "$agent_working_directory"  # e.g., ~/tinyclaw-workspace/coder/
+OPENAI_BASE_URL="https://openrouter.ai/api/v1" \
+OPENAI_API_KEY="your-api-key" \
 codex exec resume --last \
   --model gpt-5.3-codex \
   --skip-git-repo-check \
@@ -189,6 +195,7 @@ codex exec resume --last \
   --json \
   "User message here"
 ```
+`OPENAI_BASE_URL` and `OPENAI_API_KEY` are optional and only used when configured.
 
 ## Configuration
 
@@ -215,8 +222,8 @@ This walks you through:
 1. Agent ID (e.g., `coder`)
 2. Display name (e.g., `Code Assistant`)
 3. Provider (Anthropic or OpenAI)
-4. Model selection
-5. Optional system prompt
+4. Model selection (including custom OpenAI-compatible model names)
+5. Optional OpenAI-compatible endpoint settings (`base_url`, `api_key`) for OpenAI agents
 
 **Working directory is automatically set to:** `<workspace>/<agent_id>/`
 
@@ -250,6 +257,8 @@ Edit `.tinyclaw/settings.json`:
 | `provider` | Yes | `anthropic` or `openai` |
 | `model` | Yes | Model identifier (e.g., `sonnet`, `opus`, `gpt-5.3-codex`) |
 | `working_directory` | Yes | Directory where agent operates (auto-set to `<workspace>/<agent_id>/`) |
+| `openai.base_url` | No | Optional OpenAI-compatible endpoint base URL for OpenAI agents |
+| `openai.api_key` | No | Optional API key exported as `OPENAI_API_KEY` for OpenAI agents |
 | `system_prompt` | No | Inline system prompt text |
 | `prompt_file` | No | Path to file containing system prompt |
 
@@ -428,9 +437,11 @@ If no agents are configured, TinyClaw automatically creates a default agent usin
 ```json
 {
   "models": {
-    "provider": "anthropic",
-    "anthropic": {
-      "model": "sonnet"
+    "provider": "openai",
+    "openai": {
+      "model": "gpt-5.3-codex",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "your-api-key"
     }
   }
 }
