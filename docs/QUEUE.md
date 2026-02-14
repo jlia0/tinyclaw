@@ -23,7 +23,8 @@ The queue system acts as a central coordinator between:
 │  incoming/          processing/         outgoing/           │
 │  ├─ msg1.json  →   ├─ msg1.json   →   ├─ msg1.json        │
 │  ├─ msg2.json       └─ msg2.json       └─ msg2.json        │
-│  └─ msg3.json                                                │
+│  └─ msg3.json         │                                      │
+│                        └────────→ dead-letter/ (on failure) │
 │                                                              │
 └────────────────────┬────────────────────────────────────────┘
                      │ Queue Processor
@@ -54,7 +55,9 @@ The queue system acts as a central coordinator between:
 │   │   └── msg_789012.json
 │   ├── processing/        # Currently being processed
 │   │   └── msg_123456.json
-│   └── outgoing/          # Responses ready to send
+│   ├── outgoing/          # Responses ready to send
+│   │   └── msg_123456.json
+│   └── dead-letter/       # Terminal or exhausted failures
 │       └── msg_123456.json
 ├── logs/
 │   ├── queue.log         # Queue processor logs
@@ -85,6 +88,8 @@ A channel client receives a message and writes it to `incoming/`:
 **Optional fields:**
 - `agent` - Pre-route to specific agent (bypasses @agent_id parsing)
 - `files` - Array of file paths uploaded with message
+- `attempt` - Retry counter for transient processing failures
+- `firstSeenAt` - Timestamp of first queue observation
 
 ### 2. Processing
 
@@ -164,6 +169,26 @@ Channel clients poll `outgoing/` and:
 2. Send message to user
 3. Delete the JSON file
 4. Handle any file attachments
+
+### 7. Retry and Dead-Letter
+
+Queue processor classifies failures:
+
+- **Transient**: retried up to `sandbox.max_attempts`.
+- **Terminal**: no retry (fail-closed), immediately dead-lettered.
+
+When retries are exhausted, the payload is moved to:
+
+```text
+~/.tinyclaw/queue/dead-letter/
+```
+
+Dead-letter files include:
+
+- original message payload,
+- error class (`transient` / `terminal`),
+- attempt counters,
+- failure timestamp.
 
 ## Parallel Processing
 
@@ -367,7 +392,7 @@ User: @unknown help
 
 ### Processing Errors
 
-Errors are caught per-agent:
+Errors are classified and handled with retry/dead-letter flow:
 
 ```typescript
 newChain.catch(error => {
@@ -376,10 +401,11 @@ newChain.catch(error => {
 ```
 
 Failed messages:
-- Don't block other agents
-- Are logged to `queue.log`
-- Response file not created
-- Channel client times out gracefully
+- Don't block other agents.
+- Are logged to `queue.log`.
+- Retry if transient (up to configured cap).
+- Move to dead-letter on terminal or exhausted retries.
+- Return explicit failure message to channel user when processing aborts.
 
 ### Stale Messages
 
@@ -427,6 +453,9 @@ ls ~/.tinyclaw/queue/processing/
 
 # See responses waiting
 ls ~/.tinyclaw/queue/outgoing/
+
+# See dead-letter failures
+ls ~/.tinyclaw/queue/dead-letter/
 
 # Watch queue logs
 tail -f ~/.tinyclaw/logs/queue.log
@@ -507,5 +536,6 @@ Add metrics:
 ## See Also
 
 - [AGENTS.md](AGENTS.md) - Agent configuration and management
+- [SANDBOX.md](SANDBOX.md) - Container runtime sandbox behavior
 - [README.md](../README.md) - Main project documentation
 - [src/queue-processor.ts](../src/queue-processor.ts) - Implementation

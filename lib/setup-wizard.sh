@@ -137,6 +137,38 @@ else
     echo ""
 fi
 
+# Sandbox mode selection
+echo "Sandbox mode for agent execution?"
+echo ""
+echo "  1) Docker sandbox  (recommended)"
+echo "  2) Apple container sandbox"
+echo "  3) Host execution (no container)"
+echo ""
+read -rp "Choose [1-3, default: 1]: " SANDBOX_CHOICE
+
+case "$SANDBOX_CHOICE" in
+    2)
+        SANDBOX_MODE="apple"
+        ;;
+    3)
+        SANDBOX_MODE="host"
+        ;;
+    *)
+        SANDBOX_MODE="docker"
+        ;;
+esac
+
+if [ "$SANDBOX_MODE" = "docker" ] && ! command -v docker &> /dev/null; then
+    echo -e "${YELLOW}⚠ Docker not found. Falling back to host mode.${NC}"
+    SANDBOX_MODE="host"
+fi
+if [ "$SANDBOX_MODE" = "apple" ] && ! command -v apple-container &> /dev/null; then
+    echo -e "${YELLOW}⚠ apple-container runtime not found. Falling back to host mode.${NC}"
+    SANDBOX_MODE="host"
+fi
+echo -e "${GREEN}✓ Sandbox mode: $SANDBOX_MODE${NC}"
+echo ""
+
 # Heartbeat interval
 echo "Heartbeat interval (seconds)?"
 echo -e "${YELLOW}(How often Claude checks in proactively)${NC}"
@@ -292,6 +324,27 @@ cat > "$SETTINGS_FILE" <<EOF
   },
   ${AGENTS_JSON}
   ${MODELS_SECTION},
+  "sandbox": {
+    "mode": "${SANDBOX_MODE}",
+    "timeout_seconds": 600,
+    "max_attempts": 3,
+    "env_allowlist": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+    "path_mapping_mode": "mapped",
+    "docker": {
+      "image": "tinyclaw/agent-runner:latest",
+      "network": "default",
+      "memory": "2g",
+      "cpus": "1.0",
+      "pids_limit": 256
+    },
+    "apple": {
+      "runtime_command": "apple-container",
+      "image": "tinyclaw/agent-runner:latest",
+      "network": "default",
+      "memory": "2g",
+      "cpus": "1.0"
+    }
+  },
   "monitoring": {
     "heartbeat_interval": ${HEARTBEAT_INTERVAL}
   }

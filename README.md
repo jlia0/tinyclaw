@@ -25,6 +25,7 @@
 - ✅ **Team Observation** - You can observe agent teams conversations via `tinyclaw team visualize`
 - ✅ **Multiple AI providers** - Anthropic Claude and OpenAI Codex using existing subscriptions without breaking ToS
 - ✅ **Parallel processing** - Agents process messages concurrently
+- ✅ **Sandboxed execution** - Run agent invocations in host, Docker, or Apple container runtime modes
 - ✅ **Live TUI dashboard** - Real-time team visualizer for monitoring agent chains
 - ✅ **Persistent sessions** - Conversation context maintained across restarts
 - ✅ **File-based queue** - No race conditions, reliable message handling
@@ -78,7 +79,36 @@ The setup wizard will guide you through:
 4. **Default agent** - Configure your main AI assistant
 5. **AI provider** - Select Anthropic (Claude) or OpenAI
 6. **Model selection** - Choose model (e.g., Sonnet, Opus, GPT-5.3)
-7. **Heartbeat interval** - Set proactive check-in frequency
+7. **Sandbox mode** - Choose host, Docker sandbox, or Apple container sandbox
+8. **Heartbeat interval** - Set proactive check-in frequency
+
+### Sandbox Quick Start (Docker)
+
+For users who choose `docker` sandbox mode, run these steps after setup:
+
+```bash
+# 1) Set API keys in the same shell used to start TinyClaw
+export OPENAI_API_KEY="your_openai_key"
+export ANTHROPIC_API_KEY="your_anthropic_key"   # if using Anthropic agents
+
+# 2) Build local sandbox image
+tinyclaw sandbox build-image
+
+# 3) Validate runtime/image/env
+tinyclaw sandbox doctor
+
+# 4) Restart TinyClaw so queue processor picks up env + settings
+tinyclaw restart
+```
+
+Notes:
+
+- Sandbox containers are **ephemeral** (`docker run --rm` per request). They may not appear in `docker ps`.
+- Use Docker events to verify sandbox invocations:
+
+```bash
+docker events --filter type=container --format '{{.Time}} {{.Action}} {{.Actor.Attributes.image}} {{.Actor.Attributes.name}}'
+```
 
 <details>
 <summary><b>📱 Channel Setup Guides</b></summary>
@@ -156,6 +186,10 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 | `provider [name]`                 | Show or switch AI provider   | `tinyclaw provider anthropic`                    |
 | `provider <name> --model <model>` | Switch provider and model    | `tinyclaw provider openai --model gpt-5.3-codex` |
 | `model [name]`                    | Show or switch AI model      | `tinyclaw model opus`                            |
+| `sandbox show`                    | Show sandbox configuration   | `tinyclaw sandbox show`                          |
+| `sandbox set <mode>`              | Set sandbox mode             | `tinyclaw sandbox set docker`                    |
+| `sandbox doctor`                  | Validate runtime/image/env   | `tinyclaw sandbox doctor`                        |
+| `sandbox build-image`             | Build Docker sandbox image   | `tinyclaw sandbox build-image`                   |
 | `reset`                           | Reset all conversations      | `tinyclaw reset`                                 |
 | `channels reset <channel>`        | Reset channel authentication | `tinyclaw channels reset whatsapp`               |
 
@@ -345,6 +379,7 @@ See [docs/AGENTS.md](docs/AGENTS.md) for:
 - **Parallel agents** - Different agents process messages concurrently
 - **Sequential per agent** - Preserves conversation order within each agent
 - **Isolated workspaces** - Each agent has its own directory and context
+- **Dead-letter safety** - Failed messages are retried and then moved to `queue/dead-letter`
 
 <details>
 <summary><b>📖 Learn more about the queue system</b></summary>
@@ -367,7 +402,8 @@ tinyclaw/
 │   ├── queue/            # Message queue
 │   │   ├── incoming/
 │   │   ├── processing/
-│   │   └── outgoing/
+│   │   ├── outgoing/
+│   │   └── dead-letter/
 │   ├── logs/             # All logs
 │   ├── channels/         # Channel state
 │   ├── files/            # Uploaded files
@@ -427,6 +463,12 @@ Located at `.tinyclaw/settings.json`:
   },
   "monitoring": {
     "heartbeat_interval": 3600
+  },
+  "sandbox": {
+    "mode": "host",
+    "timeout_seconds": 600,
+    "max_attempts": 3,
+    "env_allowlist": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
   }
 }
 ```
@@ -497,6 +539,9 @@ All channels share agent conversations!
 - [AGENTS.md](docs/AGENTS.md) - Agent management and routing
 - [TEAMS.md](docs/TEAMS.md) - Team collaboration, chain execution, and visualizer
 - [QUEUE.md](docs/QUEUE.md) - Queue system and message flow
+- [SANDBOX.md](docs/SANDBOX.md) - Container runtime sandbox architecture and configuration
+- [MIGRATION-SANDBOX.md](docs/MIGRATION-SANDBOX.md) - Upgrade-safe sandbox migration and rollback
+- [OPERATIONS-RUNBOOK.md](docs/OPERATIONS-RUNBOOK.md) - Day-2 operations for sandbox deployments
 - [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ## 🐛 Troubleshooting

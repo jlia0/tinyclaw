@@ -143,6 +143,50 @@ tinyclaw logs telegram
 tinyclaw logs whatsapp
 ```
 
+## Sandbox Issues
+
+### Sandbox runtime not available
+
+```bash
+tinyclaw sandbox doctor
+```
+
+If doctor reports missing runtime:
+
+- Docker mode: install/start Docker Desktop or daemon.
+- Apple mode: install and expose the configured runtime command (default `apple-container`).
+
+### Missing API keys in sandbox mode
+
+Sandboxed invocation requires environment API keys:
+
+```bash
+export ANTHROPIC_API_KEY=...
+export OPENAI_API_KEY=...
+tinyclaw sandbox doctor
+```
+
+Also ensure keys are allowlisted in `settings.json` under `sandbox.env_allowlist`.
+
+### Image errors in container modes
+
+```bash
+tinyclaw sandbox build-image
+tinyclaw sandbox doctor
+```
+
+If image exists but provider CLIs are missing, build a derived image that installs `claude` and/or `codex`.
+
+### Requests moved to dead-letter
+
+Inspect failures:
+
+```bash
+ls -la ~/.tinyclaw/queue/dead-letter/
+```
+
+Each dead-letter file includes error class and attempts. Terminal errors require configuration/runtime fixes before replay.
+
 ## Agent Issues
 
 ### Agent not found

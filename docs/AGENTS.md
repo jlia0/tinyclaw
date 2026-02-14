@@ -152,7 +152,7 @@ Templates and shared resources are stored in `~/.tinyclaw/`:
 ├── channels/          # SHARED: Channel state (QR codes, ready flags)
 ├── files/             # SHARED: Uploaded files from all channels
 ├── logs/              # SHARED: Log files for all agents and channels
-└── queue/             # SHARED: Message queue (incoming/outgoing/processing)
+└── queue/             # SHARED: Message queue (incoming/outgoing/processing/dead-letter)
 ```
 
 **How it works:**
@@ -168,6 +168,8 @@ Templates and shared resources are stored in `~/.tinyclaw/`:
 ### 4. Provider Execution
 
 The queue processor calls the appropriate CLI based on provider:
+
+When sandbox mode is enabled (`docker` or `apple`), the same provider commands run inside container runtime isolation.
 
 **Anthropic (Claude):**
 ```bash
@@ -250,6 +252,7 @@ Edit `.tinyclaw/settings.json`:
 | `provider` | Yes | `anthropic` or `openai` |
 | `model` | Yes | Model identifier (e.g., `sonnet`, `opus`, `gpt-5.3-codex`) |
 | `working_directory` | Yes | Directory where agent operates (auto-set to `<workspace>/<agent_id>/`) |
+| `sandbox_mode` | No | Per-agent override for sandbox runtime (`host`, `docker`, `apple`) |
 | `system_prompt` | No | Inline system prompt text |
 | `prompt_file` | No | Path to file containing system prompt |
 
@@ -257,6 +260,7 @@ Edit `.tinyclaw/settings.json`:
 - If both `prompt_file` and `system_prompt` are provided, `prompt_file` takes precedence
 - The `working_directory` is automatically set to `<workspace>/<agent_id>/` when creating agents
 - Each agent gets its own isolated directory with copies of templates from `~/.tinyclaw/`
+- `sandbox_mode` overrides global `sandbox.mode` from settings when provided
 
 ## Usage
 

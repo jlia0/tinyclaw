@@ -33,6 +33,244 @@ source "$SCRIPT_DIR/lib/teams.sh"
 source "$SCRIPT_DIR/lib/pairing.sh"
 source "$SCRIPT_DIR/lib/update.sh"
 
+sandbox_show() {
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}No settings file found. Run setup first.${NC}"
+        return 1
+    fi
+
+    if ! command -v jq >/dev/null 2>&1; then
+        echo -e "${RED}jq is required for sandbox commands.${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}Sandbox Configuration${NC}"
+    echo "====================="
+    jq '.sandbox // {
+      mode: "host",
+      timeout_seconds: 600,
+      max_attempts: 3,
+      env_allowlist: ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+      path_mapping_mode: "mapped",
+      docker: {
+        image: "tinyclaw/agent-runner:latest",
+        network: "default",
+        memory: "2g",
+        cpus: "1.0",
+        pids_limit: 256
+      },
+      apple: {
+        runtime_command: "apple-container",
+        image: "tinyclaw/agent-runner:latest",
+        network: "default",
+        memory: "2g",
+        cpus: "1.0"
+      }
+    }' "$SETTINGS_FILE"
+}
+
+sandbox_set() {
+    local mode="$1"
+    if [ -z "$mode" ]; then
+        echo "Usage: $0 sandbox set {host|docker|apple}"
+        return 1
+    fi
+
+    case "$mode" in
+        host|docker|apple) ;;
+        *)
+            echo "Usage: $0 sandbox set {host|docker|apple}"
+            return 1
+            ;;
+    esac
+
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}No settings file found. Run setup first.${NC}"
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        echo -e "${RED}jq is required for sandbox commands.${NC}"
+        return 1
+    fi
+
+    local tmp_file="$SETTINGS_FILE.tmp"
+    jq ".sandbox.mode = \"$mode\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+    echo -e "${GREEN}✓ Sandbox mode set to: $mode${NC}"
+
+    if [ "$mode" != "host" ]; then
+        echo ""
+        echo "Run doctor before restarting TinyClaw:"
+        echo -e "  ${GREEN}$0 sandbox doctor${NC}"
+    fi
+}
+
+sandbox_doctor() {
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}No settings file found. Run setup first.${NC}"
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        echo -e "${RED}jq is required for sandbox commands.${NC}"
+        return 1
+    fi
+
+    local mode
+    mode=$(jq -r '.sandbox.mode // "host"' "$SETTINGS_FILE" 2>/dev/null)
+    local workspace
+    workspace=$(jq -r '.workspace.path // empty' "$SETTINGS_FILE" 2>/dev/null)
+    [ -z "$workspace" ] && workspace="$HOME/tinyclaw-workspace"
+
+    local runtime_cmd=""
+    local image=""
+    case "$mode" in
+        host)
+            runtime_cmd="host"
+            ;;
+        docker)
+            runtime_cmd="docker"
+            image=$(jq -r '.sandbox.docker.image // "tinyclaw/agent-runner:latest"' "$SETTINGS_FILE" 2>/dev/null)
+            ;;
+        apple)
+            runtime_cmd=$(jq -r '.sandbox.apple.runtime_command // "apple-container"' "$SETTINGS_FILE" 2>/dev/null)
+            image=$(jq -r '.sandbox.apple.image // "tinyclaw/agent-runner:latest"' "$SETTINGS_FILE" 2>/dev/null)
+            ;;
+        *)
+            echo -e "${RED}Invalid sandbox mode in settings: $mode${NC}"
+            return 1
+            ;;
+    esac
+
+    echo -e "${BLUE}Sandbox Doctor${NC}"
+    echo "=============="
+    echo "Mode: $mode"
+    echo ""
+
+    local failures=0
+
+    # Workspace check
+    if [ -d "$workspace" ]; then
+        echo -e "${GREEN}✓${NC} Workspace exists: $workspace"
+    else
+        echo -e "${RED}✗${NC} Workspace missing: $workspace"
+        failures=$((failures + 1))
+    fi
+
+    if [ "$mode" = "host" ]; then
+        if command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC} Host provider CLI detected"
+        else
+            echo -e "${RED}✗${NC} Neither claude nor codex CLI is installed"
+            failures=$((failures + 1))
+        fi
+    else
+        if command -v "$runtime_cmd" >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC} Runtime available: $runtime_cmd"
+        else
+            echo -e "${RED}✗${NC} Runtime not found: $runtime_cmd"
+            failures=$((failures + 1))
+        fi
+
+        if [ -n "$image" ] && command -v "$runtime_cmd" >/dev/null 2>&1; then
+            if "$runtime_cmd" image inspect "$image" >/dev/null 2>&1; then
+                echo -e "${GREEN}✓${NC} Image available: $image"
+                if "$runtime_cmd" run --rm "$image" sh -lc "command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1" >/dev/null 2>&1; then
+                    echo -e "${GREEN}✓${NC} Provider CLI detected inside image"
+                else
+                    echo -e "${YELLOW}⚠${NC} Could not detect claude/codex inside image"
+                    echo "  Your sandbox image should include provider CLIs."
+                fi
+            else
+                echo -e "${YELLOW}⚠${NC} Image not found locally: $image"
+                echo "  Pull/build before running in sandbox mode."
+            fi
+        fi
+    fi
+
+    # Required provider env vars (based on configured providers).
+    local requires_anthropic=0
+    local requires_openai=0
+    if jq -e '.models.provider == "anthropic"' "$SETTINGS_FILE" >/dev/null 2>&1; then
+        requires_anthropic=1
+    fi
+    if jq -e '.models.provider == "openai"' "$SETTINGS_FILE" >/dev/null 2>&1; then
+        requires_openai=1
+    fi
+    if jq -e '(.agents // {}) | to_entries[]? | select(.value.provider == "anthropic")' "$SETTINGS_FILE" >/dev/null 2>&1; then
+        requires_anthropic=1
+    fi
+    if jq -e '(.agents // {}) | to_entries[]? | select(.value.provider == "openai")' "$SETTINGS_FILE" >/dev/null 2>&1; then
+        requires_openai=1
+    fi
+
+    local allowlist
+    allowlist=$(jq -c '.sandbox.env_allowlist // ["ANTHROPIC_API_KEY","OPENAI_API_KEY"]' "$SETTINGS_FILE" 2>/dev/null)
+    if [ "$requires_anthropic" -eq 1 ]; then
+        if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            echo -e "${GREEN}✓${NC} ANTHROPIC_API_KEY is set"
+        else
+            echo -e "${RED}✗${NC} ANTHROPIC_API_KEY is missing"
+            failures=$((failures + 1))
+        fi
+        if echo "$allowlist" | jq -e 'index("ANTHROPIC_API_KEY")' >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC} ANTHROPIC_API_KEY is allowlisted"
+        else
+            echo -e "${RED}✗${NC} ANTHROPIC_API_KEY missing from sandbox.env_allowlist"
+            failures=$((failures + 1))
+        fi
+    fi
+
+    if [ "$requires_openai" -eq 1 ]; then
+        if [ -n "${OPENAI_API_KEY:-}" ]; then
+            echo -e "${GREEN}✓${NC} OPENAI_API_KEY is set"
+        else
+            echo -e "${RED}✗${NC} OPENAI_API_KEY is missing"
+            failures=$((failures + 1))
+        fi
+        if echo "$allowlist" | jq -e 'index("OPENAI_API_KEY")' >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC} OPENAI_API_KEY is allowlisted"
+        else
+            echo -e "${RED}✗${NC} OPENAI_API_KEY missing from sandbox.env_allowlist"
+            failures=$((failures + 1))
+        fi
+    fi
+
+    if [ "$failures" -eq 0 ]; then
+        echo ""
+        echo -e "${GREEN}Sandbox doctor passed.${NC}"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${RED}Sandbox doctor found $failures issue(s).${NC}"
+    return 1
+}
+
+sandbox_build_image() {
+    if ! command -v docker >/dev/null 2>&1; then
+        echo -e "${RED}docker is required for sandbox build-image.${NC}"
+        return 1
+    fi
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}No settings file found. Run setup first.${NC}"
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        echo -e "${RED}jq is required for sandbox commands.${NC}"
+        return 1
+    fi
+
+    local image
+    image=$(jq -r '.sandbox.docker.image // "tinyclaw/agent-runner:latest"' "$SETTINGS_FILE" 2>/dev/null)
+    local dockerfile="$SCRIPT_DIR/Dockerfile.agent-runner"
+    if [ ! -f "$dockerfile" ]; then
+        echo -e "${RED}Missing Dockerfile.agent-runner at $dockerfile${NC}"
+        return 1
+    fi
+
+    echo "Building sandbox image: $image"
+    docker build -f "$dockerfile" -t "$image" "$SCRIPT_DIR"
+}
+
 # --- Main command dispatch ---
 
 case "${1:-}" in
@@ -233,6 +471,38 @@ case "${1:-}" in
             esac
         fi
         ;;
+    sandbox)
+        case "${2:-}" in
+            show)
+                sandbox_show
+                ;;
+            set)
+                sandbox_set "$3"
+                ;;
+            doctor)
+                sandbox_doctor
+                ;;
+            build-image)
+                sandbox_build_image
+                ;;
+            *)
+                echo "Usage: $0 sandbox {show|set|doctor|build-image}"
+                echo ""
+                echo "Sandbox Commands:"
+                echo "  show                    Show sandbox configuration"
+                echo "  set <mode>              Set sandbox mode (host|docker|apple)"
+                echo "  doctor                  Validate runtime/image/env settings"
+                echo "  build-image             Build Docker sandbox image"
+                echo ""
+                echo "Examples:"
+                echo "  $0 sandbox show"
+                echo "  $0 sandbox set docker"
+                echo "  $0 sandbox doctor"
+                echo "  $0 sandbox build-image"
+                exit 1
+                ;;
+        esac
+        ;;
     agent)
         case "${2:-}" in
             list|ls)
@@ -377,6 +647,7 @@ case "${1:-}" in
         echo "  channels reset <channel> Reset channel auth ($local_names)"
         echo "  provider [name] [--model model]  Show or switch AI provider"
         echo "  model [name]             Show or switch AI model"
+        echo "  sandbox {show|set|doctor|build-image}  Manage sandbox runtime"
         echo "  agent {list|add|remove|show|reset}  Manage agents"
         echo "  team {list|add|remove|show|visualize}  Manage teams"
         echo "  pairing {pending|approved|list|approve <code>|unpair <channel> <sender_id>}  Manage sender approvals"
@@ -388,6 +659,9 @@ case "${1:-}" in
         echo "  $0 status"
         echo "  $0 provider openai --model gpt-5.3-codex"
         echo "  $0 model opus"
+        echo "  $0 sandbox show"
+        echo "  $0 sandbox set docker"
+        echo "  $0 sandbox doctor"
         echo "  $0 agent list"
         echo "  $0 agent add"
         echo "  $0 team list"

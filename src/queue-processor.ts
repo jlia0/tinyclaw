@@ -10,23 +10,50 @@
  *   - Conversation isolation via per-agent working directories
  */
 
-import fs from 'fs';
-import path from 'path';
-import { MessageData, ResponseData, QueueFile, ChainStep, TeamConfig } from './lib/types';
+import fs from "fs";
+import path from "path";
 import {
-    QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING,
-    LOG_FILE, RESET_FLAG, EVENTS_DIR, CHATS_DIR,
-    getSettings, getAgents, getTeams
-} from './lib/config';
-import { log, emitEvent } from './lib/logging';
-import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
-import { invokeAgent } from './lib/invoke';
+	CHATS_DIR,
+	EVENTS_DIR,
+	getAgents,
+	getSandboxConfig,
+	getSettings,
+	getTeams,
+	LOG_FILE,
+	QUEUE_DEAD_LETTER,
+	QUEUE_INCOMING,
+	QUEUE_OUTGOING,
+	QUEUE_PROCESSING,
+	RESET_FLAG,
+} from "./lib/config";
+import { invokeAgent } from "./lib/invoke";
+import { emitEvent, log } from "./lib/logging";
+import {
+	extractTeammateMentions,
+	findTeamForAgent,
+	getAgentResetFlag,
+	parseAgentRouting,
+} from "./lib/routing";
+import { SandboxInvocationError, type SandboxPathMapping } from "./lib/runner";
+import type {
+	ChainStep,
+	MessageData,
+	QueueFile,
+	ResponseData,
+	TeamConfig,
+} from "./lib/types";
 
 // Ensure directories exist
-[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, path.dirname(LOG_FILE)].forEach(dir => {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
+[
+	QUEUE_INCOMING,
+	QUEUE_OUTGOING,
+	QUEUE_PROCESSING,
+	QUEUE_DEAD_LETTER,
+	path.dirname(LOG_FILE),
+].forEach((dir) => {
+	if (!fs.existsSync(dir)) {
+		fs.mkdirSync(dir, { recursive: true });
+	}
 });
 
 // Files currently queued in a promise chain — prevents duplicate processing across ticks
@@ -44,23 +71,160 @@ function recoverOrphanedFiles() {
     }
 }
 
+const HEARTBEAT_ERROR_DEDUPE_MS = 60_000;
+const heartbeatErrorCache = new Map<string, number>();
+
+function shouldLogHeartbeatError(message: string): boolean {
+    const now = Date.now();
+    const key = message.slice(0, 160);
+    const lastSeen = heartbeatErrorCache.get(key) || 0;
+    if ((now - lastSeen) < HEARTBEAT_ERROR_DEDUPE_MS) {
+        return false;
+    }
+    heartbeatErrorCache.set(key, now);
+    return true;
+}
+
+function toSafeErrorMessage(error: unknown): string {
+    const text = (error as Error)?.message || String(error || 'Unknown error');
+    return text.replace(/(ANTHROPIC_API_KEY|OPENAI_API_KEY)=\S+/g, '$1=[REDACTED]');
+}
+
+function resolveSandboxPath(filePath: string, pathMappings: SandboxPathMapping[]): string | null {
+    const trimmed = filePath.trim();
+    if (!path.isAbsolute(trimmed)) {
+        return null;
+    }
+    if (fs.existsSync(trimmed)) {
+        return trimmed;
+    }
+
+    for (const mapping of pathMappings) {
+        const prefix = mapping.containerPrefix.endsWith(path.sep)
+            ? mapping.containerPrefix
+            : `${mapping.containerPrefix}${path.sep}`;
+        if (trimmed === mapping.containerPrefix || trimmed.startsWith(prefix)) {
+            const suffix = trimmed.slice(mapping.containerPrefix.length).replace(/^[\\/]/, '');
+            const hostPath = suffix ? path.join(mapping.hostPrefix, suffix) : mapping.hostPrefix;
+            if (fs.existsSync(hostPath)) {
+                return hostPath;
+            }
+        }
+    }
+
+    return null;
+}
+
+function parseOutboundFiles(
+    responseText: string,
+    pathMappings: SandboxPathMapping[]
+): { cleanText: string; files: string[]; missing: string[] } {
+    const fileRefRegex = /\[send_file:\s*([^\]]+)\]/g;
+    const files = new Set<string>();
+    const missing: string[] = [];
+    let match: RegExpExecArray | null;
+
+    while (true) {
+        match = fileRefRegex.exec(responseText);
+        if (!match) break;
+        const rawPath = match[1].trim();
+        const resolved = resolveSandboxPath(rawPath, pathMappings);
+        if (resolved) {
+            files.add(resolved);
+        } else {
+            missing.push(rawPath);
+        }
+    }
+
+    const cleanText = responseText.replace(fileRefRegex, '').trim();
+    return { cleanText, files: Array.from(files), missing };
+}
+
+function writeOutgoingResponse(
+    channel: string,
+    sender: string,
+    message: string,
+    originalMessage: string,
+    messageId: string,
+    agentId?: string,
+    files?: string[]
+): void {
+    const responseData: ResponseData = {
+        channel,
+        sender,
+        message,
+        originalMessage,
+        timestamp: Date.now(),
+        messageId,
+        agent: agentId,
+        files: files && files.length > 0 ? files : undefined,
+    };
+
+    const responseFile = channel === 'heartbeat'
+        ? path.join(QUEUE_OUTGOING, `${messageId}.json`)
+        : path.join(QUEUE_OUTGOING, `${channel}_${messageId}_${Date.now()}.json`);
+
+    fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
+}
+
+function writeDeadLetter(
+    processingFile: string,
+    payload: MessageData | null,
+    errorClass: 'terminal' | 'transient',
+    errorMessage: string,
+    attempt: number,
+    maxAttempts: number
+): void {
+    const base = path.basename(processingFile, '.json');
+    const deadLetterFile = path.join(QUEUE_DEAD_LETTER, `${base}_${Date.now()}.json`);
+    const deadLetterData = {
+        failedAt: new Date().toISOString(),
+        errorClass,
+        errorMessage,
+        attempt,
+        maxAttempts,
+        payload,
+    };
+    fs.writeFileSync(deadLetterFile, JSON.stringify(deadLetterData, null, 2));
+    log('ERROR', `Moved message to dead-letter queue: ${path.basename(deadLetterFile)}`);
+}
+
 // Process a single message
 async function processMessage(messageFile: string): Promise<void> {
     const processingFile = path.join(QUEUE_PROCESSING, path.basename(messageFile));
+    let messageData: MessageData | null = null;
+    let settings = getSettings();
+    let agentIdForError: string | undefined;
+    let rawMessageForError = '';
+    let senderForError = '';
+    let channelForError = '';
+    let messageIdForError = '';
 
     try {
         // Move to processing to mark as in-progress
         fs.renameSync(messageFile, processingFile);
 
         // Read message
-        const messageData: MessageData = JSON.parse(fs.readFileSync(processingFile, 'utf8'));
-        const { channel, sender, message: rawMessage, timestamp, messageId } = messageData;
+        const parsedMessageData: MessageData = JSON.parse(fs.readFileSync(processingFile, 'utf8'));
+        messageData = parsedMessageData;
+        const { channel, sender, message: rawMessage, timestamp, messageId } = parsedMessageData;
+        rawMessageForError = rawMessage;
+        senderForError = sender;
+        channelForError = channel;
+        messageIdForError = messageId;
+
+        if (!parsedMessageData.firstSeenAt) {
+            parsedMessageData.firstSeenAt = timestamp || Date.now();
+        }
+        if (!parsedMessageData.attempt) {
+            parsedMessageData.attempt = 0;
+        }
 
         log('INFO', `Processing [${channel}] from ${sender}: ${rawMessage.substring(0, 50)}...`);
         emitEvent('message_received', { channel, sender, message: rawMessage.substring(0, 120), messageId });
 
         // Get settings, agents, and teams
-        const settings = getSettings();
+        settings = getSettings();
         const agents = getAgents(settings);
         const teams = getTeams(settings);
 
@@ -72,9 +236,9 @@ async function processMessage(messageFile: string): Promise<void> {
         let message: string;
         let isTeamRouted = false;
 
-        if (messageData.agent && agents[messageData.agent]) {
+        if (parsedMessageData.agent && agents[parsedMessageData.agent]) {
             // Pre-routed by channel client
-            agentId = messageData.agent;
+            agentId = parsedMessageData.agent;
             message = rawMessage;
         } else {
             // Parse @agent or @team prefix
@@ -89,17 +253,7 @@ async function processMessage(messageFile: string): Promise<void> {
             log('INFO', `Multiple agents detected, sending easter egg message`);
 
             // Send error message directly as response
-            const responseFile = path.join(QUEUE_OUTGOING, path.basename(processingFile));
-            const responseData: ResponseData = {
-                channel,
-                sender,
-                message: message, // Contains the easter egg message
-                originalMessage: rawMessage,
-                timestamp: Date.now(),
-                messageId,
-            };
-
-            fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
+            writeOutgoingResponse(channel, sender, message, rawMessage, messageId);
             fs.unlinkSync(processingFile);
             log('INFO', `✓ Easter egg sent to ${sender}`);
             return;
@@ -115,6 +269,7 @@ async function processMessage(messageFile: string): Promise<void> {
         if (!agents[agentId]) {
             agentId = Object.keys(agents)[0];
         }
+        agentIdForError = agentId;
 
         const agent = agents[agentId];
         log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
@@ -147,18 +302,14 @@ async function processMessage(messageFile: string): Promise<void> {
             if (fs.existsSync(agentResetFlag)) fs.unlinkSync(agentResetFlag);
         }
 
-        let finalResponse: string;
-        const allFiles = new Set<string>();
+        let finalResponse = '';
+        const allPathMappings: SandboxPathMapping[] = [];
 
         if (!teamContext) {
             // No team context — single agent invocation (backward compatible)
-            try {
-                finalResponse = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
-            } catch (error) {
-                const provider = agent.provider || 'anthropic';
-                log('ERROR', `${provider === 'openai' ? 'Codex' : 'Claude'} error (agent: ${agentId}): ${(error as Error).message}`);
-                finalResponse = "Sorry, I encountered an error processing your request. Please check the queue logs.";
-            }
+            const result = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams, settings);
+            finalResponse = result.response;
+            allPathMappings.push(...result.pathMappings);
         } else {
             // Team context — chain execution
             log('INFO', `Team context: ${teamContext.team.name} (@${teamContext.teamId})`);
@@ -189,27 +340,21 @@ async function processMessage(messageFile: string): Promise<void> {
                     fs.unlinkSync(currentResetFlag);
                 }
 
-                let stepResponse: string;
-                try {
-                    stepResponse = await invokeAgent(currentAgent, currentAgentId, currentMessage, workspacePath, currentShouldReset, agents, teams);
-                } catch (error) {
-                    const provider = currentAgent.provider || 'anthropic';
-                    log('ERROR', `${provider === 'openai' ? 'Codex' : 'Claude'} error (agent: ${currentAgentId}): ${(error as Error).message}`);
-                    stepResponse = "Sorry, I encountered an error processing this request.";
-                }
+                const stepResult = await invokeAgent(
+                    currentAgent,
+                    currentAgentId,
+                    currentMessage,
+                    workspacePath,
+                    currentShouldReset,
+                    agents,
+                    teams,
+                    settings
+                );
+                const stepResponse = stepResult.response;
+                allPathMappings.push(...stepResult.pathMappings);
 
                 chainSteps.push({ agentId: currentAgentId, response: stepResponse });
                 emitEvent('chain_step_done', { teamId: teamContext.teamId, step: chainSteps.length, agentId: currentAgentId, responseLength: stepResponse.length, responseText: stepResponse });
-
-                // Collect files from this step
-                const stepFileRegex = /\[send_file:\s*([^\]]+)\]/g;
-                let stepFileMatch: RegExpExecArray | null;
-                while ((stepFileMatch = stepFileRegex.exec(stepResponse)) !== null) {
-                    const filePath = stepFileMatch[1].trim();
-                    if (fs.existsSync(filePath)) {
-                        allFiles.add(filePath);
-                    }
-                }
 
                 // Check if response mentions teammates
                 const teammateMentions = extractTeammateMentions(
@@ -248,14 +393,19 @@ async function processMessage(messageFile: string): Promise<void> {
 
                             emitEvent('chain_step_start', { teamId: teamContext!.teamId, step: chainSteps.length + 1, agentId: mention.teammateId, agentName: mAgent.name });
 
-                            let mResponse: string;
-                            try {
-                                const mMessage = `[Message from teammate @${currentAgentId}]:\n${mention.message}`;
-                                mResponse = await invokeAgent(mAgent, mention.teammateId, mMessage, workspacePath, mShouldReset, agents, teams);
-                            } catch (error) {
-                                log('ERROR', `Fan-out error (agent: ${mention.teammateId}): ${(error as Error).message}`);
-                                mResponse = "Sorry, I encountered an error processing this request.";
-                            }
+                            const mMessage = `[Message from teammate @${currentAgentId}]:\n${mention.message}`;
+                            const mResult = await invokeAgent(
+                                mAgent,
+                                mention.teammateId,
+                                mMessage,
+                                workspacePath,
+                                mShouldReset,
+                                agents,
+                                teams,
+                                settings
+                            );
+                            const mResponse = mResult.response;
+                            allPathMappings.push(...mResult.pathMappings);
 
                             emitEvent('chain_step_done', { teamId: teamContext!.teamId, step: chainSteps.length + 1, agentId: mention.teammateId, responseLength: mResponse.length, responseText: mResponse });
                             return { agentId: mention.teammateId, response: mResponse };
@@ -264,14 +414,6 @@ async function processMessage(messageFile: string): Promise<void> {
 
                     for (const result of fanOutResults) {
                         chainSteps.push(result);
-
-                        // Collect files from fan-out responses
-                        const fanFileRegex = /\[send_file:\s*([^\]]+)\]/g;
-                        let fanFileMatch: RegExpExecArray | null;
-                        while ((fanFileMatch = fanFileRegex.exec(result.response)) !== null) {
-                            const filePath = fanFileMatch[1].trim();
-                            if (fs.existsSync(filePath)) allFiles.add(filePath);
-                        }
                     }
 
                     log('INFO', `Fan-out complete — ${fanOutResults.length} responses collected`);
@@ -330,20 +472,11 @@ async function processMessage(messageFile: string): Promise<void> {
 
         // Detect file references in the response: [send_file: /path/to/file]
         finalResponse = finalResponse.trim();
-        const outboundFilesSet = new Set<string>(allFiles);
-        const fileRefRegex = /\[send_file:\s*([^\]]+)\]/g;
-        let fileMatch: RegExpExecArray | null;
-        while ((fileMatch = fileRefRegex.exec(finalResponse)) !== null) {
-            const filePath = fileMatch[1].trim();
-            if (fs.existsSync(filePath)) {
-                outboundFilesSet.add(filePath);
-            }
-        }
-        const outboundFiles = Array.from(outboundFilesSet);
-
-        // Remove the [send_file: ...] tags from the response text
-        if (outboundFiles.length > 0) {
-            finalResponse = finalResponse.replace(fileRefRegex, '').trim();
+        const parsedFiles = parseOutboundFiles(finalResponse, allPathMappings);
+        finalResponse = parsedFiles.cleanText;
+        if (parsedFiles.missing.length > 0) {
+            const shown = parsedFiles.missing.slice(0, 3).map(f => `- ${f}`).join('\n');
+            finalResponse = `${finalResponse}\n\n[Warning: Some files could not be found for attachment]\n${shown}`.trim();
         }
 
         // Limit response length after tags are parsed and removed
@@ -351,24 +484,15 @@ async function processMessage(messageFile: string): Promise<void> {
             finalResponse = finalResponse.substring(0, 3900) + '\n\n[Response truncated...]';
         }
 
-        // Write response to outgoing queue
-        const responseData: ResponseData = {
+        writeOutgoingResponse(
             channel,
             sender,
-            message: finalResponse,
-            originalMessage: rawMessage,
-            timestamp: Date.now(),
+            finalResponse,
+            rawMessage,
             messageId,
-            agent: agentId,
-            files: outboundFiles.length > 0 ? outboundFiles : undefined,
-        };
-
-        // For heartbeat messages, write to a separate location (they handle their own responses)
-        const responseFile = channel === 'heartbeat'
-            ? path.join(QUEUE_OUTGOING, `${messageId}.json`)
-            : path.join(QUEUE_OUTGOING, `${channel}_${messageId}_${Date.now()}.json`);
-
-        fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
+            agentId,
+            parsedFiles.files
+        );
 
         log('INFO', `✓ Response ready [${channel}] ${sender} via agent:${agentId} (${finalResponse.length} chars)`);
         emitEvent('response_ready', { channel, sender, agentId, responseLength: finalResponse.length, responseText: finalResponse, messageId });
@@ -377,15 +501,74 @@ async function processMessage(messageFile: string): Promise<void> {
         fs.unlinkSync(processingFile);
 
     } catch (error) {
-        log('ERROR', `Processing error: ${(error as Error).message}`);
+        const safeError = toSafeErrorMessage(error);
+        const errorClass = error instanceof SandboxInvocationError ? error.classification : 'transient';
+        const shouldLog = channelForError !== 'heartbeat' || shouldLogHeartbeatError(`${errorClass}:${safeError}`);
+        if (shouldLog) {
+            log('ERROR', `Processing error [${errorClass}]: ${safeError}`);
+        }
 
-        // Move back to incoming for retry
-        if (fs.existsSync(processingFile)) {
+        const maxAttempts = getSandboxConfig(settings).max_attempts;
+        const attempt = (messageData?.attempt || 0) + 1;
+        const terminal = errorClass === 'terminal';
+        const exceededRetries = attempt >= maxAttempts;
+
+        // Retry transient errors up to max attempts.
+        if (!terminal && !exceededRetries && messageData && fs.existsSync(processingFile)) {
             try {
+                messageData.attempt = attempt;
+                messageData.errorClass = 'transient';
+                if (!messageData.firstSeenAt) messageData.firstSeenAt = Date.now();
+                fs.writeFileSync(processingFile, JSON.stringify(messageData, null, 2));
                 fs.renameSync(processingFile, messageFile);
+                log('WARN', `Retry scheduled for ${path.basename(messageFile)} (${attempt}/${maxAttempts})`);
+                return;
             } catch (e) {
-                log('ERROR', `Failed to move file back: ${(e as Error).message}`);
+                log('ERROR', `Failed to schedule retry: ${(e as Error).message}`);
             }
+        }
+
+        // Terminal failures and max retry exhaustion are dead-lettered.
+        writeDeadLetter(
+            processingFile,
+            messageData,
+            terminal ? 'terminal' : 'transient',
+            safeError,
+            attempt,
+            maxAttempts
+        );
+
+        const userMessage = error instanceof SandboxInvocationError
+            ? error.userMessage
+            : (terminal
+                ? 'Sandbox execution failed due to a configuration error. Run "tinyclaw sandbox doctor".'
+                : 'Sorry, I encountered repeated execution failures and moved this message to the dead-letter queue.');
+
+        if (messageData && channelForError && senderForError && messageIdForError) {
+            try {
+                writeOutgoingResponse(
+                    channelForError,
+                    senderForError,
+                    userMessage,
+                    rawMessageForError || messageData.message,
+                    messageIdForError,
+                    agentIdForError
+                );
+                emitEvent('response_ready', {
+                    channel: channelForError,
+                    sender: senderForError,
+                    agentId: agentIdForError,
+                    responseLength: userMessage.length,
+                    responseText: userMessage,
+                    messageId: messageIdForError,
+                });
+            } catch (writeErr) {
+                log('ERROR', `Failed to write terminal error response: ${(writeErr as Error).message}`);
+            }
+        }
+
+        if (fs.existsSync(processingFile)) {
+            fs.unlinkSync(processingFile);
         }
     }
 }

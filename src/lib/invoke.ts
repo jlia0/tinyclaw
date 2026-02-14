@@ -1,51 +1,58 @@
-import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { AgentConfig, TeamConfig } from './types';
-import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel } from './config';
-import { log } from './logging';
+import { AgentConfig, Settings, TeamConfig } from './types';
+import { getSandboxConfig, resolveClaudeModel, resolveCodexModel, getSettings } from './config';
+import { log, emitEvent } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent-setup';
+import { runInSandbox, SandboxInvocationError, SandboxPathMapping } from './runner';
 
-export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(command, args, {
-            cwd: cwd || SCRIPT_DIR,
-            stdio: ['ignore', 'pipe', 'pipe'],
-        });
+export interface AgentInvocationResult {
+    response: string;
+    pathMappings: SandboxPathMapping[];
+    sandboxMode: 'host' | 'docker' | 'apple';
+}
 
-        let stdout = '';
-        let stderr = '';
+let sandboxActive = 0;
+const sandboxWaiters: Array<() => void> = [];
 
-        child.stdout.setEncoding('utf8');
-        child.stderr.setEncoding('utf8');
+async function withSandboxPermit<T>(limit: number, fn: () => Promise<T>): Promise<T> {
+    if (limit <= 0) {
+        return fn();
+    }
 
-        child.stdout.on('data', (chunk: string) => {
-            stdout += chunk;
-        });
+    if (sandboxActive >= limit) {
+        await new Promise<void>((resolve) => sandboxWaiters.push(resolve));
+    }
+    sandboxActive += 1;
 
-        child.stderr.on('data', (chunk: string) => {
-            stderr += chunk;
-        });
+    try {
+        return await fn();
+    } finally {
+        sandboxActive = Math.max(0, sandboxActive - 1);
+        const next = sandboxWaiters.shift();
+        if (next) next();
+    }
+}
 
-        child.on('error', (error) => {
-            reject(error);
-        });
-
-        child.on('close', (code) => {
-            if (code === 0) {
-                resolve(stdout);
-                return;
+function parseCodexResponse(codexOutput: string): string {
+    let response = '';
+    const lines = codexOutput.trim().split('\n');
+    for (const line of lines) {
+        try {
+            const json = JSON.parse(line);
+            if (json.type === 'item.completed' && json.item?.type === 'agent_message') {
+                response = json.item.text;
             }
-
-            const errorMessage = stderr.trim() || `Command exited with code ${code}`;
-            reject(new Error(errorMessage));
-        });
-    });
+        } catch {
+            // Ignore lines that are not valid JSON.
+        }
+    }
+    return response || 'Sorry, I could not generate a response from Codex.';
 }
 
 /**
  * Invoke a single agent with a message. Contains all Claude/Codex invocation logic.
- * Returns the raw response text.
+ * Returns response text plus optional sandbox path mappings for containerized runs.
  */
 export async function invokeAgent(
     agent: AgentConfig,
@@ -54,9 +61,10 @@ export async function invokeAgent(
     workspacePath: string,
     shouldReset: boolean,
     agents: Record<string, AgentConfig> = {},
-    teams: Record<string, TeamConfig> = {}
-): Promise<string> {
-    // Ensure agent directory exists with config files
+    teams: Record<string, TeamConfig> = {},
+    settings?: Settings
+): Promise<AgentInvocationResult> {
+    // Ensure agent directory exists with config files.
     const agentDir = path.join(workspacePath, agentId);
     const isNewAgent = !fs.existsSync(agentDir);
     ensureAgentDirectory(agentDir);
@@ -64,28 +72,32 @@ export async function invokeAgent(
         log('INFO', `Initialized agent directory with config files: ${agentDir}`);
     }
 
-    // Update AGENTS.md with current teammate info
+    // Update AGENTS.md with current teammate info.
     updateAgentTeammates(agentDir, agentId, agents, teams);
 
-    // Resolve working directory
+    // Resolve working directory.
     const workingDir = agent.working_directory
         ? (path.isAbsolute(agent.working_directory)
             ? agent.working_directory
             : path.join(workspacePath, agent.working_directory))
         : agentDir;
 
-    const provider = agent.provider || 'anthropic';
+    const provider = (agent.provider || 'anthropic') as 'anthropic' | 'openai';
+    const mergedSettings = settings || getSettings();
+    const sandbox = getSandboxConfig(mergedSettings, agent);
+
+    let command = '';
+    let args: string[] = [];
 
     if (provider === 'openai') {
-        log('INFO', `Using Codex CLI (agent: ${agentId})`);
-
-        const shouldResume = !shouldReset;
+        log('INFO', `Using Codex provider (agent: ${agentId})`);
 
         if (shouldReset) {
             log('INFO', `🔄 Resetting Codex conversation for agent: ${agentId}`);
         }
 
         const modelId = resolveCodexModel(agent.model);
+        const shouldResume = !shouldReset;
         const codexArgs = ['exec'];
         if (shouldResume) {
             codexArgs.push('resume', '--last');
@@ -94,35 +106,17 @@ export async function invokeAgent(
             codexArgs.push('--model', modelId);
         }
         codexArgs.push('--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json', message);
-
-        const codexOutput = await runCommand('codex', codexArgs, workingDir);
-
-        // Parse JSONL output and extract final agent_message
-        let response = '';
-        const lines = codexOutput.trim().split('\n');
-        for (const line of lines) {
-            try {
-                const json = JSON.parse(line);
-                if (json.type === 'item.completed' && json.item?.type === 'agent_message') {
-                    response = json.item.text;
-                }
-            } catch (e) {
-                // Ignore lines that aren't valid JSON
-            }
-        }
-
-        return response || 'Sorry, I could not generate a response from Codex.';
+        command = 'codex';
+        args = codexArgs;
     } else {
-        // Default to Claude (Anthropic)
         log('INFO', `Using Claude provider (agent: ${agentId})`);
-
-        const continueConversation = !shouldReset;
 
         if (shouldReset) {
             log('INFO', `🔄 Resetting conversation for agent: ${agentId}`);
         }
 
         const modelId = resolveClaudeModel(agent.model);
+        const continueConversation = !shouldReset;
         const claudeArgs = ['--dangerously-skip-permissions'];
         if (modelId) {
             claudeArgs.push('--model', modelId);
@@ -131,7 +125,66 @@ export async function invokeAgent(
             claudeArgs.push('-c');
         }
         claudeArgs.push('-p', message);
+        command = 'claude';
+        args = claudeArgs;
+    }
 
-        return await runCommand('claude', claudeArgs, workingDir);
+    emitEvent('sandbox_invocation_start', {
+        agentId,
+        provider,
+        mode: sandbox.mode,
+        workingDir,
+    });
+
+    const startedAt = Date.now();
+
+    try {
+        const result = await withSandboxPermit(sandbox.mode === 'host' ? 0 : sandbox.max_concurrency, async () => {
+            return runInSandbox({
+                agentId,
+                provider,
+                command,
+                args,
+                workingDir,
+                sandbox,
+            });
+        });
+
+        emitEvent('sandbox_invocation_end', {
+            agentId,
+            provider,
+            mode: result.mode,
+            durationMs: result.durationMs,
+            responseBytes: result.stdout.length,
+        });
+
+        const response = provider === 'openai'
+            ? parseCodexResponse(result.stdout)
+            : result.stdout;
+
+        return {
+            response,
+            pathMappings: result.pathMappings,
+            sandboxMode: result.mode,
+        };
+    } catch (error) {
+        const durationMs = Date.now() - startedAt;
+        const err = error instanceof SandboxInvocationError
+            ? error
+            : new SandboxInvocationError((error as Error).message, {
+                classification: 'transient',
+                mode: sandbox.mode,
+                userMessage: 'Sandbox execution failed unexpectedly. Please retry.',
+            });
+
+        emitEvent('sandbox_invocation_error', {
+            agentId,
+            provider,
+            mode: err.mode,
+            durationMs,
+            classification: err.classification,
+            message: err.message.slice(0, 240),
+        });
+        throw err;
     }
 }

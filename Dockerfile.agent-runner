@@ -1,0 +1,11 @@
+FROM node:20-bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends bash ca-certificates curl git && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# This base image is intentionally minimal.
+# Install provider CLIs (claude/codex) in your derived image before production use.
+CMD ["bash"]

@@ -3,12 +3,67 @@ export interface AgentConfig {
     provider: string;       // 'anthropic' or 'openai'
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
+    sandbox_mode?: SandboxMode;
 }
 
 export interface TeamConfig {
     name: string;
     agents: string[];
     leader_agent: string;
+}
+
+export type SandboxMode = 'host' | 'docker' | 'apple';
+export type SandboxNetwork = 'none' | 'restricted' | 'default';
+export type SandboxPathMappingMode = 'mapped' | 'same-path';
+
+export interface SandboxDockerConfig {
+    image?: string;
+    network?: SandboxNetwork;
+    memory?: string;
+    cpus?: string;
+    pids_limit?: number;
+}
+
+export interface SandboxAppleConfig {
+    runtime_command?: string;
+    image?: string;
+    network?: SandboxNetwork;
+    memory?: string;
+    cpus?: string;
+}
+
+export interface SandboxConfig {
+    mode?: SandboxMode;
+    timeout_seconds?: number;
+    max_attempts?: number;
+    max_concurrency?: number;
+    env_allowlist?: string[];
+    path_mapping_mode?: SandboxPathMappingMode;
+    docker?: SandboxDockerConfig;
+    apple?: SandboxAppleConfig;
+}
+
+export interface NormalizedSandboxConfig {
+    mode: SandboxMode;
+    timeout_seconds: number;
+    max_attempts: number;
+    max_concurrency: number;
+    env_allowlist: string[];
+    path_mapping_mode: SandboxPathMappingMode;
+    docker: {
+        image: string;
+        network: SandboxNetwork;
+        memory: string;
+        cpus: string;
+        pids_limit: number;
+    };
+    apple: {
+        runtime_command: string;
+        image: string;
+        network: SandboxNetwork;
+        memory: string;
+        cpus: string;
+    };
 }
 
 export interface ChainStep {
@@ -38,6 +93,7 @@ export interface Settings {
     };
     agents?: Record<string, AgentConfig>;
     teams?: Record<string, TeamConfig>;
+    sandbox?: SandboxConfig;
     monitoring?: {
         heartbeat_interval?: number;
     };
@@ -52,6 +108,9 @@ export interface MessageData {
     messageId: string;
     agent?: string; // optional: pre-routed agent id from channel client
     files?: string[];
+    attempt?: number;
+    firstSeenAt?: number;
+    errorClass?: 'transient' | 'terminal';
 }
 
 export interface ResponseData {

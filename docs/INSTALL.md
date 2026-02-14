@@ -28,9 +28,12 @@ Before installing, ensure you have:
 - **npm** (comes with Node.js)
 - **tmux** - `sudo apt install tmux` or `brew install tmux`
 - **Claude Code CLI** ([claude.com/claude-code](https://claude.com/claude-code))
+- **Codex CLI** ([docs.openai.com/codex](https://docs.openai.com/codex)) if using OpenAI provider
 
 **Optional:**
 - **git** (only needed for source install)
+- **Docker** (required for `sandbox.mode = docker`)
+- **Apple container runtime command** (required for `sandbox.mode = apple`, default command `apple-container`)
 
 ## Installation Options
 
@@ -131,9 +134,26 @@ You'll configure:
 1. **Channel** - Discord, WhatsApp, or both
 2. **Discord bot token** (if using Discord)
 3. **Claude model** - Sonnet (fast) or Opus (smart)
-4. **Heartbeat interval** - How often Claude checks in
+4. **Sandbox mode** - Host, Docker, or Apple container runtime
+5. **Heartbeat interval** - How often Claude checks in
 
 Follow the prompts and you're ready!
+
+If you selected a sandbox mode, run:
+
+```bash
+tinyclaw sandbox doctor
+```
+
+For Docker sandbox users, also run:
+
+```bash
+export OPENAI_API_KEY="..."
+export ANTHROPIC_API_KEY="..."  # if needed
+tinyclaw sandbox build-image
+tinyclaw sandbox doctor
+tinyclaw restart
+```
 
 ## Uninstall
 
