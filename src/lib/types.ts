@@ -70,6 +70,8 @@ export interface Conversation {
     maxMessages: number;
     teamContext: { teamId: string; team: TeamConfig };
     startTime: number;
+    // Track how many mentions each agent sent out (for inbox draining)
+    outgoingMentions: Map<string, number>;
 }
 
 export interface ResponseData {

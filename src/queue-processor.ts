@@ -305,6 +305,19 @@ async function processMessage(messageFile: string): Promise<void> {
             if (fs.existsSync(agentResetFlag)) fs.unlinkSync(agentResetFlag);
         }
 
+        // For internal messages: append pending response indicator so the agent
+        // knows other teammates are still processing and won't re-mention them.
+        if (isInternal && messageData.conversationId) {
+            const conv = conversations.get(messageData.conversationId);
+            if (conv) {
+                // pending includes this message (not yet decremented), so subtract 1 for "others"
+                const othersPending = conv.pending - 1;
+                if (othersPending > 0) {
+                    message += `\n\n------\n\n[${othersPending} other teammate response(s) are still being processed and will be delivered when ready. Do not re-mention teammates who haven't responded yet.]`;
+                }
+            }
+        }
+
         // Invoke agent
         let response: string;
         try {
@@ -379,6 +392,7 @@ async function processMessage(messageFile: string): Promise<void> {
                 maxMessages: MAX_CONVERSATION_MESSAGES,
                 teamContext,
                 startTime: Date.now(),
+                outgoingMentions: new Map(),
             };
             conversations.set(convId, conv);
             log('INFO', `Conversation started: ${convId} (team: ${teamContext.team.name})`);
@@ -398,6 +412,7 @@ async function processMessage(messageFile: string): Promise<void> {
         if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
             // Enqueue internal messages for each mention
             conv.pending += teammateMentions.length;
+            conv.outgoingMentions.set(agentId, teammateMentions.length);
             for (const mention of teammateMentions) {
                 log('INFO', `@${agentId} → @${mention.teammateId}`);
                 emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
