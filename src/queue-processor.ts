@@ -156,7 +156,8 @@ async function processMessage(messageFile: string): Promise<void> {
                 finalResponse = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
             } catch (error) {
                 const provider = agent.provider || 'anthropic';
-                log('ERROR', `${provider === 'openai' ? 'Codex' : 'Claude'} error (agent: ${agentId}): ${(error as Error).message}`);
+                const providerLabel = provider === 'openai' ? 'Codex' : provider === 'opencode' ? 'OpenCode' : 'Claude';
+                log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
                 finalResponse = "Sorry, I encountered an error processing your request. Please check the queue logs.";
             }
         } else {

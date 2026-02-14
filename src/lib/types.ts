@@ -1,6 +1,6 @@
 export interface AgentConfig {
     name: string;
-    provider: string;       // 'anthropic' or 'openai'
+    provider: string;       // 'anthropic', 'openai', or 'opencode'
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
 }
@@ -28,11 +28,14 @@ export interface Settings {
         whatsapp?: {};
     };
     models?: {
-        provider?: string; // 'anthropic' or 'openai'
+        provider?: string; // 'anthropic', 'openai', or 'opencode'
         anthropic?: {
             model?: string;
         };
         openai?: {
+            model?: string;
+        };
+        opencode?: {
             model?: string;
         };
     };
@@ -82,4 +85,26 @@ export const CLAUDE_MODEL_IDS: Record<string, string> = {
 export const CODEX_MODEL_IDS: Record<string, string> = {
     'gpt-5.2': 'gpt-5.2',
     'gpt-5.3-codex': 'gpt-5.3-codex',
+};
+
+// OpenCode model IDs in provider/model format (passed via --model / -m flag).
+// Falls back to the raw model string from settings if no mapping is found.
+export const OPENCODE_MODEL_IDS: Record<string, string> = {
+    'opencode/claude-opus-4-6': 'opencode/claude-opus-4-6',
+    'opencode/claude-sonnet-4-5': 'opencode/claude-sonnet-4-5',
+    'opencode/gemini-3-flash': 'opencode/gemini-3-flash',
+    'opencode/gemini-3-pro': 'opencode/gemini-3-pro',
+    'opencode/glm-5': 'opencode/glm-5',
+    'opencode/kimi-k2.5': 'opencode/kimi-k2.5',
+    'opencode/kimi-k2.5-free': 'opencode/kimi-k2.5-free',
+    'opencode/minimax-m2.5': 'opencode/minimax-m2.5',
+    'opencode/minimax-m2.5-free': 'opencode/minimax-m2.5-free',
+    'anthropic/claude-opus-4-6': 'anthropic/claude-opus-4-6',
+    'anthropic/claude-sonnet-4-5': 'anthropic/claude-sonnet-4-5',
+    'openai/gpt-5.2': 'openai/gpt-5.2',
+    'openai/gpt-5.3-codex': 'openai/gpt-5.3-codex',
+    'openai/gpt-5.3-codex-spark': 'openai/gpt-5.3-codex-spark',
+    // Shorthand aliases
+    'sonnet': 'opencode/claude-sonnet-4-5',
+    'opus': 'opencode/claude-opus-4-6',
 };

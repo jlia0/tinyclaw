@@ -107,9 +107,11 @@ agent_add() {
     echo "Provider:"
     echo "  1) Anthropic (Claude)"
     echo "  2) OpenAI (Codex)"
-    read -rp "Choose [1-2, default: 1]: " AGENT_PROVIDER_CHOICE
+    echo "  3) OpenCode"
+    read -rp "Choose [1-3, default: 1]: " AGENT_PROVIDER_CHOICE
     case "$AGENT_PROVIDER_CHOICE" in
         2) AGENT_PROVIDER="openai" ;;
+        3) AGENT_PROVIDER="opencode" ;;
         *) AGENT_PROVIDER="anthropic" ;;
     esac
 
@@ -119,18 +121,43 @@ agent_add() {
         echo "Model:"
         echo "  1) Sonnet (fast)"
         echo "  2) Opus (smartest)"
-        read -rp "Choose [1-2, default: 1]: " AGENT_MODEL_CHOICE
+        echo "  3) Custom (enter model name)"
+        read -rp "Choose [1-3, default: 1]: " AGENT_MODEL_CHOICE
         case "$AGENT_MODEL_CHOICE" in
             2) AGENT_MODEL="opus" ;;
+            3) read -rp "Enter model name: " AGENT_MODEL ;;
             *) AGENT_MODEL="sonnet" ;;
+        esac
+    elif [ "$AGENT_PROVIDER" = "opencode" ]; then
+        echo "Model (provider/model format):"
+        echo "  1) opencode/claude-sonnet-4-5"
+        echo "  2) opencode/claude-opus-4-6"
+        echo "  3) opencode/gemini-3-flash"
+        echo "  4) opencode/gemini-3-pro"
+        echo "  5) anthropic/claude-sonnet-4-5"
+        echo "  6) anthropic/claude-opus-4-6"
+        echo "  7) openai/gpt-5.3-codex"
+        echo "  8) Custom (enter model name)"
+        read -rp "Choose [1-8, default: 1]: " AGENT_MODEL_CHOICE
+        case "$AGENT_MODEL_CHOICE" in
+            2) AGENT_MODEL="opencode/claude-opus-4-6" ;;
+            3) AGENT_MODEL="opencode/gemini-3-flash" ;;
+            4) AGENT_MODEL="opencode/gemini-3-pro" ;;
+            5) AGENT_MODEL="anthropic/claude-sonnet-4-5" ;;
+            6) AGENT_MODEL="anthropic/claude-opus-4-6" ;;
+            7) AGENT_MODEL="openai/gpt-5.3-codex" ;;
+            8) read -rp "Enter model name (e.g. provider/model): " AGENT_MODEL ;;
+            *) AGENT_MODEL="opencode/claude-sonnet-4-5" ;;
         esac
     else
         echo "Model:"
         echo "  1) GPT-5.3 Codex"
         echo "  2) GPT-5.2"
-        read -rp "Choose [1-2, default: 1]: " AGENT_MODEL_CHOICE
+        echo "  3) Custom (enter model name)"
+        read -rp "Choose [1-3, default: 1]: " AGENT_MODEL_CHOICE
         case "$AGENT_MODEL_CHOICE" in
             2) AGENT_MODEL="gpt-5.2" ;;
+            3) read -rp "Enter model name: " AGENT_MODEL ;;
             *) AGENT_MODEL="gpt-5.3-codex" ;;
         esac
     fi
