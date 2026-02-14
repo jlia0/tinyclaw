@@ -5,16 +5,18 @@ description: "Create, list, and delete scheduled (cron) tasks that send messages
 
 # Schedule Skill
 
-Manage cron-based scheduled tasks that deliver messages to the tinyclaw incoming queue. Each schedule fires at a cron interval and writes a routed message (`@agent_id <task>`) to `queue/incoming/`, where the queue processor picks it up and invokes the target agent.
+Manage scheduled tasks that deliver messages to the tinyclaw incoming queue. Each schedule fires at a cron interval and writes a routed message (`@agent_id <task>`) to `queue/incoming/`, where the queue processor picks it up and invokes the target agent.
+
+Schedules are stored in `~/.tinyclaw/schedules.json` (no system crontab dependency). The built-in scheduler loop (`run` command) handles execution. Works on macOS, Linux, and Windows.
 
 ## Commands
 
-Use the bundled CLI `scripts/schedule.sh` for all operations.
+Use the bundled CLI `scripts/schedule.py` for all operations. No external dependencies — Python 3 standard library only.
 
 ### Create a schedule
 
 ```bash
-scripts/schedule.sh create \
+python3 scripts/schedule.py create \
   --cron "EXPR" \
   --agent AGENT_ID \
   --message "Task context for the agent" \
@@ -33,7 +35,7 @@ scripts/schedule.sh create \
 ### List schedules
 
 ```bash
-scripts/schedule.sh list [--agent AGENT_ID]
+python3 scripts/schedule.py list [--agent AGENT_ID]
 ```
 
 Lists all tinyclaw schedules. Optionally filter by `--agent` to show only schedules targeting a specific agent.
@@ -41,30 +43,35 @@ Lists all tinyclaw schedules. Optionally filter by `--agent` to show only schedu
 ### Delete a schedule
 
 ```bash
-scripts/schedule.sh delete --label LABEL
-scripts/schedule.sh delete --all
+python3 scripts/schedule.py delete --label LABEL
+python3 scripts/schedule.py delete --all
 ```
 
 Delete a specific schedule by label, or delete all tinyclaw schedules.
 
+### Start the scheduler daemon
+
+```bash
+python3 scripts/schedule.py run
+```
+
+Starts the scheduler loop. Checks every 60 seconds whether any schedule's cron expression matches the current time, and writes a queue message when it does. Run this alongside the queue processor (e.g., in a tmux pane or as a background process). Handles SIGINT/SIGTERM for clean shutdown.
+
 ## Workflow
 
 1. Confirm the target agent ID exists (check `settings.json` or ask the user).
-2. Determine the cron expression from the user's description (e.g., "every morning" → `"0 9 * * *"`).
+2. Determine the cron expression from the user's description (e.g., "every morning" -> `"0 9 * * *"`).
 3. Compose a clear task message — this is the prompt the agent will receive.
-4. Run `scripts/schedule.sh create` with the parameters.
-5. Verify with `scripts/schedule.sh list`.
+4. Run `python3 scripts/schedule.py create` with the parameters.
+5. Verify with `python3 scripts/schedule.py list`.
+6. Ensure the scheduler daemon is running (`python3 scripts/schedule.py run`).
 
 ## Cron expression quick reference
 
 ```
-┌───────────── minute (0-59)
-│ ┌───────────── hour (0-23)
-│ │ ┌───────────── day of month (1-31)
-│ │ │ ┌───────────── month (1-12)
-│ │ │ │ ┌───────────── day of week (0-7, 0 and 7 = Sunday)
-│ │ │ │ │
-* * * * *
+min  hour  dom  month  dow
+ │     │    │     │     │
+ *     *    *     *     *
 ```
 
 | Pattern           | Meaning                    |
@@ -77,12 +84,14 @@ Delete a specific schedule by label, or delete all tinyclaw schedules.
 | `0 0 1 * *`       | Monthly on the 1st         |
 | `30 8 * * 1`      | Monday at 8:30 AM          |
 
+Supports: wildcards (`*`), ranges (`1-5`), steps (`*/15`, `0-30/10`), lists (`1,3,5`).
+
 ## Examples
 
 ### Daily report
 
 ```bash
-scripts/schedule.sh create \
+python3 scripts/schedule.py create \
   --cron "0 9 * * *" \
   --agent analyst \
   --message "Generate the daily metrics report and post a summary" \
@@ -92,7 +101,7 @@ scripts/schedule.sh create \
 ### Periodic health check
 
 ```bash
-scripts/schedule.sh create \
+python3 scripts/schedule.py create \
   --cron "*/30 * * * *" \
   --agent devops \
   --message "Run health checks on all services and report any issues" \
@@ -102,7 +111,7 @@ scripts/schedule.sh create \
 ### Weekly code review reminder
 
 ```bash
-scripts/schedule.sh create \
+python3 scripts/schedule.py create \
   --cron "0 10 * * 1" \
   --agent coder \
   --message "Review open PRs and summarize status" \
@@ -113,23 +122,25 @@ scripts/schedule.sh create \
 
 ```bash
 # See all schedules
-scripts/schedule.sh list
+python3 scripts/schedule.py list
 
 # See only schedules for @coder
-scripts/schedule.sh list --agent coder
+python3 scripts/schedule.py list --agent coder
 
 # Remove one
-scripts/schedule.sh delete --label health-check
+python3 scripts/schedule.py delete --label health-check
 
 # Remove all
-scripts/schedule.sh delete --all
+python3 scripts/schedule.py delete --all
 ```
 
 ## How it works
 
-- Schedules are stored as system cron entries tagged with `# tinyclaw-schedule:<label>`.
-- When a cron job fires, it writes a JSON message to `queue/incoming/` with the `@agent_id` routing prefix.
+- Schedules are persisted in `~/.tinyclaw/schedules.json`.
+- The `run` command starts a loop that checks every 60 seconds if any schedule's cron expression matches the current minute.
+- When a schedule fires, it writes a JSON message to `queue/incoming/` with the `@agent_id` routing prefix.
 - The queue processor picks up the message and invokes the target agent, exactly like a message from any channel.
 - Responses appear in `queue/outgoing/` and can be consumed by channel clients.
+- Logs are written to `~/.tinyclaw/logs/schedule.log`.
 
 For queue message format details, see `references/queue-format.md`.
