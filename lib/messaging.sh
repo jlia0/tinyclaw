@@ -9,7 +9,7 @@ send_message() {
     log "[$source] Sending: ${message:0:50}..."
 
     cd "$SCRIPT_DIR"
-    RESPONSE=$(claude --dangerously-skip-permissions -c -p "$message" 2>&1)
+    RESPONSE=$(claude --dangerously-skip-permissions --chrome -c -p "$message" 2>&1)
 
     echo "$RESPONSE"
 
