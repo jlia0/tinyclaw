@@ -521,6 +521,7 @@ tinyclaw logs all
 
 - Bash version error → Install bash 4.0+: `brew install bash`
 - WhatsApp not connecting → Reset auth: `tinyclaw channels reset whatsapp`
+- WhatsApp startup fails with `Could not find Chrome` → Install browser: `npx puppeteer browsers install chrome`
 - Messages stuck → Clear queue: `rm -rf .tinyclaw/queue/processing/*`
 - Agent not found → Check: `tinyclaw agent list`
 
