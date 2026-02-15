@@ -19,7 +19,7 @@ import path from 'path';
 import { MessageData, ResponseData, QueueFile, ChainStep, Conversation, TeamConfig } from './lib/types';
 import {
     QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING,
-    LOG_FILE, RESET_FLAG, EVENTS_DIR, CHATS_DIR,
+    LOG_FILE, RESET_FLAG, EVENTS_DIR, CHATS_DIR, FILES_DIR,
     getSettings, getAgents, getTeams
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
@@ -27,7 +27,7 @@ import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammate
 import { invokeAgent } from './lib/invoke';
 
 // Ensure directories exist
-[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, path.dirname(LOG_FILE)].forEach(dir => {
+[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, FILES_DIR, path.dirname(LOG_FILE)].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -40,6 +40,31 @@ const queuedFiles = new Set<string>();
 const conversations = new Map<string, Conversation>();
 
 const MAX_CONVERSATION_MESSAGES = 50;
+const LONG_RESPONSE_THRESHOLD = 4000;
+
+/**
+ * If a response exceeds the threshold, save full text as a .md file
+ * and return a truncated preview with the file attached.
+ */
+function handleLongResponse(
+    response: string,
+    existingFiles: string[]
+): { message: string; files: string[] } {
+    if (response.length <= LONG_RESPONSE_THRESHOLD) {
+        return { message: response, files: existingFiles };
+    }
+
+    // Save full response as a .md file
+    const filename = `response_${Date.now()}.md`;
+    const filePath = path.join(FILES_DIR, filename);
+    fs.writeFileSync(filePath, response);
+    log('INFO', `Long response (${response.length} chars) saved to ${filename}`);
+
+    // Truncate to preview
+    const preview = response.substring(0, LONG_RESPONSE_THRESHOLD) + '\n\n_(Full response attached as file)_';
+
+    return { message: preview, files: [...existingFiles, filePath] };
+}
 
 // Recover orphaned files from processing/ on startup (crash recovery)
 function recoverOrphanedFiles() {
@@ -167,20 +192,18 @@ function completeConversation(conv: Conversation): void {
     // Remove [@agent: ...] tags from final response
     finalResponse = finalResponse.replace(/\[@\S+?:\s*[\s\S]*?\]/g, '').trim();
 
-    // Limit response length
-    if (finalResponse.length > 4000) {
-        finalResponse = finalResponse.substring(0, 3900) + '\n\n[Response truncated...]';
-    }
+    // Handle long responses — send as file attachment
+    const { message: responseMessage, files: allFiles } = handleLongResponse(finalResponse, outboundFiles);
 
     // Write to outgoing queue
     const responseData: ResponseData = {
         channel: conv.channel,
         sender: conv.sender,
-        message: finalResponse,
+        message: responseMessage,
         originalMessage: conv.originalMessage,
         timestamp: Date.now(),
         messageId: conv.messageId,
-        files: outboundFiles.length > 0 ? outboundFiles : undefined,
+        files: allFiles.length > 0 ? allFiles : undefined,
     };
 
     const responseFile = conv.channel === 'heartbeat'
@@ -343,19 +366,18 @@ async function processMessage(messageFile: string): Promise<void> {
                 finalResponse = finalResponse.replace(/\[send_file:\s*[^\]]+\]/g, '').trim();
             }
 
-            if (finalResponse.length > 4000) {
-                finalResponse = finalResponse.substring(0, 3900) + '\n\n[Response truncated...]';
-            }
+            // Handle long responses — send as file attachment
+            const { message: responseMessage, files: allFiles } = handleLongResponse(finalResponse, outboundFiles);
 
             const responseData: ResponseData = {
                 channel,
                 sender,
-                message: finalResponse,
+                message: responseMessage,
                 originalMessage: rawMessage,
                 timestamp: Date.now(),
                 messageId,
                 agent: agentId,
-                files: outboundFiles.length > 0 ? outboundFiles : undefined,
+                files: allFiles.length > 0 ? allFiles : undefined,
             };
 
             const responseFile = channel === 'heartbeat'
