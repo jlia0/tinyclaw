@@ -18,7 +18,9 @@ check_whatsapp_preflight() {
     fi
 
     # whatsapp-web.js launches Puppeteer; fail fast if Chrome is missing.
-    if node -e "const p=require('puppeteer');const ep=p.executablePath();if(!ep){process.exit(1)}" >/dev/null 2>&1; then
+    local chrome_path
+    chrome_path=$(node -e "const p=require('puppeteer');process.stdout.write(p.executablePath() || '')" 2>/dev/null || true)
+    if [ -n "$chrome_path" ] && [ -x "$chrome_path" ]; then
         return 0
     fi
 
