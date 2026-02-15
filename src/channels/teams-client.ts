@@ -11,7 +11,7 @@ import path from 'path';
 import express from 'express';
 import {
     ActivityHandler,
-    BotFrameworkAdapter,
+    CloudAdapter,
     ConversationReference,
     TurnContext,
 } from 'botbuilder';
@@ -203,10 +203,12 @@ if (!teamsConfig.appId || !teamsConfig.appPassword) {
     process.exit(1);
 }
 
-const adapter = new BotFrameworkAdapter({
-    appId: teamsConfig.appId,
-    appPassword: teamsConfig.appPassword,
-});
+// CloudAdapter reads MicrosoftAppId/MicrosoftAppPassword from process.env via
+// the default BotFrameworkAuthenticationFactory. Set them from our resolved config
+// so credentials from settings.json or MSTEAMS_* env vars are picked up.
+process.env.MicrosoftAppId = teamsConfig.appId;
+process.env.MicrosoftAppPassword = teamsConfig.appPassword;
+const adapter = new CloudAdapter();
 
 adapter.onTurnError = async (_context, error) => {
     log('ERROR', `Bot adapter error: ${error.message}`);
@@ -308,7 +310,7 @@ const app = express();
 app.use(express.json());
 
 app.post('/api/messages', async (req, res) => {
-    await adapter.processActivity(req, res, async (context) => {
+    await adapter.process(req, res, async (context) => {
         await bot.run(context);
     });
 });
@@ -339,7 +341,7 @@ async function processOutgoingQueue(): Promise<void> {
                     continue;
                 }
 
-                await adapter.continueConversation(pending.reference, async (context) => {
+                await adapter.continueConversationAsync(teamsConfig.appId, pending.reference, async (context) => {
                     const chunks = splitMessage(data.message);
                     for (const chunk of chunks) {
                         await context.sendActivity(chunk);
