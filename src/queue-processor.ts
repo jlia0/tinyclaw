@@ -16,18 +16,20 @@
 
 import fs from 'fs';
 import path from 'path';
-import { MessageData, ResponseData, QueueFile, ChainStep, Conversation, TeamConfig } from './lib/types';
+import { MessageData, ResponseData, QueueFile, ChainStep, Conversation, TeamConfig, QuestionData } from './lib/types';
 import {
     QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING,
     LOG_FILE, EVENTS_DIR, CHATS_DIR, FILES_DIR,
+    QUEUE_QUESTIONS, QUEUE_ANSWERS,
     getSettings, getAgents, getTeams
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
+import { parseQuestions, stripQuestionTags, emitQuestion, pollForAnswer } from './lib/question-bridge';
 
 // Ensure directories exist
-[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, FILES_DIR, path.dirname(LOG_FILE)].forEach(dir => {
+[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, QUEUE_QUESTIONS, QUEUE_ANSWERS, FILES_DIR, path.dirname(LOG_FILE)].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -341,10 +343,103 @@ async function processMessage(messageFile: string): Promise<void> {
         }
 
         // Invoke agent
+        const isInteractive = !teamContext && channel === 'telegram'; // Only enable interactive questions for non-team Telegram
         emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: messageData.fromAgent || null });
         let response: string;
         try {
-            response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+            const result = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams, isInteractive);
+            response = result.response;
+            let sessionId = result.sessionId;
+
+            // Interactive question-answer loop (only for non-team Telegram messages)
+            if (isInteractive && messageData.senderId) {
+                if (!sessionId) {
+                    log('WARN', `Interactive mode but no session ID captured — continuation will use -c fallback`);
+                }
+                for (let round = 0; ; round++) {
+                    const questions = parseQuestions(response);
+                    if (questions.length === 0) break;
+
+                    log('INFO', `Question round ${round + 1}: ${questions.length} question(s) detected`);
+
+                    // Strip [QUESTION] tags — send any preceding text as a partial message
+                    const partialText = stripQuestionTags(response);
+                    if (partialText) {
+                        log('INFO', `Sending partial response before question (${partialText.length} chars)`);
+                        const partialResponse: ResponseData = {
+                            channel,
+                            sender,
+                            message: partialText,
+                            originalMessage: rawMessage,
+                            timestamp: Date.now(),
+                            messageId: `partial_${messageId}_r${round}`,
+                            agent: agentId,
+                        };
+                        const partialFile = path.join(QUEUE_OUTGOING, `${channel}_partial_${messageId}_r${round}_${Date.now()}.json`);
+                        fs.writeFileSync(partialFile, JSON.stringify(partialResponse, null, 2));
+                    }
+
+                    // Process questions sequentially
+                    const answers: string[] = [];
+                    for (const q of questions) {
+                        const questionId = `${messageId}_q${round}_${Date.now()}`;
+                        const questionData: QuestionData = {
+                            questionId,
+                            messageId,
+                            agentId,
+                            channel,
+                            chatId: parseInt(messageData.senderId!, 10),
+                            question: q.question,
+                            options: q.options,
+                            multiSelect: q.multiSelect,
+                            timestamp: Date.now(),
+                            expiresAt: Date.now() + (5 * 60 * 1000),
+                        };
+
+                        emitQuestion(questionData);
+
+                        // Write typing heartbeat to refresh pending TTL in telegram client
+                        const heartbeatData: ResponseData = {
+                            channel,
+                            sender,
+                            message: '',
+                            originalMessage: rawMessage,
+                            timestamp: Date.now(),
+                            messageId: `heartbeat_${messageId}`,
+                            agent: agentId,
+                        };
+                        const heartbeatFile = path.join(QUEUE_OUTGOING, `telegram_heartbeat_${messageId}_${Date.now()}.json`);
+                        fs.writeFileSync(heartbeatFile, JSON.stringify(heartbeatData, null, 2));
+
+                        const answer = await pollForAnswer(questionId, 5 * 60 * 1000);
+                        if (answer) {
+                            answers.push(answer.answer);
+                        } else {
+                            answers.push('User did not respond in time. Use your best judgment to proceed.');
+                        }
+                    }
+
+                    // Continue conversation with the user's answer(s)
+                    const answerText = answers.length === 1
+                        ? `User answered: ${answers[0]}`
+                        : answers.map((a, i) => `Answer ${i + 1}: ${a}`).join('\n');
+
+                    log('INFO', `Continuing conversation with answer: ${answerText.substring(0, 100)}...`);
+
+                    const continuation = await invokeAgent(
+                        agent, agentId, answerText, workspacePath,
+                        false, agents, teams,
+                        isInteractive, sessionId
+                    );
+                    response = continuation.response;
+                    if (continuation.sessionId) {
+                        sessionId = continuation.sessionId;
+                    }
+                }
+
+                // Strip any remaining question tags from the final response
+                response = stripQuestionTags(response);
+            }
         } catch (error) {
             const provider = agent.provider || 'anthropic';
             log('ERROR', `${provider === 'openai' ? 'Codex' : 'Claude'} error (agent: ${agentId}): ${(error as Error).message}`);

@@ -40,6 +40,7 @@ export interface Settings {
     teams?: Record<string, TeamConfig>;
     monitoring?: {
         heartbeat_interval?: number;
+        max_response_time?: number;  // seconds — max time a single agent invocation can run (default: 180)
     };
 }
 
@@ -89,6 +90,32 @@ export interface QueueFile {
     name: string;
     path: string;
     time: number;
+}
+
+// Interactive question/answer types (for AskUserQuestion bridge)
+export interface QuestionData {
+    questionId: string;       // unique ID for correlation
+    messageId: string;        // original user message ID
+    agentId: string;
+    channel: string;
+    chatId: number;           // Telegram chat ID (from pendingMessages)
+    question: string;
+    options: { label: string; description?: string }[];
+    multiSelect: boolean;
+    timestamp: number;
+    expiresAt: number;
+}
+
+export interface AnswerData {
+    questionId: string;
+    answer: string;           // selected label(s) or free text
+    answeredAt: number;
+}
+
+// Invoke result with optional session ID for multi-turn question loops
+export interface InvokeResult {
+    response: string;
+    sessionId?: string;       // captured from --output-format json
 }
 
 // Model name mapping
