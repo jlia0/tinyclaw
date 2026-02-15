@@ -1,6 +1,6 @@
 export interface AgentConfig {
     name: string;
-    provider: string;       // 'anthropic' or 'openai'
+    provider: string;       // 'anthropic' | 'openai' | 'cerebras' (others allowed)
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
 }
@@ -77,6 +77,7 @@ export interface Conversation {
 export interface ResponseData {
     channel: string;
     sender: string;
+    senderId?: string;
     message: string;
     originalMessage: string;
     timestamp: number;

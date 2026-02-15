@@ -118,6 +118,24 @@ show_update_notification() {
     echo ""
 }
 
+# Confirm a yes/no prompt.
+# - Interactive: prompts.
+# - Non-interactive: requires TINYCLAW_UPDATE_YES=1 (otherwise cancels with a helpful message).
+confirm_update() {
+    local prompt="$1"
+
+    if [ "${TINYCLAW_UPDATE_YES:-}" = "1" ]; then
+        return 0
+    fi
+
+    local CONFIRM
+    if ! read -rp "$prompt" CONFIRM; then
+        echo "No input available. Re-run with TINYCLAW_UPDATE_YES=1 to auto-confirm."
+        return 1
+    fi
+    [[ "$CONFIRM" =~ ^[yY] ]]
+}
+
 # Perform update
 do_update() {
     echo -e "${BLUE}TinyClaw Update${NC}"
@@ -128,8 +146,7 @@ do_update() {
     if session_exists; then
         echo -e "${YELLOW}Warning: TinyClaw is currently running${NC}"
         echo ""
-        read -rp "Stop and update? [y/N]: " CONFIRM
-        if [[ ! "$CONFIRM" =~ ^[yY] ]]; then
+        if ! confirm_update "Stop and update? [y/N]: "; then
             echo "Update cancelled."
             return 1
         fi
@@ -165,8 +182,7 @@ do_update() {
     echo "  https://github.com/$GITHUB_REPO/releases/v${latest_version}"
     echo ""
 
-    read -rp "Update to v${latest_version}? [y/N]: " CONFIRM
-    if [[ ! "$CONFIRM" =~ ^[yY] ]]; then
+    if ! confirm_update "Update to v${latest_version}? [y/N]: "; then
         echo "Update cancelled."
         return 1
     fi

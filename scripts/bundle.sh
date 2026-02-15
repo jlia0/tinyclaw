@@ -52,13 +52,21 @@ echo ""
 # Step 2: Install dependencies for build
 echo -e "${BLUE}[2/5] Installing dependencies...${NC}"
 echo "This may take a few minutes..."
-PUPPETEER_SKIP_DOWNLOAD=true npm install --silent
+if command -v bun >/dev/null 2>&1; then
+    PUPPETEER_SKIP_DOWNLOAD=true bun install --no-save --silent
+else
+    PUPPETEER_SKIP_DOWNLOAD=true npm install --silent
+fi
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
 # Step 3: Build TypeScript
 echo -e "${BLUE}[3/5] Building TypeScript...${NC}"
-npm run build --silent
+if command -v bun >/dev/null 2>&1; then
+    bun run build
+else
+    npm run build --silent
+fi
 echo -e "${GREEN}✓ Build complete${NC}"
 echo ""
 
@@ -66,7 +74,12 @@ echo ""
 echo -e "${BLUE}[4/5] Creating bundle...${NC}"
 
 # Keep runtime bundle lean: remove development-only dependencies after build.
-npm prune --omit=dev --silent
+if command -v bun >/dev/null 2>&1; then
+    rm -rf node_modules
+    PUPPETEER_SKIP_DOWNLOAD=true bun install --production --no-save --silent
+else
+    npm prune --omit=dev --silent
+fi
 
 mkdir -p "$BUNDLE_DIR"
 

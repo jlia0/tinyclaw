@@ -133,10 +133,10 @@ claude --dangerously-skip-permissions \
 **Codex (OpenAI):**
 ```bash
 cd ~/workspace/coder/
-codex exec resume --last \
+codex --ask-for-approval never exec --ephemeral \
   --model gpt-5.3-codex \
   --skip-git-repo-check \
-  --dangerously-bypass-approvals-and-sandbox \
+  --sandbox danger-full-access \
   --json "fix the authentication bug"
 ```
 

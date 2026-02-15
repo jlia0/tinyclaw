@@ -41,8 +41,8 @@ if ! command_exists node; then
     MISSING_DEPS+=("node")
 fi
 
-if ! command_exists npm; then
-    MISSING_DEPS+=("npm")
+if ! command_exists bun && ! command_exists npm; then
+    MISSING_DEPS+=("bun or npm")
 fi
 
 if ! command_exists tmux; then
@@ -60,7 +60,9 @@ if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
     done
     echo ""
     echo "Install instructions:"
-    echo "  - Node.js/npm: https://nodejs.org/"
+    echo "  - Node.js: https://nodejs.org/"
+    echo "  - bun (recommended): https://bun.sh/"
+    echo "  - npm: included with Node.js"
     echo "  - tmux: sudo apt install tmux (or brew install tmux)"
     echo "  - Claude Code: https://claude.com/claude-code"
     echo ""
@@ -152,14 +154,26 @@ if [ "$USE_BUNDLE" = false ]; then
     echo -e "${BLUE}[5/6] Installing dependencies...${NC}"
     cd "$INSTALL_DIR"
 
-    echo "Running npm install (this may take a few minutes)..."
-    PUPPETEER_SKIP_DOWNLOAD=true npm install --silent
+    if command_exists bun; then
+        echo "Running bun install..."
+        PUPPETEER_SKIP_DOWNLOAD=true bun install --no-save --silent
 
-    echo "Building TypeScript..."
-    npm run build --silent
+        echo "Building TypeScript..."
+        bun run build
 
-    echo "Pruning development dependencies..."
-    npm prune --omit=dev --silent
+        echo "Installing production-only dependencies..."
+        rm -rf node_modules
+        PUPPETEER_SKIP_DOWNLOAD=true bun install --production --no-save --silent
+    else
+        echo "Running npm install (this may take a few minutes)..."
+        PUPPETEER_SKIP_DOWNLOAD=true npm install --silent
+
+        echo "Building TypeScript..."
+        npm run build --silent
+
+        echo "Pruning development dependencies..."
+        npm prune --omit=dev --silent
+    fi
 
     echo -e "${GREEN}✓ Dependencies installed${NC}"
     echo ""

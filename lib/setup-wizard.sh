@@ -83,12 +83,14 @@ echo "Which AI provider?"
 echo ""
 echo "  1) Anthropic (Claude)  (recommended)"
 echo "  2) OpenAI (Codex/GPT)"
+echo "  3) Cerebras (Qwen)"
 echo ""
-read -rp "Choose [1-2]: " PROVIDER_CHOICE
+read -rp "Choose [1-3]: " PROVIDER_CHOICE
 
 case "$PROVIDER_CHOICE" in
     1) PROVIDER="anthropic" ;;
     2) PROVIDER="openai" ;;
+    3) PROVIDER="cerebras" ;;
     *)
         echo -e "${RED}Invalid choice${NC}"
         exit 1
@@ -116,7 +118,7 @@ if [ "$PROVIDER" = "anthropic" ]; then
     esac
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
     echo ""
-else
+elif [ "$PROVIDER" = "openai" ]; then
     # OpenAI models
     echo "Which OpenAI model?"
     echo ""
@@ -128,6 +130,25 @@ else
     case "$MODEL_CHOICE" in
         1) MODEL="gpt-5.3-codex" ;;
         2) MODEL="gpt-5.2" ;;
+        *)
+            echo -e "${RED}Invalid choice${NC}"
+            exit 1
+            ;;
+    esac
+    echo -e "${GREEN}✓ Model: $MODEL${NC}"
+    echo ""
+else
+    # Cerebras models
+    echo "Which Cerebras model?"
+    echo ""
+    echo "  1) Qwen 3 235B Instruct  (may require model access)"
+    echo "  2) Qwen 3 32B            (generally available)"
+    echo ""
+    read -rp "Choose [1-2]: " MODEL_CHOICE
+
+    case "$MODEL_CHOICE" in
+        1) MODEL="qwen-3-235b-a22b-instruct-2507" ;;
+        2) MODEL="qwen-3-32b" ;;
         *)
             echo -e "${RED}Invalid choice${NC}"
             exit 1
@@ -270,8 +291,10 @@ TELEGRAM_TOKEN="${TOKENS[telegram]:-}"
 # Use jq to build valid JSON to avoid escaping issues with agent prompts
 if [ "$PROVIDER" = "anthropic" ]; then
     MODELS_SECTION='"models": { "provider": "anthropic", "anthropic": { "model": "'"${MODEL}"'" } }'
-else
+elif [ "$PROVIDER" = "openai" ]; then
     MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
+else
+    MODELS_SECTION='"models": { "provider": "cerebras", "cerebras": { "model": "'"${MODEL}"'" } }'
 fi
 
 cat > "$SETTINGS_FILE" <<EOF
