@@ -349,7 +349,12 @@ async function processMessage(messageFile: string): Promise<void> {
             const provider = agent.provider || 'anthropic';
             const providerLabel = provider === 'openai' ? 'Codex' : provider === 'cerebras' ? 'Cerebras' : 'Claude';
             log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
-            response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
+            const msg = ((error as Error).message || '').toLowerCase();
+            if (provider === 'cerebras' && (msg.includes('high traffic') || msg.includes('rate limit') || msg.includes('temporarily unavailable'))) {
+                response = "Cerebras is experiencing high traffic right now. Please try again in ~30 seconds.";
+            } else {
+                response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
+            }
         }
 
         emitEvent('chain_step_done', { agentId, agentName: agent.name, responseLength: response.length, responseText: response });

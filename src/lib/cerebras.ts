@@ -76,6 +76,16 @@ function getApiKey(): string {
     return process.env.CEREBRAS_API_KEY || process.env.TINYCLAW_OPENAI_API_KEY || process.env.OPENAI_API_KEY || '';
 }
 
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryable(status: number, message: string): boolean {
+    if ([408, 409, 425, 429, 500, 502, 503, 504].includes(status)) return true;
+    const m = message.toLowerCase();
+    return m.includes('high traffic') || m.includes('rate limit') || m.includes('timeout') || m.includes('temporar');
+}
+
 export async function cerebrasChatCompletion(opts: {
     agentDir: string;
     model: string;
@@ -96,36 +106,60 @@ export async function cerebrasChatCompletion(opts: {
     // Persist user message before sending so history is consistent even if we crash mid-call.
     appendHistory(opts.agentDir, { role: 'user', content: opts.userMessage });
 
-    const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            model: opts.model,
-            messages,
-        }),
-    });
+    let lastErrMsg = 'Unknown Cerebras error';
+    let lastStatus = 0;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: opts.model,
+                messages,
+            }),
+        });
 
-    const text = await res.text();
-    let json: any;
-    try {
-        json = JSON.parse(text);
-    } catch {
-        throw new Error(`Cerebras HTTP ${res.status}: ${text.slice(0, 200)}`);
+        lastStatus = res.status;
+        const text = await res.text();
+        let json: any;
+        try {
+            json = JSON.parse(text);
+        } catch {
+            lastErrMsg = `Cerebras HTTP ${res.status}: ${text.slice(0, 200)}`;
+            if (attempt < 2 && isRetryable(res.status, lastErrMsg)) {
+                await sleep(250 * Math.pow(2, attempt));
+                continue;
+            }
+            throw new Error(lastErrMsg);
+        }
+
+        if (!res.ok) {
+            const msg = json?.error?.message || json?.message || `Cerebras HTTP ${res.status}`;
+            lastErrMsg = msg;
+            if (attempt < 2 && isRetryable(res.status, msg)) {
+                const ra = Number(res.headers.get('retry-after') || '');
+                const delay = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 250 * Math.pow(2, attempt);
+                await sleep(delay);
+                continue;
+            }
+            throw new Error(msg);
+        }
+
+        const content: string | undefined = json?.choices?.[0]?.message?.content;
+        if (!content) {
+            lastErrMsg = 'Cerebras returned no message content.';
+            if (attempt < 2) {
+                await sleep(250 * Math.pow(2, attempt));
+                continue;
+            }
+            throw new Error(lastErrMsg);
+        }
+
+        appendHistory(opts.agentDir, { role: 'assistant', content });
+        return content;
     }
 
-    if (!res.ok) {
-        const msg = json?.error?.message || json?.message || `Cerebras HTTP ${res.status}`;
-        throw new Error(msg);
-    }
-
-    const content: string | undefined = json?.choices?.[0]?.message?.content;
-    if (!content) {
-        throw new Error('Cerebras returned no message content.');
-    }
-
-    appendHistory(opts.agentDir, { role: 'assistant', content });
-    return content;
+    throw new Error(`Cerebras temporarily unavailable (HTTP ${lastStatus}): ${lastErrMsg}`);
 }
