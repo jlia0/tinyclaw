@@ -259,8 +259,16 @@ function pairingMessage(code: string): string {
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
 // Bot ready
-bot.getMe().then((me: TelegramBot.User) => {
+bot.getMe().then(async (me: TelegramBot.User) => {
     log('INFO', `Telegram bot connected as @${me.username}`);
+
+    // Register bot commands so they appear in Telegram's "/" menu
+    await bot.setMyCommands([
+        { command: 'agent', description: 'List available agents' },
+        { command: 'team', description: 'List available teams' },
+        { command: 'reset', description: 'Reset conversation history' },
+    ]).catch((err: Error) => log('WARN', `Failed to register commands: ${err.message}`));
+
     log('INFO', 'Listening for messages...');
 }).catch((err: Error) => {
     log('ERROR', `Failed to connect: ${err.message}`);
