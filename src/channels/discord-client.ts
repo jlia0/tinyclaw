@@ -403,11 +403,22 @@ async function checkOutgoingQueue(): Promise<void> {
 
             try {
                 const responseData: ResponseData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                const { messageId, message: responseText, sender } = responseData;
+                const { messageId, message: responseText, sender, senderId } = responseData;
 
-                // Find pending message
+                // Find pending message, or fall back to senderId for proactive messages
                 const pending = pendingMessages.get(messageId);
-                if (pending) {
+                let channel = pending?.channel ?? null;
+
+                if (!channel && senderId) {
+                    try {
+                        const user = await client.users.fetch(senderId);
+                        channel = await user.createDM();
+                    } catch (err) {
+                        log('ERROR', `Could not open DM for senderId ${senderId}: ${(err as Error).message}`);
+                    }
+                }
+
+                if (channel) {
                     // Send any attached files
                     if (responseData.files && responseData.files.length > 0) {
                         const attachments: AttachmentBuilder[] = [];
@@ -420,7 +431,7 @@ async function checkOutgoingQueue(): Promise<void> {
                             }
                         }
                         if (attachments.length > 0) {
-                            await pending.channel.send({ files: attachments });
+                            await channel.send({ files: attachments });
                             log('INFO', `Sent ${attachments.length} file(s) to Discord`);
                         }
                     }
@@ -429,55 +440,21 @@ async function checkOutgoingQueue(): Promise<void> {
                     if (responseText) {
                         const chunks = splitMessage(responseText);
 
-                        // First chunk as reply, rest as follow-up messages
                         if (chunks.length > 0) {
-                            await pending.message.reply(chunks[0]!);
+                            if (pending) {
+                                await pending.message.reply(chunks[0]!);
+                            } else {
+                                await channel.send(chunks[0]!);
+                            }
                         }
                         for (let i = 1; i < chunks.length; i++) {
-                            await pending.channel.send(chunks[i]!);
+                            await channel.send(chunks[i]!);
                         }
                     }
 
-                    log('INFO', `Sent response to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
+                    log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
 
-                    // Clean up
-                    pendingMessages.delete(messageId);
-                    fs.unlinkSync(filePath);
-                } else if (responseData.senderId) {
-                    // Proactive/agent-initiated message — DM the user directly
-                    try {
-                        const user = await client.users.fetch(responseData.senderId);
-                        const dmChannel = await user.createDM();
-
-                        // Send any attached files
-                        if (responseData.files && responseData.files.length > 0) {
-                            const attachments: AttachmentBuilder[] = [];
-                            for (const file of responseData.files) {
-                                try {
-                                    if (!fs.existsSync(file)) continue;
-                                    attachments.push(new AttachmentBuilder(file));
-                                } catch (fileErr) {
-                                    log('ERROR', `Failed to prepare file ${file}: ${(fileErr as Error).message}`);
-                                }
-                            }
-                            if (attachments.length > 0) {
-                                await dmChannel.send({ files: attachments });
-                                log('INFO', `Sent ${attachments.length} file(s) to Discord`);
-                            }
-                        }
-
-                        // Send message text
-                        if (responseText) {
-                            const chunks = splitMessage(responseText);
-                            for (const chunk of chunks) {
-                                await dmChannel.send(chunk);
-                            }
-                        }
-
-                        log('INFO', `Sent proactive message to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
-                    } catch (dmErr) {
-                        log('ERROR', `Failed to send proactive DM to ${responseData.senderId}: ${(dmErr as Error).message}`);
-                    }
+                    if (pending) pendingMessages.delete(messageId);
                     fs.unlinkSync(filePath);
                 } else {
                     log('WARN', `No pending message for ${messageId} and no senderId, cleaning up`);

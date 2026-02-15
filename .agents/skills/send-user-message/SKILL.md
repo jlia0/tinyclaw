@@ -37,13 +37,24 @@ This reads `pairing.json` and prints all approved pairings with their `channel`,
   --message "<your message>"
 ```
 
+With file attachments:
+
+```bash
+<skill_dir>/scripts/send-message.sh send \
+  --channel telegram \
+  --sender-id 123456 \
+  --sender "Alice" \
+  --message "Here's the report you requested." \
+  --files "/Users/you/.tinyclaw/files/report.pdf,/Users/you/.tinyclaw/files/chart.png"
+```
+
 Parameters:
 - `--channel`: One of `discord`, `telegram`, `whatsapp`
 - `--sender-id`: The channel-specific user ID (from pairing.json or conversation context)
 - `--sender`: Human-readable display name of the recipient
 - `--message`: The message text to send (max 4000 chars)
 - `--agent`: (Optional) Agent ID to attribute the message to
-- `--files`: (Optional) Comma-separated absolute file paths to attach
+- `--files`: (Optional) Comma-separated absolute file paths to attach (files must exist on disk)
 
 The script writes a JSON file to the outgoing queue directory with the correct `{channel}_` prefix so the channel client picks it up.
 

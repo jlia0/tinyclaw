@@ -480,11 +480,13 @@ async function checkOutgoingQueue(): Promise<void> {
 
             try {
                 const responseData: ResponseData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                const { messageId, message: responseText, sender } = responseData;
+                const { messageId, message: responseText, sender, senderId } = responseData;
 
-                // Find pending message
+                // Find pending message, or fall back to senderId for proactive messages
                 const pending = pendingMessages.get(messageId);
-                if (pending) {
+                const targetChatId = pending?.chatId ?? (senderId ? Number(senderId) : null);
+
+                if (targetChatId && !Number.isNaN(targetChatId)) {
                     // Send any attached files first
                     if (responseData.files && responseData.files.length > 0) {
                         for (const file of responseData.files) {
@@ -492,13 +494,13 @@ async function checkOutgoingQueue(): Promise<void> {
                                 if (!fs.existsSync(file)) continue;
                                 const ext = path.extname(file).toLowerCase();
                                 if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-                                    await bot.sendPhoto(pending.chatId, file);
+                                    await bot.sendPhoto(targetChatId, file);
                                 } else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) {
-                                    await bot.sendAudio(pending.chatId, file);
+                                    await bot.sendAudio(targetChatId, file);
                                 } else if (['.mp4', '.avi', '.mov', '.webm'].includes(ext)) {
-                                    await bot.sendVideo(pending.chatId, file);
+                                    await bot.sendVideo(targetChatId, file);
                                 } else {
-                                    await bot.sendDocument(pending.chatId, file);
+                                    await bot.sendDocument(targetChatId, file);
                                 }
                                 log('INFO', `Sent file to Telegram: ${path.basename(file)}`);
                             } catch (fileErr) {
@@ -511,60 +513,23 @@ async function checkOutgoingQueue(): Promise<void> {
                     if (responseText) {
                         const chunks = splitMessage(responseText);
 
-                        // First chunk as reply, rest as follow-up messages
                         if (chunks.length > 0) {
-                            await bot.sendMessage(pending.chatId, chunks[0]!, {
-                                reply_to_message_id: pending.messageId,
-                            });
+                            await bot.sendMessage(targetChatId, chunks[0]!, pending
+                                ? { reply_to_message_id: pending.messageId }
+                                : {},
+                            );
                         }
                         for (let i = 1; i < chunks.length; i++) {
-                            await bot.sendMessage(pending.chatId, chunks[i]!);
+                            await bot.sendMessage(targetChatId, chunks[i]!);
                         }
                     }
 
-                    log('INFO', `Sent response to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
+                    log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
 
-                    // Clean up
-                    pendingMessages.delete(messageId);
-                    fs.unlinkSync(filePath);
-                } else if (responseData.senderId) {
-                    // Proactive/agent-initiated message — send directly to user
-                    const chatId = Number(responseData.senderId);
-
-                    // Send any attached files first
-                    if (responseData.files && responseData.files.length > 0) {
-                        for (const file of responseData.files) {
-                            try {
-                                if (!fs.existsSync(file)) continue;
-                                const ext = path.extname(file).toLowerCase();
-                                if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-                                    await bot.sendPhoto(chatId, file);
-                                } else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) {
-                                    await bot.sendAudio(chatId, file);
-                                } else if (['.mp4', '.avi', '.mov', '.webm'].includes(ext)) {
-                                    await bot.sendVideo(chatId, file);
-                                } else {
-                                    await bot.sendDocument(chatId, file);
-                                }
-                                log('INFO', `Sent file to Telegram: ${path.basename(file)}`);
-                            } catch (fileErr) {
-                                log('ERROR', `Failed to send file ${file}: ${(fileErr as Error).message}`);
-                            }
-                        }
-                    }
-
-                    // Send message text
-                    if (responseText) {
-                        const chunks = splitMessage(responseText);
-                        for (const chunk of chunks) {
-                            await bot.sendMessage(chatId, chunk);
-                        }
-                    }
-
-                    log('INFO', `Sent proactive message to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
+                    if (pending) pendingMessages.delete(messageId);
                     fs.unlinkSync(filePath);
                 } else {
-                    log('WARN', `No pending message for ${messageId} and no senderId, cleaning up`);
+                    log('WARN', `No pending message for ${messageId} and no valid senderId, cleaning up`);
                     fs.unlinkSync(filePath);
                 }
             } catch (error) {
