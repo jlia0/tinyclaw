@@ -3,6 +3,9 @@ export interface AgentConfig {
     provider: string;       // 'anthropic' or 'openai'
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
+    telegram?: {
+        bot_token?: string;
+    };
 }
 
 export interface TeamConfig {

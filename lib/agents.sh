@@ -164,22 +164,57 @@ agent_add() {
     # Working directory - automatically set to agent directory
     AGENT_WORKDIR="$AGENTS_DIR/$AGENT_ID"
 
+    # Telegram bot
+    echo ""
+    echo "Dedicated Telegram bot (optional):"
+    echo "  Each agent can have its own Telegram bot so users can"
+    echo "  message the agent directly without @-mentioning."
+    read -rp "Set up a dedicated Telegram bot for this agent? [y/N]: " SETUP_TG_BOT
+    AGENT_TG_TOKEN=""
+    if [[ "$SETUP_TG_BOT" =~ ^[yY] ]]; then
+        echo ""
+        echo "  1. Open Telegram and message @BotFather"
+        echo "  2. Send /newbot and follow the prompts"
+        echo "  3. Copy the bot token (looks like 123456:ABC-DEF...)"
+        echo ""
+        read -rp "  Bot token: " AGENT_TG_TOKEN
+        if [ -z "$AGENT_TG_TOKEN" ]; then
+            echo -e "  ${YELLOW}No token provided — skipping dedicated bot.${NC}"
+        fi
+    fi
+
     # Write to settings
     local tmp_file="$SETTINGS_FILE.tmp"
 
     # Build the agent JSON object
     local agent_json
-    agent_json=$(jq -n \
-        --arg name "$AGENT_NAME" \
-        --arg provider "$AGENT_PROVIDER" \
-        --arg model "$AGENT_MODEL" \
-        --arg workdir "$AGENT_WORKDIR" \
-        '{
-            name: $name,
-            provider: $provider,
-            model: $model,
-            working_directory: $workdir
-        }')
+    if [ -n "$AGENT_TG_TOKEN" ]; then
+        agent_json=$(jq -n \
+            --arg name "$AGENT_NAME" \
+            --arg provider "$AGENT_PROVIDER" \
+            --arg model "$AGENT_MODEL" \
+            --arg workdir "$AGENT_WORKDIR" \
+            --arg tg_token "$AGENT_TG_TOKEN" \
+            '{
+                name: $name,
+                provider: $provider,
+                model: $model,
+                working_directory: $workdir,
+                telegram: { bot_token: $tg_token }
+            }')
+    else
+        agent_json=$(jq -n \
+            --arg name "$AGENT_NAME" \
+            --arg provider "$AGENT_PROVIDER" \
+            --arg model "$AGENT_MODEL" \
+            --arg workdir "$AGENT_WORKDIR" \
+            '{
+                name: $name,
+                provider: $provider,
+                model: $model,
+                working_directory: $workdir
+            }')
+    fi
 
     # Ensure agents section exists and add the new agent
     jq --arg id "$AGENT_ID" --argjson agent "$agent_json" \
@@ -253,11 +288,17 @@ agent_add() {
     echo ""
     echo -e "${GREEN}✓ Agent '${AGENT_ID}' created!${NC}"
     echo -e "  Directory: $AGENTS_DIR/$AGENT_ID"
+    if [ -n "$AGENT_TG_TOKEN" ]; then
+        echo -e "  Telegram bot: configured (restart telegram-client to activate)"
+    fi
     echo ""
     echo -e "${BLUE}Next steps:${NC}"
     echo "  1. Customize agent behavior by editing:"
     echo -e "     ${GREEN}$AGENTS_DIR/$AGENT_ID/AGENTS.md${NC}"
     echo "  2. Send a message: '@${AGENT_ID} <message>' in any channel"
+    if [ -n "$AGENT_TG_TOKEN" ]; then
+        echo "  3. Restart the Telegram client to activate the dedicated bot"
+    fi
     echo ""
     echo "Note: Changes take effect on next message. Restart is not required."
 }

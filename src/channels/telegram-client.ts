@@ -4,6 +4,10 @@
  * Writes DM messages to queue and reads responses
  * Does NOT call Claude directly - that's handled by queue-processor
  *
+ * Supports multiple bot instances:
+ * - Main bot from TELEGRAM_BOT_TOKEN env var
+ * - Per-agent bots from settings.agents[id].telegram.bot_token
+ *
  * Setup: Create a bot via @BotFather on Telegram to get a bot token.
  */
 
@@ -14,6 +18,7 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 import { ensureSenderPaired } from '../lib/pairing';
+import { Settings } from '../lib/types';
 
 const SCRIPT_DIR = path.resolve(__dirname, '..', '..');
 const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
@@ -35,17 +40,24 @@ const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
     }
 });
 
-// Validate bot token
+// Validate main bot token
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN === 'your_token_here') {
     console.error('ERROR: TELEGRAM_BOT_TOKEN is not set in .env file');
     process.exit(1);
 }
 
+interface BotInstance {
+    bot: TelegramBot;
+    token: string;
+    agentId?: string; // undefined = main bot
+}
+
 interface PendingMessage {
     chatId: number;
     messageId: number;
     timestamp: number;
+    botKey: string; // token key to look up the correct bot for replies
 }
 
 interface QueueData {
@@ -55,6 +67,7 @@ interface QueueData {
     message: string;
     timestamp: number;
     messageId: string;
+    agent?: string; // pre-routed agent id from agent-specific bot
     files?: string[];
 }
 
@@ -68,6 +81,9 @@ interface ResponseData {
     messageId: string;
     files?: string[];
 }
+
+// Map of bot token -> BotInstance (for looking up bots by token)
+const bots = new Map<string, BotInstance>();
 
 function sanitizeFileName(fileName: string): string {
     const baseName = path.basename(fileName).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
@@ -104,6 +120,15 @@ function log(level: string, message: string): void {
     const logMessage = `[${timestamp}] [${level}] ${message}\n`;
     console.log(logMessage.trim());
     fs.appendFileSync(LOG_FILE, logMessage);
+}
+
+// Load settings from settings.json
+function loadSettings(): Settings | null {
+    try {
+        return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    } catch {
+        return null;
+    }
 }
 
 // Load teams from settings for /team command
@@ -215,12 +240,12 @@ function downloadFile(url: string, destPath: string): Promise<void> {
 }
 
 // Download a Telegram file by file_id and return the local path
-async function downloadTelegramFile(fileId: string, ext: string, messageId: string, originalName?: string): Promise<string | null> {
+async function downloadTelegramFile(botInstance: TelegramBot, botToken: string, fileId: string, ext: string, messageId: string, originalName?: string): Promise<string | null> {
     try {
-        const file = await bot.getFile(fileId);
+        const file = await botInstance.getFile(fileId);
         if (!file.file_path) return null;
 
-        const url = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+        const url = `https://api.telegram.org/file/bot${botToken}/${file.file_path}`;
         const telegramPathName = path.basename(file.file_path);
         const sourceName = originalName || telegramPathName || `file_${Date.now()}${ext}`;
         const withExt = ensureFileExtension(sourceName, ext || '.bin');
@@ -256,220 +281,242 @@ function pairingMessage(code: string): string {
     ].join('\n');
 }
 
-// Initialize Telegram bot (polling mode)
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
+// Set up message handler for a bot instance
+function setupMessageHandler(botInstance: TelegramBot, botToken: string, agentId?: string): void {
+    const botLabel = agentId ? `@${agentId} bot` : 'main bot';
 
-// Bot ready
-bot.getMe().then(async (me: TelegramBot.User) => {
-    log('INFO', `Telegram bot connected as @${me.username}`);
-
-    // Register bot commands so they appear in Telegram's "/" menu
-    await bot.setMyCommands([
-        { command: 'agent', description: 'List available agents' },
-        { command: 'team', description: 'List available teams' },
-        { command: 'reset', description: 'Reset conversation history' },
-    ]).catch((err: Error) => log('WARN', `Failed to register commands: ${err.message}`));
-
-    log('INFO', 'Listening for messages...');
-}).catch((err: Error) => {
-    log('ERROR', `Failed to connect: ${err.message}`);
-    process.exit(1);
-});
-
-// Message received - Write to queue
-bot.on('message', async (msg: TelegramBot.Message) => {
-    try {
-        // Skip group/channel messages - only handle private chats
-        if (msg.chat.type !== 'private') {
-            return;
-        }
-
-        // Determine message text and any media files
-        let messageText = msg.text || msg.caption || '';
-        const downloadedFiles: string[] = [];
-        const queueMessageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
-        // Handle photo messages
-        if (msg.photo && msg.photo.length > 0) {
-            // Get the largest photo (last in array)
-            const photo = msg.photo[msg.photo.length - 1];
-            const filePath = await downloadTelegramFile(photo.file_id, '.jpg', queueMessageId, `photo_${msg.message_id}.jpg`);
-            if (filePath) downloadedFiles.push(filePath);
-        }
-
-        // Handle document/file messages
-        if (msg.document) {
-            const ext = msg.document.file_name
-                ? path.extname(msg.document.file_name)
-                : extFromMime(msg.document.mime_type);
-            const filePath = await downloadTelegramFile(msg.document.file_id, ext, queueMessageId, msg.document.file_name);
-            if (filePath) downloadedFiles.push(filePath);
-        }
-
-        // Handle audio messages
-        if (msg.audio) {
-            const ext = extFromMime(msg.audio.mime_type) || '.mp3';
-            const audioFileName = ('file_name' in msg.audio) ? (msg.audio as { file_name?: string }).file_name : undefined;
-            const filePath = await downloadTelegramFile(msg.audio.file_id, ext, queueMessageId, audioFileName);
-            if (filePath) downloadedFiles.push(filePath);
-        }
-
-        // Handle voice messages
-        if (msg.voice) {
-            const filePath = await downloadTelegramFile(msg.voice.file_id, '.ogg', queueMessageId, `voice_${msg.message_id}.ogg`);
-            if (filePath) downloadedFiles.push(filePath);
-        }
-
-        // Handle video messages
-        if (msg.video) {
-            const ext = extFromMime(msg.video.mime_type) || '.mp4';
-            const videoFileName = ('file_name' in msg.video) ? (msg.video as { file_name?: string }).file_name : undefined;
-            const filePath = await downloadTelegramFile(msg.video.file_id, ext, queueMessageId, videoFileName);
-            if (filePath) downloadedFiles.push(filePath);
-        }
-
-        // Handle video notes (round video messages)
-        if (msg.video_note) {
-            const filePath = await downloadTelegramFile(msg.video_note.file_id, '.mp4', queueMessageId, `video_note_${msg.message_id}.mp4`);
-            if (filePath) downloadedFiles.push(filePath);
-        }
-
-        // Handle sticker
-        if (msg.sticker) {
-            const ext = msg.sticker.is_animated ? '.tgs' : msg.sticker.is_video ? '.webm' : '.webp';
-            const filePath = await downloadTelegramFile(msg.sticker.file_id, ext, queueMessageId, `sticker_${msg.message_id}${ext}`);
-            if (filePath) downloadedFiles.push(filePath);
-            if (!messageText) messageText = `[Sticker: ${msg.sticker.emoji || 'sticker'}]`;
-        }
-
-        // Skip if no text and no media
-        if ((!messageText || messageText.trim().length === 0) && downloadedFiles.length === 0) {
-            return;
-        }
-
-        const sender = msg.from
-            ? (msg.from.first_name + (msg.from.last_name ? ` ${msg.from.last_name}` : ''))
-            : 'Unknown';
-        const senderId = msg.chat.id.toString();
-
-        log('INFO', `Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
-
-        const pairing = ensureSenderPaired(PAIRING_FILE, 'telegram', senderId, sender);
-        if (!pairing.approved && pairing.code) {
-            if (pairing.isNewPending) {
-                log('INFO', `Blocked unpaired Telegram sender ${sender} (${senderId}) with code ${pairing.code}`);
-                await bot.sendMessage(msg.chat.id, pairingMessage(pairing.code), {
-                    reply_to_message_id: msg.message_id,
-                });
-            } else {
-                log('INFO', `Blocked pending Telegram sender ${sender} (${senderId}) without re-sending pairing message`);
+    botInstance.on('message', async (msg: TelegramBot.Message) => {
+        try {
+            // Skip group/channel messages - only handle private chats
+            if (msg.chat.type !== 'private') {
+                return;
             }
-            return;
-        }
 
-        // Check for agent list command
-        if (msg.text && msg.text.trim().match(/^[!/]agent$/i)) {
-            log('INFO', 'Agent list command received');
-            const agentList = getAgentListText();
-            await bot.sendMessage(msg.chat.id, agentList, {
-                reply_to_message_id: msg.message_id,
-            });
-            return;
-        }
+            // Determine message text and any media files
+            let messageText = msg.text || msg.caption || '';
+            const downloadedFiles: string[] = [];
+            const queueMessageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
-        // Check for team list command
-        if (msg.text && msg.text.trim().match(/^[!/]team$/i)) {
-            log('INFO', 'Team list command received');
-            const teamList = getTeamListText();
-            await bot.sendMessage(msg.chat.id, teamList, {
-                reply_to_message_id: msg.message_id,
-            });
-            return;
-        }
+            // Handle photo messages
+            if (msg.photo && msg.photo.length > 0) {
+                const photo = msg.photo[msg.photo.length - 1];
+                const filePath = await downloadTelegramFile(botInstance, botToken, photo.file_id, '.jpg', queueMessageId, `photo_${msg.message_id}.jpg`);
+                if (filePath) downloadedFiles.push(filePath);
+            }
 
-        // Check for reset command: /reset @agent_id [@agent_id2 ...]
-        const resetMatch = messageText.trim().match(/^[!/]reset\s+(.+)$/i);
-        if (messageText.trim().match(/^[!/]reset$/i)) {
-            await bot.sendMessage(msg.chat.id, 'Usage: /reset @agent_id [@agent_id2 ...]\nSpecify which agent(s) to reset.', {
-                reply_to_message_id: msg.message_id,
-            });
-            return;
-        }
-        if (resetMatch) {
-            log('INFO', 'Per-agent reset command received');
-            const agentArgs = resetMatch[1].split(/\s+/).map(a => a.replace(/^@/, '').toLowerCase());
-            try {
-                const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-                const settings = JSON.parse(settingsData);
-                const agents = settings.agents || {};
-                const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
-                const resetResults: string[] = [];
-                for (const agentId of agentArgs) {
-                    if (!agents[agentId]) {
-                        resetResults.push(`Agent '${agentId}' not found.`);
-                        continue;
-                    }
-                    const flagDir = path.join(workspacePath, agentId);
-                    if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
-                    fs.writeFileSync(path.join(flagDir, 'reset_flag'), 'reset');
-                    resetResults.push(`Reset @${agentId} (${agents[agentId].name}).`);
+            // Handle document/file messages
+            if (msg.document) {
+                const ext = msg.document.file_name
+                    ? path.extname(msg.document.file_name)
+                    : extFromMime(msg.document.mime_type);
+                const filePath = await downloadTelegramFile(botInstance, botToken, msg.document.file_id, ext, queueMessageId, msg.document.file_name);
+                if (filePath) downloadedFiles.push(filePath);
+            }
+
+            // Handle audio messages
+            if (msg.audio) {
+                const ext = extFromMime(msg.audio.mime_type) || '.mp3';
+                const audioFileName = ('file_name' in msg.audio) ? (msg.audio as { file_name?: string }).file_name : undefined;
+                const filePath = await downloadTelegramFile(botInstance, botToken, msg.audio.file_id, ext, queueMessageId, audioFileName);
+                if (filePath) downloadedFiles.push(filePath);
+            }
+
+            // Handle voice messages
+            if (msg.voice) {
+                const filePath = await downloadTelegramFile(botInstance, botToken, msg.voice.file_id, '.ogg', queueMessageId, `voice_${msg.message_id}.ogg`);
+                if (filePath) downloadedFiles.push(filePath);
+            }
+
+            // Handle video messages
+            if (msg.video) {
+                const ext = extFromMime(msg.video.mime_type) || '.mp4';
+                const videoFileName = ('file_name' in msg.video) ? (msg.video as { file_name?: string }).file_name : undefined;
+                const filePath = await downloadTelegramFile(botInstance, botToken, msg.video.file_id, ext, queueMessageId, videoFileName);
+                if (filePath) downloadedFiles.push(filePath);
+            }
+
+            // Handle video notes (round video messages)
+            if (msg.video_note) {
+                const filePath = await downloadTelegramFile(botInstance, botToken, msg.video_note.file_id, '.mp4', queueMessageId, `video_note_${msg.message_id}.mp4`);
+                if (filePath) downloadedFiles.push(filePath);
+            }
+
+            // Handle sticker
+            if (msg.sticker) {
+                const ext = msg.sticker.is_animated ? '.tgs' : msg.sticker.is_video ? '.webm' : '.webp';
+                const filePath = await downloadTelegramFile(botInstance, botToken, msg.sticker.file_id, ext, queueMessageId, `sticker_${msg.message_id}${ext}`);
+                if (filePath) downloadedFiles.push(filePath);
+                if (!messageText) messageText = `[Sticker: ${msg.sticker.emoji || 'sticker'}]`;
+            }
+
+            // Skip if no text and no media
+            if ((!messageText || messageText.trim().length === 0) && downloadedFiles.length === 0) {
+                return;
+            }
+
+            const sender = msg.from
+                ? (msg.from.first_name + (msg.from.last_name ? ` ${msg.from.last_name}` : ''))
+                : 'Unknown';
+            const senderId = msg.chat.id.toString();
+
+            log('INFO', `[${botLabel}] Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
+
+            const pairing = ensureSenderPaired(PAIRING_FILE, 'telegram', senderId, sender);
+            if (!pairing.approved && pairing.code) {
+                if (pairing.isNewPending) {
+                    log('INFO', `Blocked unpaired Telegram sender ${sender} (${senderId}) with code ${pairing.code}`);
+                    await botInstance.sendMessage(msg.chat.id, pairingMessage(pairing.code), {
+                        reply_to_message_id: msg.message_id,
+                    });
+                } else {
+                    log('INFO', `Blocked pending Telegram sender ${sender} (${senderId}) without re-sending pairing message`);
                 }
-                await bot.sendMessage(msg.chat.id, resetResults.join('\n'), {
+                return;
+            }
+
+            // Check for agent list command
+            if (msg.text && msg.text.trim().match(/^[!/]agent$/i)) {
+                log('INFO', 'Agent list command received');
+                const agentList = getAgentListText();
+                await botInstance.sendMessage(msg.chat.id, agentList, {
                     reply_to_message_id: msg.message_id,
                 });
-            } catch {
-                await bot.sendMessage(msg.chat.id, 'Could not process reset command. Check settings.', {
+                return;
+            }
+
+            // Check for team list command
+            if (msg.text && msg.text.trim().match(/^[!/]team$/i)) {
+                log('INFO', 'Team list command received');
+                const teamList = getTeamListText();
+                await botInstance.sendMessage(msg.chat.id, teamList, {
                     reply_to_message_id: msg.message_id,
                 });
+                return;
             }
-            return;
-        }
 
-        // Show typing indicator
-        await bot.sendChatAction(msg.chat.id, 'typing');
-
-        // Build message text with file references
-        let fullMessage = messageText;
-        if (downloadedFiles.length > 0) {
-            const fileRefs = downloadedFiles.map(f => `[file: ${f}]`).join('\n');
-            fullMessage = fullMessage ? `${fullMessage}\n\n${fileRefs}` : fileRefs;
-        }
-
-        // Write to incoming queue
-        const queueData: QueueData = {
-            channel: 'telegram',
-            sender: sender,
-            senderId: senderId,
-            message: fullMessage,
-            timestamp: Date.now(),
-            messageId: queueMessageId,
-            files: downloadedFiles.length > 0 ? downloadedFiles : undefined,
-        };
-
-        const queueFile = path.join(QUEUE_INCOMING, `telegram_${queueMessageId}.json`);
-        fs.writeFileSync(queueFile, JSON.stringify(queueData, null, 2));
-
-        log('INFO', `Queued message ${queueMessageId}`);
-
-        // Store pending message for response
-        pendingMessages.set(queueMessageId, {
-            chatId: msg.chat.id,
-            messageId: msg.message_id,
-            timestamp: Date.now(),
-        });
-
-        // Clean up old pending messages (older than 10 minutes)
-        const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
-        for (const [id, data] of pendingMessages.entries()) {
-            if (data.timestamp < tenMinutesAgo) {
-                pendingMessages.delete(id);
+            // Check for reset command: /reset @agent_id [@agent_id2 ...]
+            // On an agent-specific bot, bare /reset auto-resets that agent
+            if (messageText.trim().match(/^[!/]reset$/i)) {
+                if (agentId) {
+                    // Agent bot: treat bare /reset as /reset @thisAgent
+                    messageText = `/reset @${agentId}`;
+                } else {
+                    await botInstance.sendMessage(msg.chat.id, 'Usage: /reset @agent_id [@agent_id2 ...]\nSpecify which agent(s) to reset.', {
+                        reply_to_message_id: msg.message_id,
+                    });
+                    return;
+                }
             }
-        }
+            const resetMatch = messageText.trim().match(/^[!/]reset\s+(.+)$/i);
+            if (resetMatch) {
+                log('INFO', 'Per-agent reset command received');
+                const agentArgs = resetMatch[1].split(/\s+/).map(a => a.replace(/^@/, '').toLowerCase());
+                try {
+                    const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
+                    const settings = JSON.parse(settingsData);
+                    const agents = settings.agents || {};
+                    const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
+                    const resetResults: string[] = [];
+                    for (const agId of agentArgs) {
+                        if (!agents[agId]) {
+                            resetResults.push(`Agent '${agId}' not found.`);
+                            continue;
+                        }
+                        const flagDir = path.join(workspacePath, agId);
+                        if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
+                        fs.writeFileSync(path.join(flagDir, 'reset_flag'), 'reset');
+                        resetResults.push(`Reset @${agId} (${agents[agId].name}).`);
+                    }
+                    await botInstance.sendMessage(msg.chat.id, resetResults.join('\n'), {
+                        reply_to_message_id: msg.message_id,
+                    });
+                } catch {
+                    await botInstance.sendMessage(msg.chat.id, 'Could not process reset command. Check settings.', {
+                        reply_to_message_id: msg.message_id,
+                    });
+                }
+                return;
+            }
 
-    } catch (error) {
-        log('ERROR', `Message handling error: ${(error as Error).message}`);
+            // Show typing indicator
+            await botInstance.sendChatAction(msg.chat.id, 'typing');
+
+            // Build message text with file references
+            let fullMessage = messageText;
+            if (downloadedFiles.length > 0) {
+                const fileRefs = downloadedFiles.map(f => `[file: ${f}]`).join('\n');
+                fullMessage = fullMessage ? `${fullMessage}\n\n${fileRefs}` : fileRefs;
+            }
+
+            // Write to incoming queue
+            const queueData: QueueData = {
+                channel: 'telegram',
+                sender: sender,
+                senderId: senderId,
+                message: fullMessage,
+                timestamp: Date.now(),
+                messageId: queueMessageId,
+                files: downloadedFiles.length > 0 ? downloadedFiles : undefined,
+            };
+
+            // If this message came from an agent-specific bot, pre-route it
+            if (agentId) {
+                queueData.agent = agentId;
+            }
+
+            const queueFile = path.join(QUEUE_INCOMING, `telegram_${queueMessageId}.json`);
+            fs.writeFileSync(queueFile, JSON.stringify(queueData, null, 2));
+
+            log('INFO', `Queued message ${queueMessageId}${agentId ? ` (pre-routed to @${agentId})` : ''}`);
+
+            // Store pending message for response
+            pendingMessages.set(queueMessageId, {
+                chatId: msg.chat.id,
+                messageId: msg.message_id,
+                timestamp: Date.now(),
+                botKey: botToken,
+            });
+
+            // Clean up old pending messages (older than 10 minutes)
+            const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
+            for (const [id, data] of pendingMessages.entries()) {
+                if (data.timestamp < tenMinutesAgo) {
+                    pendingMessages.delete(id);
+                }
+            }
+
+        } catch (error) {
+            log('ERROR', `[${botLabel}] Message handling error: ${(error as Error).message}`);
+        }
+    });
+
+    // Handle polling errors
+    botInstance.on('polling_error', (error: Error) => {
+        log('ERROR', `[${botLabel}] Polling error: ${error.message}`);
+    });
+}
+
+// Helper: send files via a bot instance
+async function sendFiles(botInstance: TelegramBot, chatId: number, files: string[]): Promise<void> {
+    for (const file of files) {
+        try {
+            if (!fs.existsSync(file)) continue;
+            const ext = path.extname(file).toLowerCase();
+            if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+                await botInstance.sendPhoto(chatId, file);
+            } else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) {
+                await botInstance.sendAudio(chatId, file);
+            } else if (['.mp4', '.avi', '.mov', '.webm'].includes(ext)) {
+                await botInstance.sendVideo(chatId, file);
+            } else {
+                await botInstance.sendDocument(chatId, file);
+            }
+            log('INFO', `Sent file to Telegram: ${path.basename(file)}`);
+        } catch (fileErr) {
+            log('ERROR', `Failed to send file ${file}: ${(fileErr as Error).message}`);
+        }
     }
-});
+}
 
 // Watch for responses in outgoing queue
 async function checkOutgoingQueue(): Promise<void> {
@@ -495,26 +542,14 @@ async function checkOutgoingQueue(): Promise<void> {
                 const targetChatId = pending?.chatId ?? (senderId ? Number(senderId) : null);
 
                 if (targetChatId && !Number.isNaN(targetChatId)) {
+                    // Look up the correct bot: use the bot that received the original message,
+                    // or fall back to main bot for proactive messages
+                    const botEntry = pending ? bots.get(pending.botKey) : bots.get(TELEGRAM_BOT_TOKEN!);
+                    const replyBot = botEntry ? botEntry.bot : bots.get(TELEGRAM_BOT_TOKEN!)!.bot;
+
                     // Send any attached files first
                     if (responseData.files && responseData.files.length > 0) {
-                        for (const file of responseData.files) {
-                            try {
-                                if (!fs.existsSync(file)) continue;
-                                const ext = path.extname(file).toLowerCase();
-                                if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-                                    await bot.sendPhoto(targetChatId, file);
-                                } else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) {
-                                    await bot.sendAudio(targetChatId, file);
-                                } else if (['.mp4', '.avi', '.mov', '.webm'].includes(ext)) {
-                                    await bot.sendVideo(targetChatId, file);
-                                } else {
-                                    await bot.sendDocument(targetChatId, file);
-                                }
-                                log('INFO', `Sent file to Telegram: ${path.basename(file)}`);
-                            } catch (fileErr) {
-                                log('ERROR', `Failed to send file ${file}: ${(fileErr as Error).message}`);
-                            }
-                        }
+                        await sendFiles(replyBot, targetChatId, responseData.files);
                     }
 
                     // Split message if needed (Telegram 4096 char limit)
@@ -522,13 +557,13 @@ async function checkOutgoingQueue(): Promise<void> {
                         const chunks = splitMessage(responseText);
 
                         if (chunks.length > 0) {
-                            await bot.sendMessage(targetChatId, chunks[0]!, pending
+                            await replyBot.sendMessage(targetChatId, chunks[0]!, pending
                                 ? { reply_to_message_id: pending.messageId }
                                 : {},
                             );
                         }
                         for (let i = 1; i < chunks.length; i++) {
-                            await bot.sendMessage(targetChatId, chunks[i]!);
+                            await replyBot.sendMessage(targetChatId, chunks[i]!);
                         }
                     }
 
@@ -558,29 +593,77 @@ setInterval(checkOutgoingQueue, 1000);
 // Refresh typing indicator every 4 seconds for pending messages
 setInterval(() => {
     for (const [, data] of pendingMessages.entries()) {
-        bot.sendChatAction(data.chatId, 'typing').catch(() => {
-            // Ignore typing errors silently
-        });
+        const botEntry = bots.get(data.botKey);
+        const typingBot = botEntry ? botEntry.bot : bots.get(TELEGRAM_BOT_TOKEN!)?.bot;
+        if (typingBot) {
+            typingBot.sendChatAction(data.chatId, 'typing').catch(() => {
+                // Ignore typing errors silently
+            });
+        }
     }
 }, 4000);
 
-// Handle polling errors
-bot.on('polling_error', (error: Error) => {
-    log('ERROR', `Polling error: ${error.message}`);
-});
-
-// Graceful shutdown
-process.on('SIGINT', () => {
+// Graceful shutdown - stop all bots
+function shutdown(): void {
     log('INFO', 'Shutting down Telegram client...');
-    bot.stopPolling();
+    for (const [, entry] of bots.entries()) {
+        entry.bot.stopPolling();
+    }
     process.exit(0);
-});
+}
 
-process.on('SIGTERM', () => {
-    log('INFO', 'Shutting down Telegram client...');
-    bot.stopPolling();
-    process.exit(0);
-});
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
-// Start
-log('INFO', 'Starting Telegram client...');
+// Register bot commands so they appear in Telegram's "/" menu
+async function registerCommands(botInstance: TelegramBot, label: string): Promise<void> {
+    await botInstance.setMyCommands([
+        { command: 'agent', description: 'List available agents' },
+        { command: 'team', description: 'List available teams' },
+        { command: 'reset', description: 'Reset conversation history' },
+    ]).catch((err: Error) => log('WARN', `[${label}] Failed to register commands: ${err.message}`));
+}
+
+// Initialize all bot instances
+async function initBots(): Promise<void> {
+    log('INFO', 'Starting Telegram client...');
+
+    // 1. Initialize main bot (fatal on failure)
+    const mainBot = new TelegramBot(TELEGRAM_BOT_TOKEN!, { polling: true });
+    try {
+        const me = await mainBot.getMe();
+        log('INFO', `Main bot connected as @${me.username}`);
+        bots.set(TELEGRAM_BOT_TOKEN!, { bot: mainBot, token: TELEGRAM_BOT_TOKEN! });
+        setupMessageHandler(mainBot, TELEGRAM_BOT_TOKEN!);
+        await registerCommands(mainBot, 'main bot');
+    } catch (err) {
+        log('ERROR', `Main bot failed to connect: ${(err as Error).message}`);
+        process.exit(1);
+    }
+
+    // 2. Initialize agent-specific bots (non-fatal on failure)
+    const settings = loadSettings();
+    if (settings?.agents) {
+        for (const [agentId, agentConfig] of Object.entries(settings.agents)) {
+            const agentToken = agentConfig.telegram?.bot_token;
+            if (!agentToken || agentToken === TELEGRAM_BOT_TOKEN) continue;
+
+            const agentBot = new TelegramBot(agentToken, { polling: true });
+            try {
+                const me = await agentBot.getMe();
+                log('INFO', `Agent @${agentId} bot connected as @${me.username}`);
+                bots.set(agentToken, { bot: agentBot, token: agentToken, agentId });
+                setupMessageHandler(agentBot, agentToken, agentId);
+                await registerCommands(agentBot, `@${agentId} bot`);
+            } catch (err) {
+                log('ERROR', `Agent @${agentId} bot failed to connect: ${(err as Error).message} — disabling this bot`);
+                agentBot.stopPolling();
+                // Don't add to bots map, don't exit — other bots continue working
+            }
+        }
+    }
+
+    log('INFO', `Listening for messages on ${bots.size} bot(s)...`);
+}
+
+initBots();

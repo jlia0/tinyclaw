@@ -189,8 +189,32 @@ AGENTS_JSON=""
 DEFAULT_AGENT_DIR="$WORKSPACE_PATH/$DEFAULT_AGENT_NAME"
 # Capitalize first letter of agent name (proper bash method)
 DEFAULT_AGENT_DISPLAY="$(tr '[:lower:]' '[:upper:]' <<< "${DEFAULT_AGENT_NAME:0:1}")${DEFAULT_AGENT_NAME:1}"
+
+# Telegram bot for default agent
+DEFAULT_TG_JSON=""
+echo ""
+echo "Dedicated Telegram bot for @${DEFAULT_AGENT_NAME} (optional):"
+echo "  Each agent can have its own Telegram bot so users can"
+echo "  message the agent directly without @-mentioning."
+read -rp "Set up a dedicated Telegram bot for @${DEFAULT_AGENT_NAME}? [y/N]: " SETUP_DEFAULT_TG
+if [[ "$SETUP_DEFAULT_TG" =~ ^[yY] ]]; then
+    echo ""
+    echo "  1. Open Telegram and message @BotFather"
+    echo "  2. Send /newbot and follow the prompts"
+    echo "  3. Copy the bot token (looks like 123456:ABC-DEF...)"
+    echo ""
+    read -rp "  Bot token: " DEFAULT_TG_TOKEN
+    if [ -n "$DEFAULT_TG_TOKEN" ]; then
+        DEFAULT_TG_JSON=", \"telegram\": { \"bot_token\": \"$DEFAULT_TG_TOKEN\" }"
+        echo -e "  ${GREEN}✓ Telegram bot configured for @${DEFAULT_AGENT_NAME}${NC}"
+    else
+        echo -e "  ${YELLOW}No token provided — skipping dedicated bot.${NC}"
+    fi
+fi
+echo ""
+
 AGENTS_JSON='"agents": {'
-AGENTS_JSON="$AGENTS_JSON \"$DEFAULT_AGENT_NAME\": { \"name\": \"$DEFAULT_AGENT_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_AGENT_DIR\" }"
+AGENTS_JSON="$AGENTS_JSON \"$DEFAULT_AGENT_NAME\": { \"name\": \"$DEFAULT_AGENT_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_AGENT_DIR\"${DEFAULT_TG_JSON} }"
 
 ADDITIONAL_AGENTS=()  # Track additional agent IDs for directory creation
 
@@ -241,7 +265,23 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
 
         NEW_AGENT_DIR="$WORKSPACE_PATH/$NEW_AGENT_ID"
 
-        AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_AGENT_DIR\" }"
+        # Telegram bot for this agent
+        NEW_TG_JSON=""
+        echo ""
+        echo "  Dedicated Telegram bot for @${NEW_AGENT_ID} (optional):"
+        read -rp "  Set up a dedicated Telegram bot? [y/N]: " SETUP_NEW_TG
+        if [[ "$SETUP_NEW_TG" =~ ^[yY] ]]; then
+            echo "  Create a bot via @BotFather and paste the token."
+            read -rp "  Bot token: " NEW_TG_TOKEN
+            if [ -n "$NEW_TG_TOKEN" ]; then
+                NEW_TG_JSON=", \"telegram\": { \"bot_token\": \"$NEW_TG_TOKEN\" }"
+                echo -e "  ${GREEN}✓ Telegram bot configured${NC}"
+            else
+                echo -e "  ${YELLOW}No token — skipping.${NC}"
+            fi
+        fi
+
+        AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_AGENT_DIR\"${NEW_TG_JSON} }"
 
         # Track this agent for directory creation later
         ADDITIONAL_AGENTS+=("$NEW_AGENT_ID")
