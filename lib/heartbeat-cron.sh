@@ -11,7 +11,7 @@ fi
 LOG_FILE="$TINYCLAW_HOME/logs/heartbeat.log"
 QUEUE_INCOMING="$TINYCLAW_HOME/queue/incoming"
 QUEUE_OUTGOING="$TINYCLAW_HOME/queue/outgoing"
-SETTINGS_FILE="$PROJECT_ROOT/.tinyclaw/settings.json"
+SETTINGS_FILE="$TINYCLAW_HOME/settings.json"
 
 # Read interval from settings.json, default to 3600
 if [ -f "$SETTINGS_FILE" ]; then

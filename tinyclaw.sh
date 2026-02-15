@@ -24,6 +24,19 @@ fi
 
 mkdir -p "$LOG_DIR"
 
+# OpenAI-compatible provider overrides
+# These env vars let you point the OpenAI/Codex provider at non-OpenAI endpoints (e.g. Cerebras).
+# They are applied only for the TinyClaw process.
+if [ -z "${TINYCLAW_OPENAI_API_KEY:-}" ] && [ -n "${CEREBRAS_API_KEY:-}" ]; then
+    export TINYCLAW_OPENAI_API_KEY="$CEREBRAS_API_KEY"
+fi
+if [ -n "${TINYCLAW_OPENAI_API_KEY:-}" ]; then
+    export OPENAI_API_KEY="$TINYCLAW_OPENAI_API_KEY"
+fi
+if [ -n "${TINYCLAW_OPENAI_BASE_URL:-}" ]; then
+    export OPENAI_BASE_URL="$TINYCLAW_OPENAI_BASE_URL"
+fi
+
 # Source library files
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/daemon.sh"

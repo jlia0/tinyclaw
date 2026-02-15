@@ -163,6 +163,17 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 | `reset`                           | Reset all conversations      | `tinyclaw reset`                                 |
 | `channels reset <channel>`        | Reset channel authentication | `tinyclaw channels reset whatsapp`               |
 
+### OpenAI-Compatible Providers (Optional)
+
+If you select the `openai` provider, TinyClaw uses the Codex CLI. You can point it at an OpenAI-compatible endpoint (for example, Cerebras) by exporting:
+
+```bash
+export TINYCLAW_OPENAI_API_KEY="..."
+export TINYCLAW_OPENAI_BASE_URL="https://api.cerebras.ai/v1"
+# or, as a shortcut:
+export CEREBRAS_API_KEY="..."
+```
+
 ### Pairing Commands
 
 Use sender pairing to control who can message your agents.
@@ -204,6 +215,12 @@ Pairing behavior:
 
 ```bash
 tinyclaw update
+```
+
+**Non-interactive update (CI/automation):**
+
+```bash
+TINYCLAW_UPDATE_YES=1 tinyclaw update
 ```
 
 This will:
