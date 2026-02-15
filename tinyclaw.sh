@@ -262,8 +262,22 @@ case "${1:-}" in
                 fi
                 agent_reset "$3"
                 ;;
+            provider)
+                if [ -z "$3" ]; then
+                    echo "Usage: $0 agent provider <agent_id> [provider] [--model MODEL_NAME]"
+                    echo ""
+                    echo "Examples:"
+                    echo "  $0 agent provider coder                                    # Show current provider/model"
+                    echo "  $0 agent provider coder anthropic                           # Switch to Anthropic"
+                    echo "  $0 agent provider coder openai                              # Switch to OpenAI"
+                    echo "  $0 agent provider coder anthropic --model opus              # Switch to Anthropic Opus"
+                    echo "  $0 agent provider coder openai --model gpt-5.3-codex        # Switch to OpenAI GPT-5.3 Codex"
+                    exit 1
+                fi
+                agent_provider "$3" "$4" "$5" "$6"
+                ;;
             *)
-                echo "Usage: $0 agent {list|add|remove|show|reset}"
+                echo "Usage: $0 agent {list|add|remove|show|reset|provider}"
                 echo ""
                 echo "Agent Commands:"
                 echo "  list                   List all configured agents"
@@ -271,6 +285,7 @@ case "${1:-}" in
                 echo "  remove <id>            Remove an agent"
                 echo "  show <id>              Show agent configuration"
                 echo "  reset <id>             Reset an agent's conversation"
+                echo "  provider <id> [...]    Show or set agent's provider and model"
                 echo ""
                 echo "Examples:"
                 echo "  $0 agent list"
@@ -278,6 +293,7 @@ case "${1:-}" in
                 echo "  $0 agent show coder"
                 echo "  $0 agent remove coder"
                 echo "  $0 agent reset coder"
+                echo "  $0 agent provider coder anthropic --model opus"
                 echo ""
                 echo "In chat, use '@agent_id message' to route to a specific agent."
                 exit 1
@@ -377,7 +393,7 @@ case "${1:-}" in
         echo "  channels reset <channel> Reset channel auth ($local_names)"
         echo "  provider [name] [--model model]  Show or switch AI provider"
         echo "  model [name]             Show or switch AI model"
-        echo "  agent {list|add|remove|show|reset}  Manage agents"
+        echo "  agent {list|add|remove|show|reset|provider}  Manage agents"
         echo "  team {list|add|remove|show|visualize}  Manage teams"
         echo "  pairing {pending|approved|list|approve <code>|unpair <channel> <sender_id>}  Manage sender approvals"
         echo "  update                   Update TinyClaw to latest version"
