@@ -402,18 +402,28 @@ async function checkOutgoingQueue(): Promise<void> {
 
             try {
                 const responseData: ResponseData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                const { messageId, message: responseText, sender } = responseData;
+                const { messageId, message: responseText, sender, senderId } = responseData;
 
-                // Find pending message
+                // Find pending message, or fall back to senderId for proactive messages
                 const pending = pendingMessages.get(messageId);
-                if (pending) {
+                let targetChat: Chat | null = pending?.chat ?? null;
+
+                if (!targetChat && senderId) {
+                    try {
+                        targetChat = await client.getChatById(senderId);
+                    } catch (err) {
+                        log('ERROR', `Could not get chat for senderId ${senderId}: ${(err as Error).message}`);
+                    }
+                }
+
+                if (targetChat) {
                     // Send any attached files first
                     if (responseData.files && responseData.files.length > 0) {
                         for (const file of responseData.files) {
                             try {
                                 if (!fs.existsSync(file)) continue;
                                 const media = MessageMedia.fromFilePath(file);
-                                await pending.chat.sendMessage(media);
+                                await targetChat.sendMessage(media);
                                 log('INFO', `Sent file to WhatsApp: ${path.basename(file)}`);
                             } catch (fileErr) {
                                 log('ERROR', `Failed to send file ${file}: ${(fileErr as Error).message}`);
@@ -423,12 +433,15 @@ async function checkOutgoingQueue(): Promise<void> {
 
                     // Send text response
                     if (responseText) {
-                        pending.message.reply(responseText);
+                        if (pending) {
+                            pending.message.reply(responseText);
+                        } else {
+                            await targetChat.sendMessage(responseText);
+                        }
                     }
-                    log('INFO', `✓ Sent response to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
+                    log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
 
-                    // Clean up
-                    pendingMessages.delete(messageId);
+                    if (pending) pendingMessages.delete(messageId);
                     fs.unlinkSync(filePath);
                 } else if (responseData.senderId) {
                     // Proactive/agent-initiated message — send directly to user
