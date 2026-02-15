@@ -27,6 +27,11 @@ SETTINGS_FILE="$TINYCLAW_HOME/settings.json"
 
 mkdir -p "$LOG_DIR"
 
+# Provider env vars
+# Keep Cerebras and OpenAI/Codex environment variables separate to avoid breaking tool-capable CLIs.
+# - Cerebras: set CEREBRAS_API_KEY and optional TINYCLAW_CEREBRAS_BASE_URL
+# - OpenAI/Codex: set OPENAI_API_KEY (Codex CLI manages its own config/state)
+
 # Source library files
 source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/daemon.sh"
@@ -92,11 +97,15 @@ case "${1:-}" in
     provider)
         if [ -z "$2" ]; then
             if [ -f "$SETTINGS_FILE" ]; then
-                CURRENT_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
-                if [ "$CURRENT_PROVIDER" = "openai" ]; then
-                    CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
-                else
-                    CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                # Prefer per-agent config if present (newer multi-agent config format).
+                CURRENT_PROVIDER=$(jq -r '.agents.assistant.provider // .models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
+                CURRENT_MODEL=$(jq -r '.agents.assistant.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                if [ -z "$CURRENT_MODEL" ]; then
+                    if [ "$CURRENT_PROVIDER" = "openai" ]; then
+                        CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                    else
+                        CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                    fi
                 fi
                 echo -e "${BLUE}Current provider: ${GREEN}$CURRENT_PROVIDER${NC}"
                 if [ -n "$CURRENT_MODEL" ]; then
@@ -125,11 +134,11 @@ case "${1:-}" in
                     tmp_file="$SETTINGS_FILE.tmp"
                     if [ -n "$MODEL_ARG" ]; then
                         # Set both provider and model
-                        jq ".models.provider = \"anthropic\" | .models.anthropic.model = \"$MODEL_ARG\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        jq ".models.provider = \"anthropic\" | .models.anthropic.model = \"$MODEL_ARG\" | (if .agents.assistant? then .agents.assistant.provider = \"anthropic\" | .agents.assistant.model = \"$MODEL_ARG\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                         echo -e "${GREEN}✓ Switched to Anthropic provider with model: $MODEL_ARG${NC}"
                     else
                         # Set provider only
-                        jq ".models.provider = \"anthropic\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        jq ".models.provider = \"anthropic\" | (if .agents.assistant? then .agents.assistant.provider = \"anthropic\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                         echo -e "${GREEN}✓ Switched to Anthropic provider${NC}"
                         echo ""
                         echo "Use 'tinyclaw model {sonnet|opus}' to set the model."
@@ -145,29 +154,50 @@ case "${1:-}" in
                     tmp_file="$SETTINGS_FILE.tmp"
                     if [ -n "$MODEL_ARG" ]; then
                         # Set both provider and model (supports any model name)
-                        jq ".models.provider = \"openai\" | .models.openai.model = \"$MODEL_ARG\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        jq ".models.provider = \"openai\" | .models.openai.model = \"$MODEL_ARG\" | (if .agents.assistant? then .agents.assistant.provider = \"openai\" | .agents.assistant.model = \"$MODEL_ARG\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                         echo -e "${GREEN}✓ Switched to OpenAI/Codex provider with model: $MODEL_ARG${NC}"
                         echo ""
                         echo "Note: Make sure you have the 'codex' CLI installed and authenticated."
                     else
                         # Set provider only
-                        jq ".models.provider = \"openai\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        jq ".models.provider = \"openai\" | (if .agents.assistant? then .agents.assistant.provider = \"openai\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                         echo -e "${GREEN}✓ Switched to OpenAI/Codex provider${NC}"
                         echo ""
                         echo "Use 'tinyclaw model {gpt-5.3-codex|gpt-5.2}' to set the model."
                         echo "Note: Make sure you have the 'codex' CLI installed and authenticated."
                     fi
                     ;;
+                cerebras)
+                    if [ ! -f "$SETTINGS_FILE" ]; then
+                        echo -e "${RED}No settings file found. Run setup first.${NC}"
+                        exit 1
+                    fi
+
+                    # Switch to Cerebras provider (native Chat Completions client)
+                    tmp_file="$SETTINGS_FILE.tmp"
+                    if [ -n "$MODEL_ARG" ]; then
+                        jq ".models.provider = \"cerebras\" | (if .agents.assistant? then .agents.assistant.provider = \"cerebras\" | .agents.assistant.model = \"$MODEL_ARG\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to Cerebras provider with model: $MODEL_ARG${NC}"
+                    else
+                        jq ".models.provider = \"cerebras\" | (if .agents.assistant? then .agents.assistant.provider = \"cerebras\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to Cerebras provider${NC}"
+                        echo ""
+                        echo "Tip: set a model with e.g. 'tinyclaw provider cerebras --model qwen-3-32b'"
+                        echo "Note: some Cerebras models may require allowlist access."
+                    fi
+                    ;;
                 *)
-                    echo "Usage: $0 provider {anthropic|openai} [--model MODEL_NAME]"
+                    echo "Usage: $0 provider {anthropic|openai|cerebras} [--model MODEL_NAME]"
                     echo ""
                     echo "Examples:"
                     echo "  $0 provider                                    # Show current provider and model"
                     echo "  $0 provider anthropic                          # Switch to Anthropic"
                     echo "  $0 provider openai                             # Switch to OpenAI"
+                    echo "  $0 provider cerebras                           # Switch to Cerebras"
                     echo "  $0 provider anthropic --model sonnet           # Switch to Anthropic with Sonnet"
                     echo "  $0 provider openai --model gpt-5.3-codex       # Switch to OpenAI with GPT-5.3 Codex"
                     echo "  $0 provider openai --model gpt-4o              # Switch to OpenAI with custom model"
+                    echo "  $0 provider cerebras --model qwen-3-32b        # Switch to Cerebras with Qwen"
                     exit 1
                     ;;
             esac
@@ -176,11 +206,14 @@ case "${1:-}" in
     model)
         if [ -z "$2" ]; then
             if [ -f "$SETTINGS_FILE" ]; then
-                CURRENT_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
-                if [ "$CURRENT_PROVIDER" = "openai" ]; then
-                    CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
-                else
-                    CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                CURRENT_PROVIDER=$(jq -r '.agents.assistant.provider // .models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
+                CURRENT_MODEL=$(jq -r '.agents.assistant.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                if [ -z "$CURRENT_MODEL" ]; then
+                    if [ "$CURRENT_PROVIDER" = "openai" ]; then
+                        CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                    else
+                        CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                    fi
                 fi
                 if [ -n "$CURRENT_MODEL" ]; then
                     echo -e "${BLUE}Current provider: ${GREEN}$CURRENT_PROVIDER${NC}"
@@ -194,53 +227,47 @@ case "${1:-}" in
                 exit 1
             fi
         else
-            case "$2" in
-                sonnet|opus)
-                    if [ ! -f "$SETTINGS_FILE" ]; then
-                        echo -e "${RED}No settings file found. Run setup first.${NC}"
+            if [ ! -f "$SETTINGS_FILE" ]; then
+                echo -e "${RED}No settings file found. Run setup first.${NC}"
+                exit 1
+            fi
+
+            CURRENT_PROVIDER=$(jq -r '.agents.assistant.provider // .models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
+            MODEL_NAME="$2"
+
+            if [ "$CURRENT_PROVIDER" = "anthropic" ]; then
+                case "$MODEL_NAME" in
+                    sonnet|opus)
+                        tmp_file="$SETTINGS_FILE.tmp"
+                        jq ".models.anthropic.model = \"$MODEL_NAME\" | (if .agents.assistant? then .agents.assistant.model = \"$MODEL_NAME\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Model switched to: $MODEL_NAME${NC}"
+                        echo ""
+                        echo "Note: This affects the queue processor. Changes take effect on next message."
+                        ;;
+                    *)
+                        echo "Usage: $0 model {sonnet|opus}"
+                        echo ""
+                        echo "Anthropic models:"
+                        echo "  sonnet            # Claude Sonnet (fast)"
+                        echo "  opus              # Claude Opus (smartest)"
                         exit 1
-                    fi
+                        ;;
+                esac
+            else
+                # For OpenAI and Cerebras, accept any model id (provider-specific).
+                tmp_file="$SETTINGS_FILE.tmp"
+                if [ "$CURRENT_PROVIDER" = "openai" ]; then
+                    jq ".models.openai.model = \"$MODEL_NAME\" | (if .agents.assistant? then .agents.assistant.model = \"$MODEL_NAME\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                elif [ "$CURRENT_PROVIDER" = "cerebras" ]; then
+                    jq ".models.cerebras.model = \"$MODEL_NAME\" | (if .agents.assistant? then .agents.assistant.model = \"$MODEL_NAME\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                else
+                    jq "(if .agents.assistant? then .agents.assistant.model = \"$MODEL_NAME\" else . end)" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                fi
 
-                    # Update model using jq
-                    tmp_file="$SETTINGS_FILE.tmp"
-                    jq ".models.anthropic.model = \"$2\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
-
-                    echo -e "${GREEN}✓ Model switched to: $2${NC}"
-                    echo ""
-                    echo "Note: This affects the queue processor. Changes take effect on next message."
-                    ;;
-                gpt-5.2|gpt-5.3-codex)
-                    if [ ! -f "$SETTINGS_FILE" ]; then
-                        echo -e "${RED}No settings file found. Run setup first.${NC}"
-                        exit 1
-                    fi
-
-                    # Update model using jq
-                    tmp_file="$SETTINGS_FILE.tmp"
-                    jq ".models.openai.model = \"$2\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
-
-                    echo -e "${GREEN}✓ Model switched to: $2${NC}"
-                    echo ""
-                    echo "Note: This affects the queue processor. Changes take effect on next message."
-                    ;;
-                *)
-                    echo "Usage: $0 model {sonnet|opus|gpt-5.2|gpt-5.3-codex}"
-                    echo ""
-                    echo "Anthropic models:"
-                    echo "  sonnet            # Claude Sonnet (fast)"
-                    echo "  opus              # Claude Opus (smartest)"
-                    echo ""
-                    echo "OpenAI models:"
-                    echo "  gpt-5.3-codex     # GPT-5.3 Codex"
-                    echo "  gpt-5.2           # GPT-5.2"
-                    echo ""
-                    echo "Examples:"
-                    echo "  $0 model                # Show current model"
-                    echo "  $0 model sonnet         # Switch to Claude Sonnet"
-                    echo "  $0 model gpt-5.3-codex  # Switch to GPT-5.3 Codex"
-                    exit 1
-                    ;;
-            esac
+                echo -e "${GREEN}✓ Model switched to: $MODEL_NAME${NC}"
+                echo ""
+                echo "Note: This affects the queue processor. Changes take effect on next message."
+            fi
         fi
         ;;
     agent)
@@ -339,7 +366,11 @@ case "${1:-}" in
                 if [ ! -f "$SCRIPT_DIR/dist/visualizer/team-visualizer.js" ] || \
                    [ "$SCRIPT_DIR/src/visualizer/team-visualizer.tsx" -nt "$SCRIPT_DIR/dist/visualizer/team-visualizer.js" ]; then
                     echo -e "${BLUE}Building team visualizer...${NC}"
-                    cd "$SCRIPT_DIR" && npm run build:visualizer 2>/dev/null
+                    if command -v bun >/dev/null 2>&1; then
+                        cd "$SCRIPT_DIR" && bun run build:visualizer 2>/dev/null
+                    else
+                        cd "$SCRIPT_DIR" && npm run build:visualizer 2>/dev/null
+                    fi
                     if [ $? -ne 0 ]; then
                         echo -e "${RED}Failed to build visualizer.${NC}"
                         exit 1

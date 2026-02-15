@@ -165,6 +165,42 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 | `reset`                           | Reset all conversations      | `tinyclaw reset`                                 |
 | `channels reset <channel>`        | Reset channel authentication | `tinyclaw channels reset whatsapp`               |
 
+### OpenAI (Codex CLI) Provider
+
+If you select the `openai` provider, TinyClaw uses the Codex CLI.
+
+Environment variables:
+
+```bash
+export OPENAI_API_KEY="..."
+```
+
+Note: model availability can depend on how the Codex CLI is authenticated. If you see errors about a model being unsupported with a ChatGPT account, switch to a supported Codex model (e.g. `gpt-5.3-codex`) or authenticate with an API-key style credential appropriate for your endpoint.
+
+### Cerebras (Qwen/LLama) Provider (Optional)
+
+Codex CLI currently calls the OpenAI **Responses** API (`/v1/responses`). Some OpenAI-compatible providers (including Cerebras) only expose **Chat Completions** (`/v1/chat/completions`), so TinyClaw includes an optional `cerebras` provider that talks to Cerebras directly.
+
+Environment variables:
+
+```bash
+export CEREBRAS_API_KEY="..."
+export TINYCLAW_CEREBRAS_BASE_URL="https://api.cerebras.ai/v1"   # optional (defaults to Cerebras)
+```
+
+In `settings.json`, set the agent provider/model:
+
+```json
+{
+  "agents": {
+    "assistant": {
+      "provider": "cerebras",
+      "model": "qwen-3-32b"
+    }
+  }
+}
+```
+
 ### Pairing Commands
 
 Use sender pairing to control who can message your agents.
@@ -206,6 +242,12 @@ Pairing behavior:
 
 ```bash
 tinyclaw update
+```
+
+**Non-interactive update (CI/automation):**
+
+```bash
+TINYCLAW_UPDATE_YES=1 tinyclaw update
 ```
 
 This will:

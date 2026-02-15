@@ -15,26 +15,38 @@ start_daemon() {
     if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
         echo -e "${YELLOW}Installing Node.js dependencies...${NC}"
         cd "$SCRIPT_DIR"
-        PUPPETEER_SKIP_DOWNLOAD=true npm install
+        if command -v bun >/dev/null 2>&1; then
+            # bun is typically much faster than npm. Avoid writing lockfiles in user installs.
+            PUPPETEER_SKIP_DOWNLOAD=true bun install --no-save
+        else
+            PUPPETEER_SKIP_DOWNLOAD=true npm install
+        fi
     fi
 
-    # Build TypeScript if any src file is newer than its dist counterpart
+    # Build TypeScript if any src file is newer than its dist counterpart.
+    # Check recursively so changes under src/lib/* also trigger rebuilds.
     local needs_build=false
     if [ ! -d "$SCRIPT_DIR/dist" ]; then
         needs_build=true
     else
-        for ts_file in "$SCRIPT_DIR"/src/*.ts; do
-            local js_file="$SCRIPT_DIR/dist/$(basename "${ts_file%.ts}.js")"
+        while IFS= read -r -d '' ts_file; do
+            local rel="${ts_file#"$SCRIPT_DIR/src/"}"
+            local js_rel="${rel%.ts}.js"
+            local js_file="$SCRIPT_DIR/dist/$js_rel"
             if [ ! -f "$js_file" ] || [ "$ts_file" -nt "$js_file" ]; then
                 needs_build=true
                 break
             fi
-        done
+        done < <(find "$SCRIPT_DIR/src" -type f -name '*.ts' -print0)
     fi
     if [ "$needs_build" = true ]; then
         echo -e "${YELLOW}Building TypeScript...${NC}"
         cd "$SCRIPT_DIR"
-        npm run build
+        if command -v bun >/dev/null 2>&1; then
+            bun run build
+        else
+            npm run build
+        fi
     fi
 
     # Load settings or run setup wizard
@@ -135,6 +147,14 @@ start_daemon() {
 
     tmux new-session -d -s "$TMUX_SESSION" -n "tinyclaw" -c "$SCRIPT_DIR"
 
+    # Ensure critical env vars are present inside tmux panes.
+    # tmux servers can outlive the calling shell, so relying on inheritance is brittle.
+    for k in CEREBRAS_API_KEY OPENAI_API_KEY TINYCLAW_CEREBRAS_BASE_URL; do
+        if [ -n "${!k:-}" ]; then
+            tmux set-environment -t "$TMUX_SESSION" "$k" "${!k}"
+        fi
+    done
+
     # Create remaining panes (pane 0 already exists)
     for ((i=1; i<total_panes; i++)); do
         tmux split-window -t "$TMUX_SESSION" -c "$SCRIPT_DIR"
@@ -146,23 +166,25 @@ start_daemon() {
     local whatsapp_pane=-1
     for ch in "${ACTIVE_CHANNELS[@]}"; do
         [ "$ch" = "whatsapp" ] && whatsapp_pane=$pane_idx
-        tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && node ${CHANNEL_SCRIPT[$ch]}" C-m
+        # Use respawn-pane instead of send-keys so the target command reliably starts
+        # even if the pane shell hasn't finished initializing yet.
+        tmux respawn-pane -k -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && node ${CHANNEL_SCRIPT[$ch]}"
         tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "${CHANNEL_DISPLAY[$ch]}"
         pane_idx=$((pane_idx + 1))
     done
 
     # Queue pane
-    tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && node dist/queue-processor.js" C-m
+    tmux respawn-pane -k -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && node dist/queue-processor.js"
     tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "Queue"
     pane_idx=$((pane_idx + 1))
 
     # Heartbeat pane
-    tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && ./lib/heartbeat-cron.sh" C-m
+    tmux respawn-pane -k -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && ./lib/heartbeat-cron.sh"
     tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "Heartbeat"
     pane_idx=$((pane_idx + 1))
 
     # Logs pane
-    tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && $log_tail_cmd" C-m
+    tmux respawn-pane -k -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && $log_tail_cmd"
     tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "Logs"
 
     echo ""
