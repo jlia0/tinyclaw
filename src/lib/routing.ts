@@ -49,21 +49,24 @@ export function extractTeammateMentions(
     // TODO: Support cross-team communication — allow agents to mention agents
     // on other teams or use [@team_id: message] to route to another team's leader.
 
-    // Tag format: [@agent_id: message]
+    // Tag format: [@agent_id: message] or [@agent1,agent2: message]
     const tagRegex = /\[@(\S+?):\s*([\s\S]*?)\]/g;
     let tagMatch: RegExpExecArray | null;
     while ((tagMatch = tagRegex.exec(response)) !== null) {
-        const candidateId = tagMatch[1].toLowerCase();
-        if (!seen.has(candidateId) && isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
-            // Strip all [@teammate: ...] tags from the full response to get shared context
-            const sharedContext = response.replace(tagRegex, '').trim();
-            const directMessage = tagMatch[2].trim();
-            // Combine: shared context (if any) + the direct message from the tag
-            const fullMessage = sharedContext
-                ? `${sharedContext}\n\n------\n\nDirected to you:\n${directMessage}`
-                : directMessage;
-            results.push({ teammateId: candidateId, message: fullMessage });
-            seen.add(candidateId);
+        // Strip all [@teammate: ...] tags from the full response to get shared context
+        const sharedContext = response.replace(tagRegex, '').trim();
+        const directMessage = tagMatch[2].trim();
+        const fullMessage = sharedContext
+            ? `${sharedContext}\n\n------\n\nDirected to you:\n${directMessage}`
+            : directMessage;
+
+        // Support comma-separated agent IDs: [@coder,reviewer: message]
+        const candidateIds = tagMatch[1].toLowerCase().split(',').map(id => id.trim()).filter(Boolean);
+        for (const candidateId of candidateIds) {
+            if (!seen.has(candidateId) && isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
+                results.push({ teammateId: candidateId, message: fullMessage });
+                seen.add(candidateId);
+            }
         }
     }
     return results;

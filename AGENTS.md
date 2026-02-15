@@ -31,9 +31,15 @@ If you decide to send a message, message cannot be empty, `[@agent_id]` is not a
 
 ### Multiple teammates (parallel fan-out)
 
-You can message multiple teammates in a single response. They will all be invoked in parallel:
+You can message multiple teammates in a single response. They will all be invoked in parallel.
+
+**Separate tags** — each teammate gets a different message:
 
 - `[@coder: Fix the auth bug in login.ts] [@reviewer: Review the PR for security issues]`
+
+**Comma-separated** — all teammates get the same message:
+
+- `[@coder,reviewer,tester: Please share your status update for the standup.]`
 
 ### Shared context
 
@@ -53,6 +59,14 @@ Each teammate receives the full shared context plus their own directed message. 
 ### Back-and-forth
 
 You can communicate back and forth by mentioning your teammate in your response and the system will route the messages in real-time.
+
+### Guidelines
+
+- **Keep messages short.** Say what you need in 2-3 sentences. Don't repeat context the recipient already has.
+- **Minimize back-and-forth.** Each round-trip costs time and tokens. Ask complete questions, give complete answers. If you can resolve something in one message instead of three, do it.
+- **Don't re-mention agents who haven't responded yet.** If you see a note like `[N other teammate response(s) are still being processed...]`, wait — their responses will arrive. Don't send duplicate requests.
+- **Respond to the user's task, not to the system.** Your job is to help the user, not to hold meetings. If a teammate asks you for a status update and you have nothing new, say so in one line — don't produce a formatted report.
+- **Only mention teammates when you actually need something from them.** Don't mention someone just to acknowledge their message or say "thanks". That triggers another invocation for no reason.
 
 <!-- TEAMMATES_START -->
 <!-- TEAMMATES_END -->
