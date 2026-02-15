@@ -5,6 +5,7 @@ import { AgentConfig, TeamConfig } from './types';
 import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent-setup';
+import { cerebrasChatCompletion, resetCerebrasHistory } from './cerebras';
 
 export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -76,7 +77,35 @@ export async function invokeAgent(
 
     const provider = agent.provider || 'anthropic';
 
-    if (provider === 'openai') {
+    if (provider === 'cerebras') {
+        log('INFO', `Using Cerebras provider (agent: ${agentId})`);
+
+        if (shouldReset) {
+            resetCerebrasHistory(agentDir);
+        }
+
+        // Best-effort fallback: if user config requests an inaccessible model, fall back to qwen-3-32b.
+        const preferredModel = agent.model || 'qwen-3-32b';
+        try {
+            return await cerebrasChatCompletion({
+                agentDir,
+                model: preferredModel,
+                userMessage: message,
+            });
+        } catch (e) {
+            const msg = (e as Error).message || '';
+            const isModelNotFound = /does not exist|do not have access|model_not_found/i.test(msg);
+            if (!isModelNotFound || preferredModel === 'qwen-3-32b') {
+                throw e;
+            }
+            log('WARN', `Cerebras model "${preferredModel}" unavailable; falling back to qwen-3-32b (agent: ${agentId})`);
+            return await cerebrasChatCompletion({
+                agentDir,
+                model: 'qwen-3-32b',
+                userMessage: message,
+            });
+        }
+    } else if (provider === 'openai') {
         log('INFO', `Using Codex CLI (agent: ${agentId})`);
 
         const shouldResume = !shouldReset;

@@ -18,18 +18,21 @@ start_daemon() {
         PUPPETEER_SKIP_DOWNLOAD=true npm install
     fi
 
-    # Build TypeScript if any src file is newer than its dist counterpart
+    # Build TypeScript if any src file is newer than its dist counterpart.
+    # Check recursively so changes under src/lib/* also trigger rebuilds.
     local needs_build=false
     if [ ! -d "$SCRIPT_DIR/dist" ]; then
         needs_build=true
     else
-        for ts_file in "$SCRIPT_DIR"/src/*.ts; do
-            local js_file="$SCRIPT_DIR/dist/$(basename "${ts_file%.ts}.js")"
+        while IFS= read -r -d '' ts_file; do
+            local rel="${ts_file#"$SCRIPT_DIR/src/"}"
+            local js_rel="${rel%.ts}.js"
+            local js_file="$SCRIPT_DIR/dist/$js_rel"
             if [ ! -f "$js_file" ] || [ "$ts_file" -nt "$js_file" ]; then
                 needs_build=true
                 break
             fi
-        done
+        done < <(find "$SCRIPT_DIR/src" -type f -name '*.ts' -print0)
     fi
     if [ "$needs_build" = true ]; then
         echo -e "${YELLOW}Building TypeScript...${NC}"
@@ -103,6 +106,14 @@ start_daemon() {
     local total_panes=$(( ${#ACTIVE_CHANNELS[@]} + 3 ))
 
     tmux new-session -d -s "$TMUX_SESSION" -n "tinyclaw" -c "$SCRIPT_DIR"
+
+    # Ensure critical env vars are present inside tmux panes.
+    # tmux servers can outlive the calling shell, so relying on inheritance is brittle.
+    for k in CEREBRAS_API_KEY OPENAI_API_KEY OPENAI_BASE_URL TINYCLAW_OPENAI_API_KEY TINYCLAW_OPENAI_BASE_URL TINYCLAW_CEREBRAS_BASE_URL; do
+        if [ -n "${!k:-}" ]; then
+            tmux set-environment -t "$TMUX_SESSION" "$k" "${!k}"
+        fi
+    done
 
     # Create remaining panes (pane 0 already exists)
     for ((i=1; i<total_panes; i++)); do
