@@ -46,10 +46,18 @@ tinyclaw channels reset whatsapp
 tinyclaw restart
 ```
 
+If startup fails with `Could not find Chrome (...)`, install Puppeteer Chrome first:
+
+```bash
+npx puppeteer browsers install chrome
+tinyclaw restart
+```
+
 **Common causes:**
 - QR code expired (scan within 60 seconds)
 - Session files corrupted
 - Multiple WhatsApp Web sessions active
+- Chrome/Chromium missing for Puppeteer
 
 **Solution:**
 1. Delete session: `rm -rf .tinyclaw/whatsapp-session/`

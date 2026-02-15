@@ -2,6 +2,38 @@
 # Daemon lifecycle management for TinyClaw
 # Handles starting, stopping, restarting, and status checking
 
+whatsapp_enabled() {
+    local ch
+    for ch in "${ACTIVE_CHANNELS[@]}"; do
+        if [ "$ch" = "whatsapp" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+check_whatsapp_preflight() {
+    if ! whatsapp_enabled; then
+        return 0
+    fi
+
+    # whatsapp-web.js launches Puppeteer; fail fast if Chrome is missing.
+    if node -e "const p=require('puppeteer');const ep=p.executablePath();if(!ep){process.exit(1)}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo -e "${RED}WhatsApp preflight failed: Chrome/Chromium not found for Puppeteer.${NC}"
+    echo ""
+    echo "Install browser dependency and retry:"
+    echo -e "  ${GREEN}npx puppeteer browsers install chrome${NC}"
+    echo -e "  ${GREEN}./tinyclaw.sh start${NC}"
+    echo ""
+    echo "Tip: if using a custom HOME, run both commands with the same HOME value."
+    echo ""
+    log "WhatsApp preflight failed: missing Chrome/Chromium for Puppeteer"
+    return 1
+}
+
 # Start daemon
 start_daemon() {
     if session_exists; then
@@ -51,6 +83,10 @@ start_daemon() {
 
     if [ ${#ACTIVE_CHANNELS[@]} -eq 0 ]; then
         echo -e "${RED}No channels configured. Run './tinyclaw.sh setup' to reconfigure${NC}"
+        return 1
+    fi
+
+    if ! check_whatsapp_preflight; then
         return 1
     fi
 
