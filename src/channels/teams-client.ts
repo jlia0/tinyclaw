@@ -191,7 +191,8 @@ function pairingMessage(code: string): string {
 function cleanTeamsText(raw: string): string {
     return raw
         .replace(/<at>.*?<\/at>/gi, '')
-        .replace(/\s+/g, ' ')
+        .replace(/\r\n/g, '\n')
+        .replace(/[ \t]+/g, ' ')
         .trim();
 }
 
@@ -221,6 +222,15 @@ class TeamsQueueBot extends ActivityHandler {
         this.onMessage(async (context, next) => {
             try {
                 const activity = context.activity;
+                const conversationType = activity.conversation?.conversationType;
+
+                // Only process direct user chats (personal scope).
+                // Ignore team/channel/group contexts to avoid accidental channel posting.
+                if (conversationType && conversationType !== 'personal') {
+                    log('INFO', `Ignoring non-personal Teams conversation type: ${conversationType}`);
+                    return;
+                }
+
                 const senderId = activity.from?.aadObjectId || activity.from?.id || 'unknown';
                 const senderName = activity.from?.name || senderId;
                 const text = cleanTeamsText(activity.text || '');
@@ -285,9 +295,10 @@ class TeamsQueueBot extends ActivityHandler {
                 log('INFO', `Message from Teams ${senderName}: ${messageText.substring(0, 80)}...`);
             } catch (error) {
                 log('ERROR', `Failed to process Teams message: ${(error as Error).message}`);
+            } finally {
+                // Always continue middleware pipeline even when we return early.
+                await next();
             }
-
-            await next();
         });
     }
 }
