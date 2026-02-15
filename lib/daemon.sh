@@ -38,7 +38,33 @@ start_daemon() {
     fi
 
     # Load settings or run setup wizard
-    if ! load_settings; then
+    load_settings
+    local load_rc=$?
+
+    if [ $load_rc -eq 2 ]; then
+        # JSON file exists but contains invalid JSON
+        echo -e "${RED}Error: settings.json exists but contains invalid JSON${NC}"
+        echo ""
+        local jq_err
+        jq_err=$(jq empty "$SETTINGS_FILE" 2>&1)
+        echo -e "  ${YELLOW}${jq_err}${NC}"
+        echo ""
+        echo -e "${YELLOW}Attempting to auto-fix...${NC}"
+        if fix_settings_json "$SETTINGS_FILE"; then
+            echo -e "  ${GREEN}✓ JSON auto-fixed successfully${NC}"
+            echo ""
+            load_settings
+            load_rc=$?
+        fi
+
+        if [ $load_rc -ne 0 ]; then
+            echo -e "${RED}Could not repair settings.json${NC}"
+            echo "  Fix manually: $SETTINGS_FILE"
+            echo "  Or reconfigure: tinyclaw setup"
+            echo "  Backup saved: ${SETTINGS_FILE}.bak"
+            return 1
+        fi
+    elif [ $load_rc -ne 0 ]; then
         echo -e "${YELLOW}No configuration found. Running setup wizard...${NC}"
         echo ""
         "$SCRIPT_DIR/lib/setup-wizard.sh"

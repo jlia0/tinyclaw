@@ -67,7 +67,50 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_DIR/daemon.log"
 }
 
+# Attempt to auto-fix common JSON issues in settings file
+# Uses Node.js (already a project dependency) for robust fixing
+fix_settings_json() {
+    # Create a backup first
+    cp "$SETTINGS_FILE" "${SETTINGS_FILE}.bak"
+    echo -e "  Backup saved to ${SETTINGS_FILE}.bak"
+
+    # Use Node.js to attempt common JSON fixes
+    local fixed
+    local fix_rc
+    fixed=$(node -e '
+const fs = require("fs");
+try {
+    let c = fs.readFileSync(process.argv[1], "utf8");
+    // Strip BOM
+    c = c.replace(/^\uFEFF/, "");
+    // Strip single-line comments (// ...) but not inside strings
+    c = c.replace(/("(?:[^"\\]|\\.)*")|\/\/.*$/gm, function(m, g) { return g || ""; });
+    // Strip multi-line comments
+    c = c.replace(/\/\*[\s\S]*?\*\//g, "");
+    // Remove trailing commas before } or ]
+    c = c.replace(/,(\s*[}\]])/g, "$1");
+    // Trim whitespace
+    c = c.trim();
+    if (!c) { process.exit(1); }
+    const parsed = JSON.parse(c);
+    process.stdout.write(JSON.stringify(parsed, null, 2) + "\n");
+} catch(e) {
+    process.stderr.write(e.message + "\n");
+    process.exit(1);
+}
+' "$SETTINGS_FILE" 2>/dev/null)
+    fix_rc=$?
+
+    if [ $fix_rc -eq 0 ] && [ -n "$fixed" ]; then
+        echo "$fixed" > "$SETTINGS_FILE"
+        return 0
+    fi
+
+    return 1
+}
+
 # Load settings from JSON
+# Returns: 0 = success, 1 = file not found / no config, 2 = invalid JSON
 load_settings() {
     if [ ! -f "$SETTINGS_FILE" ]; then
         return 1
@@ -78,6 +121,11 @@ load_settings() {
         echo -e "${RED}Error: jq is required for parsing settings${NC}"
         echo "Install with: brew install jq (macOS) or apt-get install jq (Linux)"
         return 1
+    fi
+
+    # Validate JSON syntax before attempting to parse
+    if ! jq empty "$SETTINGS_FILE" 2>/dev/null; then
+        return 2
     fi
 
     # Load workspace path
