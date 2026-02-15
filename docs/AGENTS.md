@@ -440,12 +440,15 @@ This ensures backward compatibility with older configurations.
 
 ### Reset Flags
 
-Two types of reset flags:
+Per-agent reset: `<workspace>/<agent_id>/reset_flag` - resets a specific agent's conversation.
 
-1. **Global reset:** `~/.tinyclaw/reset_flag` - resets all agents
-2. **Per-agent reset:** `<workspace>/<agent_id>/reset_flag` - resets specific agent
+Reset flags are automatically cleaned up after use.
 
-Both are automatically cleaned up after use.
+Reset one or more agents:
+```bash
+tinyclaw reset coder
+tinyclaw reset coder researcher
+```
 
 ### Custom Workspaces
 

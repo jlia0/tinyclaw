@@ -37,12 +37,6 @@ else
     mkdir -p "$HOME/.local/bin"
     INSTALL_DIR="$HOME/.local/bin"
     echo -e "Installing to: ${GREEN}~/.local/bin${NC} (user, created)"
-    echo ""
-    echo -e "${YELLOW}Note: ~/.local/bin is not in your PATH${NC}"
-    echo "Add this to your ~/.bashrc or ~/.zshrc:"
-    echo ""
-    echo -e "  ${GREEN}export PATH=\"\$HOME/.local/bin:\$PATH\"${NC}"
-    echo ""
 fi
 
 # Check if already installed
@@ -95,16 +89,42 @@ echo -e "  ${GREEN}tinyclaw status${NC}    - Check status"
 echo -e "  ${GREEN}tinyclaw --help${NC}    - Show all commands"
 echo ""
 
-# Verify it works
+# Verify it works — if not in PATH, add it to the shell profile
 if command -v tinyclaw &> /dev/null; then
     echo -e "${GREEN}✓ 'tinyclaw' command is available${NC}"
+elif [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
+    # Determine the user's shell profile
+    SHELL_NAME="$(basename "$SHELL")"
+    SHELL_PROFILE=""
+    case "$SHELL_NAME" in
+        zsh)  SHELL_PROFILE="$HOME/.zshrc" ;;
+        bash)
+            if [ -f "$HOME/.bash_profile" ]; then
+                SHELL_PROFILE="$HOME/.bash_profile"
+            else
+                SHELL_PROFILE="$HOME/.bashrc"
+            fi
+            ;;
+        *)    SHELL_PROFILE="$HOME/.profile" ;;
+    esac
+
+    PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
+
+    # Only add if not already present
+    if [ -n "$SHELL_PROFILE" ] && ! grep -qF '.local/bin' "$SHELL_PROFILE" 2>/dev/null; then
+        echo "" >> "$SHELL_PROFILE"
+        echo "# Added by TinyClaw installer" >> "$SHELL_PROFILE"
+        echo "$PATH_LINE" >> "$SHELL_PROFILE"
+        echo -e "${GREEN}✓ Added ~/.local/bin to PATH in ${SHELL_PROFILE/#$HOME/\~}${NC}"
+    fi
+
+    # Also export for the current session
+    export PATH="$HOME/.local/bin:$PATH"
+
+    echo -e "${YELLOW}⚠ Restart your terminal or run:  source ${SHELL_PROFILE/#$HOME/\~}${NC}"
 else
     echo -e "${YELLOW}⚠ 'tinyclaw' command not found in PATH${NC}"
-    echo ""
-    echo "You may need to:"
-    echo "  1. Open a new terminal"
-    echo "  2. Or run: source ~/.bashrc (or ~/.zshrc)"
-    echo "  3. Or add $INSTALL_DIR to your PATH"
+    echo "  Add $INSTALL_DIR to your PATH."
 fi
 
 echo ""

@@ -11,7 +11,6 @@ export const QUEUE_INCOMING = path.join(TINYCLAW_HOME, 'queue/incoming');
 export const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
 export const QUEUE_PROCESSING = path.join(TINYCLAW_HOME, 'queue/processing');
 export const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/queue.log');
-export const RESET_FLAG = path.join(TINYCLAW_HOME, 'reset_flag');
 export const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 export const EVENTS_DIR = path.join(TINYCLAW_HOME, 'events');
 export const CHATS_DIR = path.join(TINYCLAW_HOME, 'chats');

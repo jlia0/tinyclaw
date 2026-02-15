@@ -294,24 +294,17 @@ This prevents confusion and teases the upcoming feature!
 
 ## Reset System
 
-### Global Reset
-
-Creates `~/.tinyclaw/reset_flag`:
-
-```bash
-tinyclaw reset
-```
-
-Next message to **any agent** starts fresh (no `-c` flag).
-
 ### Per-Agent Reset
 
-Creates `~/workspace/{agent_id}/reset_flag`:
+Creates `<workspace>/<agent_id>/reset_flag`:
 
 ```bash
+tinyclaw reset coder
+tinyclaw reset coder researcher    # reset multiple agents
 tinyclaw agent reset coder
 # Or in chat:
-@coder /reset
+/reset @coder
+/reset @coder @researcher
 ```
 
 Next message to **that agent** starts fresh.
@@ -321,12 +314,11 @@ Next message to **that agent** starts fresh.
 Queue processor checks before each message:
 
 ```typescript
-const globalReset = fs.existsSync(RESET_FLAG);
 const agentReset = fs.existsSync(`${agentDir}/reset_flag`);
 
-if (globalReset || agentReset) {
+if (agentReset) {
   // Don't pass -c flag to CLI
-  // Delete flag files
+  // Delete flag file
 }
 ```
 

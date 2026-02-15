@@ -63,12 +63,19 @@ case "${1:-}" in
         logs "$2"
         ;;
     reset)
-        echo -e "${YELLOW}Resetting conversation...${NC}"
-        touch "$SCRIPT_DIR/.tinyclaw/reset_flag"
-        echo -e "${GREEN}✓ Reset flag set${NC}"
-        echo ""
-        echo "The next message will start a fresh conversation (without -c)."
-        echo "After that, conversation will continue normally."
+        if [ -z "$2" ]; then
+            echo "Usage: $0 reset <agent_id> [agent_id2 ...]"
+            echo ""
+            echo "Reset specific agent conversation(s)."
+            echo ""
+            echo "Examples:"
+            echo "  $0 reset coder"
+            echo "  $0 reset coder researcher"
+            echo "  $0 reset coder researcher reviewer"
+            exit 1
+        fi
+        shift  # remove 'reset'
+        agent_reset_multiple "$@"
         ;;
     channels)
         if [ "$2" = "reset" ] && [ -n "$3" ]; then
@@ -257,10 +264,11 @@ case "${1:-}" in
                 ;;
             reset)
                 if [ -z "$3" ]; then
-                    echo "Usage: $0 agent reset <agent_id>"
+                    echo "Usage: $0 agent reset <agent_id> [agent_id2 ...]"
                     exit 1
                 fi
-                agent_reset "$3"
+                shift 2  # remove 'agent' and 'reset'
+                agent_reset_multiple "$@"
                 ;;
             *)
                 echo "Usage: $0 agent {list|add|remove|show|reset}"
@@ -270,7 +278,7 @@ case "${1:-}" in
                 echo "  add                    Add a new agent interactively"
                 echo "  remove <id>            Remove an agent"
                 echo "  show <id>              Show agent configuration"
-                echo "  reset <id>             Reset an agent's conversation"
+                echo "  reset <id> [id2 ...]   Reset agent conversation(s)"
                 echo ""
                 echo "Examples:"
                 echo "  $0 agent list"
@@ -278,6 +286,7 @@ case "${1:-}" in
                 echo "  $0 agent show coder"
                 echo "  $0 agent remove coder"
                 echo "  $0 agent reset coder"
+                echo "  $0 agent reset coder researcher"
                 echo ""
                 echo "In chat, use '@agent_id message' to route to a specific agent."
                 exit 1
@@ -363,7 +372,7 @@ case "${1:-}" in
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
         echo -e "${BLUE}TinyClaw - Claude Code + Messaging Channels${NC}"
         echo ""
-        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset|channels|provider|model|agent|team|pairing|update|attach}"
+        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channels|provider|model|agent|team|pairing|update|attach}"
         echo ""
         echo "Commands:"
         echo "  start                    Start TinyClaw"
@@ -373,7 +382,7 @@ case "${1:-}" in
         echo "  setup                    Run setup wizard (change channels/provider/model/heartbeat)"
         echo "  send <msg>               Send message to AI manually"
         echo "  logs [type]              View logs ($local_names|heartbeat|daemon|queue|all)"
-        echo "  reset                    Reset conversation (next message starts fresh)"
+        echo "  reset <id> [id2 ...]     Reset specific agent conversation(s)"
         echo "  channels reset <channel> Reset channel auth ($local_names)"
         echo "  provider [name] [--model model]  Show or switch AI provider"
         echo "  model [name]             Show or switch AI model"
@@ -388,6 +397,8 @@ case "${1:-}" in
         echo "  $0 status"
         echo "  $0 provider openai --model gpt-5.3-codex"
         echo "  $0 model opus"
+        echo "  $0 reset coder"
+        echo "  $0 reset coder researcher"
         echo "  $0 agent list"
         echo "  $0 agent add"
         echo "  $0 team list"

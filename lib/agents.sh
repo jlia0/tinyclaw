@@ -265,12 +265,23 @@ agent_reset() {
         exit 1
     fi
 
+    # Load settings if not already loaded
+    if [ -z "$AGENTS_DIR" ] || [ "$AGENTS_DIR" = "" ]; then
+        load_settings
+        AGENTS_DIR="$WORKSPACE_PATH"
+    fi
+
     local agent_json
     agent_json=$(jq -r "(.agents // {}).\"${agent_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
 
     if [ -z "$agent_json" ]; then
         echo -e "${RED}Agent '${agent_id}' not found.${NC}"
-        exit 1
+        echo ""
+        echo "Available agents:"
+        jq -r '(.agents // {}) | keys[]' "$SETTINGS_FILE" 2>/dev/null | while read -r id; do
+            echo "  @${id}"
+        done
+        return 1
     fi
 
     mkdir -p "$AGENTS_DIR/$agent_id"
@@ -280,6 +291,37 @@ agent_reset() {
     agent_name=$(jq -r "(.agents // {}).\"${agent_id}\".name" "$SETTINGS_FILE" 2>/dev/null)
 
     echo -e "${GREEN}✓ Reset flag set for agent '${agent_id}' (${agent_name})${NC}"
+    echo "  The next message to @${agent_id} will start a fresh conversation."
+}
+
+# Reset multiple agents' conversations
+agent_reset_multiple() {
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}No settings file found.${NC}"
+        exit 1
+    fi
+
+    load_settings
+    AGENTS_DIR="$WORKSPACE_PATH"
+
+    local has_error=0
+    local reset_count=0
+
+    for agent_id in "$@"; do
+        agent_reset "$agent_id"
+        if [ $? -eq 0 ]; then
+            reset_count=$((reset_count + 1))
+        else
+            has_error=1
+        fi
+    done
+
     echo ""
-    echo "The next message to @${agent_id} will start a fresh conversation."
+    if [ "$reset_count" -gt 0 ]; then
+        echo -e "${GREEN}Reset ${reset_count} agent(s).${NC}"
+    fi
+
+    if [ "$has_error" -eq 1 ]; then
+        exit 1
+    fi
 }
