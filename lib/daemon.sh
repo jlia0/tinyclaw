@@ -4,6 +4,13 @@
 
 # Start daemon
 start_daemon() {
+    # When an AI agent (e.g. Claude Code) triggers a restart from inside the
+    # tmux session, CLAUDECODE=1 leaks into the environment.  The queue
+    # processor then inherits it, and every `claude` invocation fails with
+    # "cannot be launched inside another Claude Code session".  Strip it early
+    # so the entire daemon tree starts clean.
+    unset CLAUDECODE 2>/dev/null || true
+
     if session_exists; then
         echo -e "${YELLOW}Session already running${NC}"
         return 1
