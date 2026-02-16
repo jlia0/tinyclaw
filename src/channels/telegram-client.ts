@@ -14,6 +14,8 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 import { ensureSenderPaired } from '../lib/pairing';
+import { transcribeAudio } from '../lib/transcribe';
+import { synthesizeSpeech } from '../lib/synthesize';
 
 const SCRIPT_DIR = path.resolve(__dirname, '..', '..');
 const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
@@ -35,12 +37,42 @@ const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
     }
 });
 
+// STT toggle state — persisted as a JSON array of chat ID strings
+const STT_STATE_FILE = path.join(TINYCLAW_HOME, 'stt_enabled_chats.json');
+const sttEnabledChats = new Set<string>(
+    (() => {
+        try { return JSON.parse(fs.readFileSync(STT_STATE_FILE, 'utf8')); } catch { return []; }
+    })()
+);
+function saveSttState(): void {
+    fs.writeFileSync(STT_STATE_FILE, JSON.stringify([...sttEnabledChats]));
+}
+
+// TTS toggle state — persisted as a JSON array of chat ID strings
+const TTS_STATE_FILE = path.join(TINYCLAW_HOME, 'tts_enabled_chats.json');
+const ttsEnabledChats = new Set<string>(
+    (() => {
+        try { return JSON.parse(fs.readFileSync(TTS_STATE_FILE, 'utf8')); } catch { return []; }
+    })()
+);
+function saveTtsState(): void {
+    fs.writeFileSync(TTS_STATE_FILE, JSON.stringify([...ttsEnabledChats]));
+}
+
 // Validate bot token
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN === 'your_token_here') {
     console.error('ERROR: TELEGRAM_BOT_TOKEN is not set in .env file');
     process.exit(1);
 }
+
+// Allowed Telegram user IDs whitelist (empty = allow all)
+const ALLOWED_USER_IDS: Set<string> = new Set(
+    (process.env.TELEGRAM_USERS_ENABLED || '')
+        .split(',')
+        .map(id => id.trim())
+        .filter(id => id.length > 0)
+);
 
 interface PendingMessage {
     chatId: number;
@@ -284,6 +316,16 @@ bot.on('message', async (msg: TelegramBot.Message) => {
             return;
         }
 
+        // Check user whitelist (if configured)
+        if (ALLOWED_USER_IDS.size > 0) {
+            const userId = msg.from?.id?.toString();
+            if (!userId || !ALLOWED_USER_IDS.has(userId)) {
+                log('WARN', `Unauthorized user ${userId || 'unknown'} (${msg.from?.first_name || 'unknown'}) blocked`);
+                await bot.sendMessage(msg.chat.id, 'Access denied. You are not authorized to use this bot.');
+                return;
+            }
+        }
+
         // Determine message text and any media files
         let messageText = msg.text || msg.caption || '';
         const downloadedFiles: string[] = [];
@@ -310,14 +352,38 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         if (msg.audio) {
             const ext = extFromMime(msg.audio.mime_type) || '.mp3';
             const audioFileName = ('file_name' in msg.audio) ? (msg.audio as { file_name?: string }).file_name : undefined;
-            const filePath = await downloadTelegramFile(msg.audio.file_id, ext, queueMessageId, audioFileName);
+            const sttEnabled = sttEnabledChats.has(msg.chat.id.toString());
+            const fileObj = sttEnabled ? await bot.getFile(msg.audio.file_id) : null;
+            const telegramUrl = fileObj?.file_path
+                ? `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${fileObj.file_path}`
+                : null;
+            const [filePath, transcript] = await Promise.all([
+                downloadTelegramFile(msg.audio.file_id, ext, queueMessageId, audioFileName),
+                telegramUrl ? transcribeAudio(telegramUrl) : Promise.resolve(null),
+            ]);
             if (filePath) downloadedFiles.push(filePath);
+            if (transcript) {
+                log('INFO', `Audio transcribed: ${transcript.substring(0, 80)}...`);
+                messageText = `[voice transcript: ${transcript}]${messageText ? '\n' + messageText : ''}`;
+            }
         }
 
         // Handle voice messages
         if (msg.voice) {
-            const filePath = await downloadTelegramFile(msg.voice.file_id, '.ogg', queueMessageId, `voice_${msg.message_id}.ogg`);
+            const sttEnabled = sttEnabledChats.has(msg.chat.id.toString());
+            const fileObj = sttEnabled ? await bot.getFile(msg.voice.file_id) : null;
+            const telegramUrl = fileObj?.file_path
+                ? `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${fileObj.file_path}`
+                : null;
+            const [filePath, transcript] = await Promise.all([
+                downloadTelegramFile(msg.voice.file_id, '.ogg', queueMessageId, `voice_${msg.message_id}.ogg`),
+                telegramUrl ? transcribeAudio(telegramUrl) : Promise.resolve(null),
+            ]);
             if (filePath) downloadedFiles.push(filePath);
+            if (transcript) {
+                log('INFO', `Voice transcribed: ${transcript.substring(0, 80)}...`);
+                messageText = `[voice transcript: ${transcript}]${messageText ? '\n' + messageText : ''}`;
+            }
         }
 
         // Handle video messages
@@ -364,6 +430,30 @@ bot.on('message', async (msg: TelegramBot.Message) => {
             } else {
                 log('INFO', `Blocked pending Telegram sender ${sender} (${senderId}) without re-sending pairing message`);
             }
+            return;
+        }
+
+        // Help command
+        if (msg.text && msg.text.trim().match(/^[!/]help$/i)) {
+            const sttStatus = sttEnabledChats.has(msg.chat.id.toString()) ? 'on' : 'off';
+            const ttsStatus = ttsEnabledChats.has(msg.chat.id.toString()) ? 'on' : 'off';
+            const helpText = [
+                'Available commands:',
+                '',
+                '/agent — List configured agents',
+                '/team — List configured teams',
+                '/reset — Reset conversation history',
+                `/stton — Enable speech-to-text (currently ${sttStatus})`,
+                `/sttoff — Disable speech-to-text (currently ${sttStatus})`,
+                `/ttson — Enable text-to-speech (currently ${ttsStatus})`,
+                `/ttsoff — Disable text-to-speech (currently ${ttsStatus})`,
+                '/help — Show this message',
+                '',
+                'Tip: Start your message with @agent_id or @team_id to route it.',
+            ].join('\n');
+            await bot.sendMessage(msg.chat.id, helpText, {
+                reply_to_message_id: msg.message_id,
+            });
             return;
         }
 
@@ -422,6 +512,48 @@ bot.on('message', async (msg: TelegramBot.Message) => {
                     reply_to_message_id: msg.message_id,
                 });
             }
+            return;
+        }
+
+        // STT toggle commands
+        if (msg.text && msg.text.trim().match(/^[!/]stton$/i)) {
+            sttEnabledChats.add(msg.chat.id.toString());
+            saveSttState();
+            log('INFO', `STT enabled for chat ${msg.chat.id}`);
+            await bot.sendMessage(msg.chat.id, 'Speech-to-text enabled. Voice and audio messages will be transcribed.', {
+                reply_to_message_id: msg.message_id,
+            });
+            return;
+        }
+
+        if (msg.text && msg.text.trim().match(/^[!/]sttoff$/i)) {
+            sttEnabledChats.delete(msg.chat.id.toString());
+            saveSttState();
+            log('INFO', `STT disabled for chat ${msg.chat.id}`);
+            await bot.sendMessage(msg.chat.id, 'Speech-to-text disabled.', {
+                reply_to_message_id: msg.message_id,
+            });
+            return;
+        }
+
+        // TTS toggle commands
+        if (msg.text && msg.text.trim().match(/^[!/]ttson$/i)) {
+            ttsEnabledChats.add(msg.chat.id.toString());
+            saveTtsState();
+            log('INFO', `TTS enabled for chat ${msg.chat.id}`);
+            await bot.sendMessage(msg.chat.id, 'Text-to-speech enabled. Responses will include a voice message.', {
+                reply_to_message_id: msg.message_id,
+            });
+            return;
+        }
+
+        if (msg.text && msg.text.trim().match(/^[!/]ttsoff$/i)) {
+            ttsEnabledChats.delete(msg.chat.id.toString());
+            saveTtsState();
+            log('INFO', `TTS disabled for chat ${msg.chat.id}`);
+            await bot.sendMessage(msg.chat.id, 'Text-to-speech disabled.', {
+                reply_to_message_id: msg.message_id,
+            });
             return;
         }
 
@@ -517,6 +649,23 @@ async function checkOutgoingQueue(): Promise<void> {
                         }
                     }
 
+                    // TTS: synthesize and send voice message if enabled
+                    if (responseText && pending && ttsEnabledChats.has(pending.chatId.toString())) {
+                        try {
+                            const ttsFile = path.join(FILES_DIR, `tts_${messageId}.mp3`);
+                            const audioPath = await synthesizeSpeech(responseText, ttsFile);
+                            if (audioPath) {
+                                await bot.sendVoice(pending.chatId, audioPath, {
+                                    reply_to_message_id: pending.messageId,
+                                });
+                                log('INFO', `Sent TTS voice message for ${messageId}`);
+                                fs.unlink(audioPath, () => {});
+                            }
+                        } catch (ttsErr) {
+                            log('ERROR', `TTS failed: ${(ttsErr as Error).message}`);
+                        }
+                    }
+
                     // Split message if needed (Telegram 4096 char limit)
                     if (responseText) {
                         const chunks = splitMessage(responseText);
@@ -583,4 +732,9 @@ process.on('SIGTERM', () => {
 });
 
 // Start
+if (ALLOWED_USER_IDS.size > 0) {
+    log('INFO', `User whitelist active: ${ALLOWED_USER_IDS.size} user(s) allowed`);
+} else {
+    log('WARN', 'No TELEGRAM_USERS_ENABLED set — all users can access the bot');
+}
 log('INFO', 'Starting Telegram client...');

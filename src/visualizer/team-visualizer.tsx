@@ -73,6 +73,21 @@ interface LogEntry {
     color: string;
 }
 
+interface RateLimitInfo {
+    model: string;
+    inferredTier: string | null;
+    requestsLimit: number | null;
+    requestsRemaining: number | null;
+    requestsReset: string | null;
+    inputTokensLimit: number | null;
+    inputTokensRemaining: number | null;
+    inputTokensReset: string | null;
+    outputTokensLimit: number | null;
+    outputTokensRemaining: number | null;
+    outputTokensReset: string | null;
+    updatedAt: number;
+}
+
 // ─── Settings loader ────────────────────────────────────────────────────────
 
 function loadSettings(): { teams: Record<string, TeamConfig>; agents: Record<string, AgentConfig> } {
@@ -248,6 +263,84 @@ function StatusBar({ queueDepth, totalProcessed, processorAlive }: { queueDepth:
     );
 }
 
+function formatTokenCount(n: number | null): string {
+    if (n === null) return '?';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+    return String(n);
+}
+
+function RateLimitBar({ label, remaining, limit, color }: { label: string; remaining: number | null; limit: number | null; color: string }) {
+    if (limit === null) return null;
+    const pct = remaining !== null ? Math.round((remaining / limit) * 100) : 0;
+    const barWidth = 12;
+    const filled = remaining !== null ? Math.round((remaining / limit) * barWidth) : 0;
+    const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(barWidth - filled);
+    const barColor = pct > 50 ? 'green' : pct > 20 ? 'yellow' : 'red';
+    return (
+        <Box>
+            <Text color="gray">{label} </Text>
+            <Text color={barColor}>{bar}</Text>
+            <Text color="gray"> {formatTokenCount(remaining)}/{formatTokenCount(limit)}</Text>
+        </Box>
+    );
+}
+
+function RateLimitsRow({ rateLimits, agents }: { rateLimits: Record<string, RateLimitInfo>; agents: Record<string, AgentState> }) {
+    // Show any agent that has rate limit data (from events), plus known Claude agents
+    const agentsWithData = Object.keys(rateLimits);
+    const claudeAgentIds = Object.keys(agents).filter(id => agents[id].provider === 'anthropic');
+    // Merge: agents with data + known Claude agents without data yet
+    const allIds = Array.from(new Set([...agentsWithData, ...claudeAgentIds]));
+
+    if (allIds.length === 0) return null;
+
+    return (
+        <Box flexDirection="column" marginTop={1}>
+            <Text bold color="white">{'\u{1F4CA}'} API Rate Limits</Text>
+            <Text color="gray">{'\u2500'.repeat(72)}</Text>
+            {agentsWithData.length === 0 ? (
+                <Text color="gray" italic>  No rate limit data yet (waiting for first Claude invocation)</Text>
+            ) : (
+                <Box flexDirection="row" gap={1} flexWrap="wrap">
+                    {agentsWithData.map(agentId => {
+                        const rl = rateLimits[agentId];
+                        const tierColor = rl.inferredTier?.includes('4') ? 'green'
+                            : rl.inferredTier?.includes('3') ? 'cyan'
+                            : rl.inferredTier?.includes('2') ? 'yellow'
+                            : 'red';
+                        return (
+                            <Box
+                                key={agentId}
+                                flexDirection="column"
+                                borderStyle="round"
+                                borderColor="gray"
+                                paddingX={1}
+                                width={34}
+                            >
+                                <Box>
+                                    <Text bold color="white">@{agentId}</Text>
+                                    <Text color="gray"> {'\u2502'} </Text>
+                                    <Text color={tierColor} bold>{rl.inferredTier ?? '?'}</Text>
+                                </Box>
+                                <Text dimColor>{rl.model}</Text>
+                                <RateLimitBar label="RPM" remaining={rl.requestsRemaining} limit={rl.requestsLimit} color="cyan" />
+                                <RateLimitBar label="In " remaining={rl.inputTokensRemaining} limit={rl.inputTokensLimit} color="green" />
+                                <RateLimitBar label="Out" remaining={rl.outputTokensRemaining} limit={rl.outputTokensLimit} color="magenta" />
+                                <Text color="gray" dimColor>{timeAgo(rl.updatedAt)}</Text>
+                            </Box>
+                        );
+                    })}
+                </Box>
+            )}
+            {/* Show known Claude agents that have no data yet */}
+            {claudeAgentIds.filter(id => !rateLimits[id]).length > 0 && (
+                <Text color="gray" dimColor>  Waiting: {claudeAgentIds.filter(id => !rateLimits[id]).map(id => '@' + id).join(', ')}</Text>
+            )}
+        </Box>
+    );
+}
+
 // ─── Main App ───────────────────────────────────────────────────────────────
 
 function App({ filterTeamId }: { filterTeamId: string | null }) {
@@ -260,6 +353,7 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
     const [queueDepth, setQueueDepth] = useState(0);
     const [processorAlive, setProcessorAlive] = useState(false);
     const [startTime] = useState(Date.now());
+    const [rateLimits, setRateLimits] = useState<Record<string, RateLimitInfo>>({});
     const [, setTick] = useState(0);
 
     // Force re-render every second for animated dots and uptime
@@ -397,6 +491,29 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
                     }
                     return updated;
                 });
+                break;
+            }
+
+            case 'rate_limits_updated': {
+                const aid = String(event.agentId);
+                setRateLimits(prev => ({
+                    ...prev,
+                    [aid]: {
+                        model: String(event.model ?? ''),
+                        inferredTier: event.inferredTier ? String(event.inferredTier) : null,
+                        requestsLimit: typeof event.requestsLimit === 'number' ? event.requestsLimit : null,
+                        requestsRemaining: typeof event.requestsRemaining === 'number' ? event.requestsRemaining : null,
+                        requestsReset: event.requestsReset ? String(event.requestsReset) : null,
+                        inputTokensLimit: typeof event.inputTokensLimit === 'number' ? event.inputTokensLimit : null,
+                        inputTokensRemaining: typeof event.inputTokensRemaining === 'number' ? event.inputTokensRemaining : null,
+                        inputTokensReset: event.inputTokensReset ? String(event.inputTokensReset) : null,
+                        outputTokensLimit: typeof event.outputTokensLimit === 'number' ? event.outputTokensLimit : null,
+                        outputTokensRemaining: typeof event.outputTokensRemaining === 'number' ? event.outputTokensRemaining : null,
+                        outputTokensReset: event.outputTokensReset ? String(event.outputTokensReset) : null,
+                        updatedAt: event.timestamp,
+                    },
+                }));
+                addLog('\u{1F4CA}', `@${aid} rate limits: ${event.inferredTier ?? '?'} (RPM ${event.requestsLimit ?? '?'})`, 'cyan');
                 break;
             }
 
@@ -546,6 +663,9 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
                     )}
                 </>
             )}
+
+            {/* API rate limits per agent */}
+            <RateLimitsRow rateLimits={rateLimits} agents={agentStates} />
 
             {/* Activity log */}
             <ActivityLog entries={logEntries} />

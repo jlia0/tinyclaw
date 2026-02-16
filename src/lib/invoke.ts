@@ -1,16 +1,19 @@
 import { spawn } from 'child_process';
+import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
 import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel } from './config';
-import { log } from './logging';
+import { log, emitEvent } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent-setup';
+import { estimateTokens, insertTokenUsage, updateTokenUsageResponse, insertRateLimitCheck } from './db';
 
-export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
+export async function runCommand(command: string, args: string[], cwd?: string, env?: Record<string, string>): Promise<string> {
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, {
             cwd: cwd || SCRIPT_DIR,
             stdio: ['ignore', 'pipe', 'pipe'],
+            env: env ? { ...process.env, ...env } : undefined,
         });
 
         let stdout = '';
@@ -40,6 +43,103 @@ export async function runCommand(command: string, args: string[], cwd?: string):
             const errorMessage = stderr.trim() || `Command exited with code ${code}`;
             reject(new Error(errorMessage));
         });
+    });
+}
+
+function inferTier(requestsLimit: number | null): string | null {
+    if (requestsLimit === null) return null;
+    if (requestsLimit <= 50) return 'Tier 1';
+    if (requestsLimit <= 1000) return 'Tier 2';
+    if (requestsLimit <= 2000) return 'Tier 3';
+    if (requestsLimit <= 4000) return 'Tier 4';
+    return `Unknown (RPM=${requestsLimit})`;
+}
+
+function parseIntOrNull(value: string | undefined): number | null {
+    if (!value) return null;
+    const n = parseInt(value, 10);
+    return isNaN(n) ? null : n;
+}
+
+export async function checkAnthropicRateLimits(apiKey: string, model: string, agentId: string): Promise<void> {
+    const body = JSON.stringify({
+        model,
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    const headers = await new Promise<Record<string, string>>((resolve, reject) => {
+        const req = https.request(
+            {
+                hostname: 'api.anthropic.com',
+                path: '/v1/messages',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiKey,
+                    'anthropic-version': '2023-06-01',
+                },
+            },
+            (res) => {
+                // Consume the body so the socket is freed
+                res.resume();
+                const h: Record<string, string> = {};
+                for (const [key, val] of Object.entries(res.headers)) {
+                    if (key.startsWith('anthropic-ratelimit-') && typeof val === 'string') {
+                        h[key] = val;
+                    }
+                }
+                resolve(h);
+            }
+        );
+
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+    });
+
+    const requestsLimit = parseIntOrNull(headers['anthropic-ratelimit-requests-limit']);
+    const requestsRemaining = parseIntOrNull(headers['anthropic-ratelimit-requests-remaining']);
+    const requestsReset = headers['anthropic-ratelimit-requests-reset'] || null;
+    const inputTokensLimit = parseIntOrNull(headers['anthropic-ratelimit-input-tokens-limit']);
+    const inputTokensRemaining = parseIntOrNull(headers['anthropic-ratelimit-input-tokens-remaining']);
+    const inputTokensReset = headers['anthropic-ratelimit-input-tokens-reset'] || null;
+    const outputTokensLimit = parseIntOrNull(headers['anthropic-ratelimit-output-tokens-limit']);
+    const outputTokensRemaining = parseIntOrNull(headers['anthropic-ratelimit-output-tokens-remaining']);
+    const outputTokensReset = headers['anthropic-ratelimit-output-tokens-reset'] || null;
+
+    const inferredTier = inferTier(requestsLimit);
+
+    insertRateLimitCheck({
+        agentId,
+        model,
+        requestsLimit,
+        requestsRemaining,
+        requestsReset,
+        inputTokensLimit,
+        inputTokensRemaining,
+        inputTokensReset,
+        outputTokensLimit,
+        outputTokensRemaining,
+        outputTokensReset,
+        inferredTier,
+    });
+
+    log('INFO', `Rate limits checked — agent: ${agentId}, tier: ${inferredTier ?? 'unknown'}, RPM: ${requestsLimit ?? '?'}`);
+
+    emitEvent('rate_limits_updated', {
+        agentId,
+        model,
+        inferredTier,
+        requestsLimit,
+        requestsRemaining,
+        requestsReset,
+        inputTokensLimit,
+        inputTokensRemaining,
+        inputTokensReset,
+        outputTokensLimit,
+        outputTokensRemaining,
+        outputTokensReset,
     });
 }
 
@@ -76,6 +176,22 @@ export async function invokeAgent(
 
     const provider = agent.provider || 'anthropic';
 
+    // Token usage tracking — pre-invocation
+    let usageRowId: number | null = null;
+    const startTime = Date.now();
+    try {
+        const inputTokens = estimateTokens(message);
+        usageRowId = insertTokenUsage({
+            agentId,
+            provider,
+            model: agent.model || '',
+            messageCharCount: message.length,
+            estimatedInputTokens: inputTokens,
+        });
+    } catch (e) {
+        log('WARN', `Token tracking insert failed: ${(e as Error).message}`);
+    }
+
     if (provider === 'openai') {
         log('INFO', `Using Codex CLI (agent: ${agentId})`);
 
@@ -95,7 +211,7 @@ export async function invokeAgent(
         }
         codexArgs.push('--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json', message);
 
-        const codexOutput = await runCommand('codex', codexArgs, workingDir);
+        const codexOutput = await runCommand('codex', codexArgs, workingDir, agent.env);
 
         // Parse JSONL output and extract final agent_message
         let response = '';
@@ -111,7 +227,19 @@ export async function invokeAgent(
             }
         }
 
-        return response || 'Sorry, I could not generate a response from Codex.';
+        const finalResponse = response || 'Sorry, I could not generate a response from Codex.';
+
+        // Token usage tracking — post-invocation
+        if (usageRowId !== null) {
+            try {
+                const durationMs = Date.now() - startTime;
+                updateTokenUsageResponse(usageRowId, finalResponse.length, estimateTokens(finalResponse), durationMs);
+            } catch (e) {
+                log('WARN', `Token tracking update failed: ${(e as Error).message}`);
+            }
+        }
+
+        return finalResponse;
     } else {
         // Default to Claude (Anthropic)
         log('INFO', `Using Claude provider (agent: ${agentId})`);
@@ -132,6 +260,30 @@ export async function invokeAgent(
         }
         claudeArgs.push('-p', message);
 
-        return await runCommand('claude', claudeArgs, workingDir);
+        const claudeResponse = await runCommand('claude', claudeArgs, workingDir, agent.env);
+
+        // Token usage tracking — post-invocation
+        if (usageRowId !== null) {
+            try {
+                const durationMs = Date.now() - startTime;
+                updateTokenUsageResponse(usageRowId, claudeResponse.length, estimateTokens(claudeResponse), durationMs);
+            } catch (e) {
+                log('WARN', `Token tracking update failed: ${(e as Error).message}`);
+            }
+        }
+
+        // Check API rate limits after invocation (only when no custom env is set)
+        if (!agent.env) {
+            const apiKey = process.env.ANTHROPIC_API_KEY;
+            if (apiKey) {
+                try {
+                    await checkAnthropicRateLimits(apiKey, modelId || 'claude-sonnet-4-20250514', agentId);
+                } catch (e) {
+                    log('WARN', `Rate limit check failed: ${(e as Error).message}`);
+                }
+            }
+        }
+
+        return claudeResponse;
     }
 }

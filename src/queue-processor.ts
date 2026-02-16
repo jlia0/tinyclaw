@@ -14,6 +14,7 @@
  *   - Conversations complete when all branches resolve (no more pending mentions)
  */
 
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { MessageData, ResponseData, QueueFile, ChainStep, Conversation, TeamConfig } from './lib/types';
@@ -25,6 +26,7 @@ import {
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
+import { closeDb } from './lib/db';
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, FILES_DIR, path.dirname(LOG_FILE)].forEach(dir => {
@@ -592,10 +594,12 @@ setInterval(processQueue, 1000);
 // Graceful shutdown
 process.on('SIGINT', () => {
     log('INFO', 'Shutting down queue processor...');
+    closeDb();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
     log('INFO', 'Shutting down queue processor...');
+    closeDb();
     process.exit(0);
 });

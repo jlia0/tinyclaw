@@ -3,6 +3,7 @@ export interface AgentConfig {
     provider: string;       // 'anthropic' or 'openai'
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
+    env?: Record<string, string>;
 }
 
 export interface TeamConfig {
