@@ -165,7 +165,11 @@ export async function invokeAgent(
         throw new Error(`Unknown provider: ${provider}`);
     }
 
-    const continueConversation = !shouldReset;
+    let continueConversation = !shouldReset;
+    if (provider === 'qoder') {
+        // Qoder errors if --continue is used before a session exists.
+        continueConversation = false;
+    }
     if (shouldReset) {
         log('INFO', `🔄 Resetting conversation for agent: ${agentId}`);
     }
