@@ -129,36 +129,71 @@ agent_add() {
     fi
 
     # Provider
+    PROVIDERS_FILE="$SCRIPT_DIR/config/providers.json"
+    PROVIDER_IDS=()
+    PROVIDER_NAMES=()
+    DEFAULT_PROVIDER="anthropic"
+
+    if command -v jq &> /dev/null && [ -f "$PROVIDERS_FILE" ]; then
+        mapfile -t PROVIDER_IDS < <(jq -r '.providers | keys[]' "$PROVIDERS_FILE")
+        for pid in "${PROVIDER_IDS[@]}"; do
+            pname=$(jq -r --arg id "$pid" '.providers[$id].display_name // $id' "$PROVIDERS_FILE")
+            PROVIDER_NAMES+=("$pname")
+        done
+        for pid in "${PROVIDER_IDS[@]}"; do
+            if [ "$pid" = "anthropic" ]; then
+                DEFAULT_PROVIDER="anthropic"
+                break
+            fi
+            DEFAULT_PROVIDER="${PROVIDER_IDS[0]}"
+        done
+    else
+        PROVIDER_IDS=("anthropic" "openai" "qoder")
+        PROVIDER_NAMES=("Anthropic (Claude)" "OpenAI (Codex)" "Qoder")
+    fi
+
     echo ""
     echo "Provider:"
-    echo "  1) Anthropic (Claude)"
-    echo "  2) OpenAI (Codex)"
-    read -rp "Choose [1-2, default: 1]: " AGENT_PROVIDER_CHOICE
-    case "$AGENT_PROVIDER_CHOICE" in
-        2) AGENT_PROVIDER="openai" ;;
-        *) AGENT_PROVIDER="anthropic" ;;
-    esac
+    for i in "${!PROVIDER_IDS[@]}"; do
+        idx=$((i + 1))
+        label="${PROVIDER_NAMES[$i]} (${PROVIDER_IDS[$i]})"
+        if [ "${PROVIDER_IDS[$i]}" = "$DEFAULT_PROVIDER" ]; then
+            label="${label}  (recommended)"
+        fi
+        echo "  ${idx}) ${label}"
+    done
+    read -rp "Choose [1-${#PROVIDER_IDS[@]}, default: 1]: " AGENT_PROVIDER_CHOICE
+    if [[ "$AGENT_PROVIDER_CHOICE" =~ ^[0-9]+$ ]] && [ "$AGENT_PROVIDER_CHOICE" -ge 1 ] && [ "$AGENT_PROVIDER_CHOICE" -le "${#PROVIDER_IDS[@]}" ]; then
+        AGENT_PROVIDER="${PROVIDER_IDS[$((AGENT_PROVIDER_CHOICE - 1))]}"
+    else
+        AGENT_PROVIDER="${PROVIDER_IDS[0]}"
+    fi
 
     # Model
     echo ""
-    if [ "$AGENT_PROVIDER" = "anthropic" ]; then
-        echo "Model:"
-        echo "  1) Sonnet (fast)"
-        echo "  2) Opus (smartest)"
-        read -rp "Choose [1-2, default: 1]: " AGENT_MODEL_CHOICE
-        case "$AGENT_MODEL_CHOICE" in
-            2) AGENT_MODEL="opus" ;;
-            *) AGENT_MODEL="sonnet" ;;
-        esac
+    if command -v jq &> /dev/null && [ -f "$PROVIDERS_FILE" ]; then
+        mapfile -t MODEL_IDS < <(jq -r --arg id "$AGENT_PROVIDER" '.providers[$id].models // {} | keys[]' "$PROVIDERS_FILE")
+    else
+        MODEL_IDS=()
+    fi
+
+    if [ "${#MODEL_IDS[@]}" -eq 0 ]; then
+        AGENT_MODEL=""
+    elif [ "${#MODEL_IDS[@]}" -eq 1 ]; then
+        AGENT_MODEL="${MODEL_IDS[0]}"
+        echo "Model: ${AGENT_MODEL}"
     else
         echo "Model:"
-        echo "  1) GPT-5.3 Codex"
-        echo "  2) GPT-5.2"
-        read -rp "Choose [1-2, default: 1]: " AGENT_MODEL_CHOICE
-        case "$AGENT_MODEL_CHOICE" in
-            2) AGENT_MODEL="gpt-5.2" ;;
-            *) AGENT_MODEL="gpt-5.3-codex" ;;
-        esac
+        for i in "${!MODEL_IDS[@]}"; do
+            idx=$((i + 1))
+            echo "  ${idx}) ${MODEL_IDS[$i]}"
+        done
+        read -rp "Choose [1-${#MODEL_IDS[@]}, default: 1]: " AGENT_MODEL_CHOICE
+        if [[ "$AGENT_MODEL_CHOICE" =~ ^[0-9]+$ ]] && [ "$AGENT_MODEL_CHOICE" -ge 1 ] && [ "$AGENT_MODEL_CHOICE" -le "${#MODEL_IDS[@]}" ]; then
+            AGENT_MODEL="${MODEL_IDS[$((AGENT_MODEL_CHOICE - 1))]}"
+        else
+            AGENT_MODEL="${MODEL_IDS[0]}"
+        fi
     fi
 
     # Working directory - automatically set to agent directory

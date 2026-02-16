@@ -79,111 +79,98 @@ for ch in "${ENABLED_CHANNELS[@]}"; do
 done
 
 # Provider selection
+PROVIDERS_FILE="$PROJECT_ROOT/config/providers.json"
+PROVIDER_IDS=()
+PROVIDER_NAMES=()
+DEFAULT_PROVIDER="anthropic"
+
+if command -v jq &> /dev/null && [ -f "$PROVIDERS_FILE" ]; then
+    mapfile -t PROVIDER_IDS < <(jq -r '.providers | keys[]' "$PROVIDERS_FILE")
+    for pid in "${PROVIDER_IDS[@]}"; do
+        pname=$(jq -r --arg id "$pid" '.providers[$id].display_name // $id' "$PROVIDERS_FILE")
+        PROVIDER_NAMES+=("$pname")
+    done
+    for pid in "${PROVIDER_IDS[@]}"; do
+        if [ "$pid" = "anthropic" ]; then
+            DEFAULT_PROVIDER="anthropic"
+            break
+        fi
+        DEFAULT_PROVIDER="${PROVIDER_IDS[0]}"
+    done
+else
+    PROVIDER_IDS=("anthropic" "openai" "qoder")
+    PROVIDER_NAMES=("Anthropic (Claude)" "OpenAI (Codex/GPT)" "Qoder")
+fi
+
 PROVIDER=""
 while [ -z "$PROVIDER" ]; do
     echo "Which AI provider?"
     echo ""
-    echo "  1) Anthropic (Claude)  (recommended)"
-    echo "  2) OpenAI (Codex/GPT)"
-    echo "  3) Qoder"
-    echo "  s) Skip (will use defaults)"
+    for i in "${!PROVIDER_IDS[@]}"; do
+        idx=$((i + 1))
+        label="${PROVIDER_NAMES[$i]} (${PROVIDER_IDS[$i]})"
+        if [ "${PROVIDER_IDS[$i]}" = "$DEFAULT_PROVIDER" ]; then
+            label="${label}  (recommended)"
+        fi
+        echo "  ${idx}) ${label}"
+    done
+    echo "  s) Skip (use default: ${DEFAULT_PROVIDER})"
     echo ""
-    read -rp "Choose [1-3, s]: " PROVIDER_CHOICE
+    read -rp "Choose [1-${#PROVIDER_IDS[@]}, s]: " PROVIDER_CHOICE
 
-    case "$PROVIDER_CHOICE" in
-        1) PROVIDER="anthropic" ;;
-        2) PROVIDER="openai" ;;
-        3) PROVIDER="qoder" ;;
-        [sS])
-            echo -e "${YELLOW}Skipping provider selection (will use defaults)${NC}"
-            PROVIDER="anthropic"
-            break
-            ;;
-        *)
-            echo -e "${RED}Invalid choice, please try again${NC}"
-            echo ""
-            ;;
-    esac
+    if [[ "$PROVIDER_CHOICE" =~ ^[sS]$ ]]; then
+        echo -e "${YELLOW}Skipping provider selection (will use defaults)${NC}"
+        PROVIDER="$DEFAULT_PROVIDER"
+        break
+    fi
+    if [[ "$PROVIDER_CHOICE" =~ ^[0-9]+$ ]] && [ "$PROVIDER_CHOICE" -ge 1 ] && [ "$PROVIDER_CHOICE" -le "${#PROVIDER_IDS[@]}" ]; then
+        PROVIDER="${PROVIDER_IDS[$((PROVIDER_CHOICE - 1))]}"
+    else
+        echo -e "${RED}Invalid choice, please try again${NC}"
+        echo ""
+    fi
 done
 
 echo -e "${GREEN}✓ Provider: $PROVIDER${NC}"
 echo ""
 
-# Model selection based on provider
+# Model selection based on provider (from registry)
 MODEL=""
-if [ "$PROVIDER" = "anthropic" ]; then
-    while [ -z "$MODEL" ]; do
-        echo "Which Claude model?"
-        echo ""
-        echo "  1) Sonnet  (fast, recommended)"
-        echo "  2) Opus    (smartest)"
-        echo "  s) Skip (use default)"
-        echo ""
-        read -rp "Choose [1-2, s]: " MODEL_CHOICE
+if command -v jq &> /dev/null && [ -f "$PROVIDERS_FILE" ]; then
+    mapfile -t MODEL_IDS < <(jq -r --arg id "$PROVIDER" '.providers[$id].models // {} | keys[]' "$PROVIDERS_FILE")
+else
+    MODEL_IDS=()
+fi
 
-        case "$MODEL_CHOICE" in
-            1) MODEL="sonnet" ;;
-            2) MODEL="opus" ;;
-            [sS])
-                echo -e "${YELLOW}Using default model: sonnet${NC}"
-                MODEL="sonnet"
-                break
-                ;;
-            *)
-                echo -e "${RED}Invalid choice, please try again${NC}"
-                echo ""
-                ;;
-        esac
-    done
+if [ "${#MODEL_IDS[@]}" -eq 0 ]; then
+    MODEL=""
+elif [ "${#MODEL_IDS[@]}" -eq 1 ]; then
+    MODEL="${MODEL_IDS[0]}"
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
     echo ""
-elif [ "$PROVIDER" = "qoder" ]; then
+else
     while [ -z "$MODEL" ]; do
-        echo "Which Qoder model?"
+        echo "Which model?"
         echo ""
-        echo "  1) Qoder  (default)"
-        echo "  s) Skip (use default)"
+        for i in "${!MODEL_IDS[@]}"; do
+            idx=$((i + 1))
+            echo "  ${idx}) ${MODEL_IDS[$i]}"
+        done
+        echo "  s) Skip (use default: ${MODEL_IDS[0]})"
         echo ""
-        read -rp "Choose [1, s]: " MODEL_CHOICE
+        read -rp "Choose [1-${#MODEL_IDS[@]}, s]: " MODEL_CHOICE
 
-        case "$MODEL_CHOICE" in
-            1) MODEL="qoder" ;;
-            [sS])
-                echo -e "${YELLOW}Using default model: qoder${NC}"
-                MODEL="qoder"
-                break
-                ;;
-            *)
-                echo -e "${RED}Invalid choice, please try again${NC}"
-                echo ""
-                ;;
-        esac
-    done
-    echo -e "${GREEN}✓ Model: $MODEL${NC}"
-    echo ""
-elif [ "$PROVIDER" = "openai" ]; then
-    while [ -z "$MODEL" ]; do
-        echo "Which OpenAI model?"
-        echo ""
-        echo "  1) GPT-5.3 Codex  (recommended)"
-        echo "  2) GPT-5.2"
-        echo "  s) Skip (use default)"
-        echo ""
-        read -rp "Choose [1-2, s]: " MODEL_CHOICE
-
-        case "$MODEL_CHOICE" in
-            1) MODEL="gpt-5.3-codex" ;;
-            2) MODEL="gpt-5.2" ;;
-            [sS])
-                echo -e "${YELLOW}Using default model: gpt-5.3-codex${NC}"
-                MODEL="gpt-5.3-codex"
-                break
-                ;;
-            *)
-                echo -e "${RED}Invalid choice, please try again${NC}"
-                echo ""
-                ;;
-        esac
+        if [[ "$MODEL_CHOICE" =~ ^[sS]$ ]]; then
+            echo -e "${YELLOW}Using default model: ${MODEL_IDS[0]}${NC}"
+            MODEL="${MODEL_IDS[0]}"
+            break
+        fi
+        if [[ "$MODEL_CHOICE" =~ ^[0-9]+$ ]] && [ "$MODEL_CHOICE" -ge 1 ] && [ "$MODEL_CHOICE" -le "${#MODEL_IDS[@]}" ]; then
+            MODEL="${MODEL_IDS[$((MODEL_CHOICE - 1))]}"
+        else
+            echo -e "${RED}Invalid choice, please try again${NC}"
+            echo ""
+        fi
     done
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
     echo ""
@@ -270,78 +257,70 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
 
         NEW_PROVIDER=""
         while [ -z "$NEW_PROVIDER" ]; do
-            echo "  Provider: 1) Anthropic  2) OpenAI  3) Qoder"
-            echo "           s) Skip (use default: anthropic)"
-            read -rp "  Choose [1-3, s, default: 1]: " NEW_PROVIDER_CHOICE
-            case "$NEW_PROVIDER_CHOICE" in
-                2) NEW_PROVIDER="openai" ;;
-                3) NEW_PROVIDER="qoder" ;;
-                [sS])
-                    echo -e "  ${YELLOW}Using default provider: anthropic${NC}"
-                    NEW_PROVIDER="anthropic"
-                    break
-                    ;;
-                ""|1) NEW_PROVIDER="anthropic" ;;
-                *)
-                    echo -e "  ${RED}Invalid choice, please try again${NC}"
-                    echo ""
-                    ;;
-            esac
+            echo "  Provider:"
+            for i in "${!PROVIDER_IDS[@]}"; do
+                idx=$((i + 1))
+                label="${PROVIDER_NAMES[$i]} (${PROVIDER_IDS[$i]})"
+                if [ "${PROVIDER_IDS[$i]}" = "$DEFAULT_PROVIDER" ]; then
+                    label="${label}  (recommended)"
+                fi
+                echo "  ${idx}) ${label}"
+            done
+            echo "           s) Skip (use default: ${DEFAULT_PROVIDER})"
+            read -rp "  Choose [1-${#PROVIDER_IDS[@]}, s, default: 1]: " NEW_PROVIDER_CHOICE
+            if [[ "$NEW_PROVIDER_CHOICE" =~ ^[sS]$ ]]; then
+                echo -e "  ${YELLOW}Using default provider: ${DEFAULT_PROVIDER}${NC}"
+                NEW_PROVIDER="$DEFAULT_PROVIDER"
+                break
+            fi
+            if [[ -z "$NEW_PROVIDER_CHOICE" ]]; then
+                NEW_PROVIDER="${PROVIDER_IDS[0]}"
+                break
+            fi
+            if [[ "$NEW_PROVIDER_CHOICE" =~ ^[0-9]+$ ]] && [ "$NEW_PROVIDER_CHOICE" -ge 1 ] && [ "$NEW_PROVIDER_CHOICE" -le "${#PROVIDER_IDS[@]}" ]; then
+                NEW_PROVIDER="${PROVIDER_IDS[$((NEW_PROVIDER_CHOICE - 1))]}"
+            else
+                echo -e "  ${RED}Invalid choice, please try again${NC}"
+                echo ""
+            fi
         done
 
         NEW_MODEL=""
-        if [ "$NEW_PROVIDER" = "anthropic" ]; then
+        if command -v jq &> /dev/null && [ -f "$PROVIDERS_FILE" ]; then
+            mapfile -t NEW_MODEL_IDS < <(jq -r --arg id "$NEW_PROVIDER" '.providers[$id].models // {} | keys[]' "$PROVIDERS_FILE")
+        else
+            NEW_MODEL_IDS=()
+        fi
+
+        if [ "${#NEW_MODEL_IDS[@]}" -eq 0 ]; then
+            NEW_MODEL=""
+        elif [ "${#NEW_MODEL_IDS[@]}" -eq 1 ]; then
+            NEW_MODEL="${NEW_MODEL_IDS[0]}"
+            echo -e "  ${GREEN}✓ Model: $NEW_MODEL${NC}"
+        else
             while [ -z "$NEW_MODEL" ]; do
-                echo "  Model: 1) Sonnet  2) Opus  s) Skip (use default: sonnet)"
-                read -rp "  Choose [1-2, s, default: 1]: " NEW_MODEL_CHOICE
-                case "$NEW_MODEL_CHOICE" in
-                    2) NEW_MODEL="opus" ;;
-                    [sS])
-                        echo -e "  ${YELLOW}Using default model: sonnet${NC}"
-                        NEW_MODEL="sonnet"
-                        break
-                        ;;
-                    ""|1) NEW_MODEL="sonnet" ;;
-                    *)
-                        echo -e "  ${RED}Invalid choice, please try again${NC}"
-                        echo ""
-                        ;;
-                esac
-            done
-        elif [ "$NEW_PROVIDER" = "qoder" ]; then
-            while [ -z "$NEW_MODEL" ]; do
-                echo "  Model: 1) Qoder  s) Skip (use default: qoder)"
-                read -rp "  Choose [1, s, default: 1]: " NEW_MODEL_CHOICE
-                case "$NEW_MODEL_CHOICE" in
-                    [sS])
-                        echo -e "  ${YELLOW}Using default model: qoder${NC}"
-                        NEW_MODEL="qoder"
-                        break
-                        ;;
-                    ""|1) NEW_MODEL="qoder" ;;
-                    *)
-                        echo -e "  ${RED}Invalid choice, please try again${NC}"
-                        echo ""
-                        ;;
-                esac
-            done
-        elif [ "$NEW_PROVIDER" = "openai" ]; then
-            while [ -z "$NEW_MODEL" ]; do
-                echo "  Model: 1) GPT-5.3 Codex  2) GPT-5.2  s) Skip (use default: gpt-5.3-codex)"
-                read -rp "  Choose [1-2, s, default: 1]: " NEW_MODEL_CHOICE
-                case "$NEW_MODEL_CHOICE" in
-                    2) NEW_MODEL="gpt-5.2" ;;
-                    [sS])
-                        echo -e "  ${YELLOW}Using default model: gpt-5.3-codex${NC}"
-                        NEW_MODEL="gpt-5.3-codex"
-                        break
-                        ;;
-                    ""|1) NEW_MODEL="gpt-5.3-codex" ;;
-                    *)
-                        echo -e "  ${RED}Invalid choice, please try again${NC}"
-                        echo ""
-                        ;;
-                esac
+                echo "  Model:"
+                for i in "${!NEW_MODEL_IDS[@]}"; do
+                    idx=$((i + 1))
+                    echo "  ${idx}) ${NEW_MODEL_IDS[$i]}"
+                done
+                echo "  s) Skip (use default: ${NEW_MODEL_IDS[0]})"
+                read -rp "  Choose [1-${#NEW_MODEL_IDS[@]}, s, default: 1]: " NEW_MODEL_CHOICE
+                if [[ "$NEW_MODEL_CHOICE" =~ ^[sS]$ ]]; then
+                    echo -e "  ${YELLOW}Using default model: ${NEW_MODEL_IDS[0]}${NC}"
+                    NEW_MODEL="${NEW_MODEL_IDS[0]}"
+                    break
+                fi
+                if [[ -z "$NEW_MODEL_CHOICE" ]]; then
+                    NEW_MODEL="${NEW_MODEL_IDS[0]}"
+                    break
+                fi
+                if [[ "$NEW_MODEL_CHOICE" =~ ^[0-9]+$ ]] && [ "$NEW_MODEL_CHOICE" -ge 1 ] && [ "$NEW_MODEL_CHOICE" -le "${#NEW_MODEL_IDS[@]}" ]; then
+                    NEW_MODEL="${NEW_MODEL_IDS[$((NEW_MODEL_CHOICE - 1))]}"
+                else
+                    echo -e "  ${RED}Invalid choice, please try again${NC}"
+                    echo ""
+                fi
             done
         fi
 
@@ -374,13 +353,7 @@ TELEGRAM_TOKEN="${TOKENS[telegram]:-}"
 
 # Write settings.json with layered structure
 # Use jq to build valid JSON to avoid escaping issues with agent prompts
-if [ "$PROVIDER" = "anthropic" ]; then
-    MODELS_SECTION='"models": { "provider": "anthropic", "anthropic": { "model": "'"${MODEL}"'" } }'
-elif [ "$PROVIDER" = "qoder" ]; then
-    MODELS_SECTION='"models": { "provider": "qoder", "qoder": { "model": "'"${MODEL}"'" } }'
-else
-    MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
-fi
+MODELS_SECTION='"models": { "provider": "'"${PROVIDER}"'", "'"${PROVIDER}"'": { "model": "'"${MODEL}"'" } }'
 
 cat > "$SETTINGS_FILE" <<EOF
 {

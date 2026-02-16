@@ -84,6 +84,8 @@ The setup wizard will guide you through:
 6. **Model selection** - Choose model (e.g., Sonnet, Opus, GPT-5.3)
 7. **Heartbeat interval** - Set proactive check-in frequency
 
+Provider definitions are loaded from `config/providers.json` at startup. Add a new provider by editing that file (executable, args, output parsing, model mappings) and restart TinyClaw.
+
 <details>
 <summary><b>📱 Channel Setup Guides</b></summary>
 

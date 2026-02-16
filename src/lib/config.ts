@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
-import { Settings, AgentConfig, TeamConfig, CLAUDE_MODEL_IDS, CODEX_MODEL_IDS, QODER_MODEL_IDS } from './types';
+import { Settings, AgentConfig, TeamConfig, ProviderRegistry, ProviderConfig } from './types';
 
 export const SCRIPT_DIR = path.resolve(__dirname, '../..');
 const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
@@ -17,6 +17,90 @@ export const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 export const EVENTS_DIR = path.join(TINYCLAW_HOME, 'events');
 export const CHATS_DIR = path.join(TINYCLAW_HOME, 'chats');
 export const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
+export const PROVIDERS_FILE = path.join(SCRIPT_DIR, 'config/providers.json');
+
+const DEFAULT_PROVIDER_REGISTRY: ProviderRegistry = {
+    version: 1,
+    providers: {
+        anthropic: {
+            display_name: 'Claude',
+            executable: 'claude',
+            args: ['--dangerously-skip-permissions', '{{?model}}--model', '{{model}}', '{{?resume}}-c', '-p', '{{message}}'],
+            output: { type: 'plain' },
+            models: {
+                'sonnet': 'claude-sonnet-4-5',
+                'opus': 'claude-opus-4-6',
+                'claude-sonnet-4-5': 'claude-sonnet-4-5',
+                'claude-opus-4-6': 'claude-opus-4-6'
+            }
+        },
+        openai: {
+            display_name: 'Codex',
+            executable: 'codex',
+            args: ['exec', '{{?resume}}resume', '{{?resume}}--last', '{{?model}}--model', '{{model}}', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json', '{{message}}'],
+            output: {
+                type: 'jsonl',
+                select: {
+                    match: { 'type': 'item.completed', 'item.type': 'agent_message' },
+                    field: 'item.text'
+                }
+            },
+            models: {
+                'gpt-5.2': 'gpt-5.2',
+                'gpt-5.3-codex': 'gpt-5.3-codex',
+            }
+        },
+        qoder: {
+            display_name: 'Qoder',
+            executable: 'qodercli',
+            args: ['-w', '{{cwd}}', '{{?model}}--model', '{{model}}', '{{?resume}}-c', '-p', '{{message}}'],
+            output: { type: 'plain' },
+            models: {
+                'qoder': 'qoder',
+            }
+        }
+    }
+};
+
+function loadProviderRegistry(): ProviderRegistry {
+    try {
+        if (!fs.existsSync(PROVIDERS_FILE)) {
+            console.error(`[WARN] providers.json not found at ${PROVIDERS_FILE} — using defaults`);
+            return DEFAULT_PROVIDER_REGISTRY;
+        }
+        const raw = fs.readFileSync(PROVIDERS_FILE, 'utf8');
+        let parsed: ProviderRegistry;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (parseError) {
+            console.error(`[WARN] providers.json contains invalid JSON: ${(parseError as Error).message}`);
+            try {
+                const repaired = jsonrepair(raw);
+                parsed = JSON.parse(repaired);
+            } catch {
+                console.error('[ERROR] Could not parse providers.json — using defaults');
+                return DEFAULT_PROVIDER_REGISTRY;
+            }
+        }
+        if (!parsed || !parsed.providers) {
+            console.error('[WARN] providers.json missing providers map — using defaults');
+            return DEFAULT_PROVIDER_REGISTRY;
+        }
+        return parsed;
+    } catch {
+        return DEFAULT_PROVIDER_REGISTRY;
+    }
+}
+
+const PROVIDER_REGISTRY = loadProviderRegistry();
+
+export function getProviderRegistry(): ProviderRegistry {
+    return PROVIDER_REGISTRY;
+}
+
+export function getProviderConfig(providerId: string): ProviderConfig | null {
+    return PROVIDER_REGISTRY.providers[providerId] || null;
+}
 
 export function getSettings(): Settings {
     try {
@@ -111,22 +195,15 @@ export function getTeams(settings: Settings): Record<string, TeamConfig> {
 }
 
 /**
- * Resolve the model ID for Claude (Anthropic).
+ * Resolve the model ID for any provider.
  */
-export function resolveClaudeModel(model: string): string {
-    return CLAUDE_MODEL_IDS[model] || model || '';
+export function resolveProviderModel(providerId: string, model: string): string {
+    if (!model) return '';
+    const provider = getProviderConfig(providerId);
+    if (!provider?.models) return model;
+    return provider.models[model] || model;
 }
 
-/**
- * Resolve the model ID for Codex (OpenAI).
- */
-export function resolveCodexModel(model: string): string {
-    return CODEX_MODEL_IDS[model] || model || '';
-}
-
-/**
- * Resolve the model ID for QoderCLI.
- */
-export function resolveQoderModel(model: string): string {
-    return QODER_MODEL_IDS[model] || model || '';
+export function getProviderDisplayName(providerId: string): string {
+    return getProviderConfig(providerId)?.display_name || providerId;
 }

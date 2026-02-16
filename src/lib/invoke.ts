@@ -2,9 +2,90 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
-import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveQoderModel } from './config';
+import { SCRIPT_DIR, getProviderConfig, resolveProviderModel } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent-setup';
+
+type ArgContext = {
+    message: string;
+    model: string;
+    cwd: string;
+    resume: boolean;
+};
+
+function renderArg(arg: string, ctx: ArgContext): string {
+    const conditional = arg.match(/^\{\{\?([a-zA-Z0-9_]+)\}\}(.*)$/);
+    if (conditional) {
+        const key = conditional[1]!;
+        const value = (ctx as unknown as Record<string, unknown>)[key];
+        if (!value) return '';
+        arg = conditional[2] || '';
+    }
+    return arg
+        .replace(/\{\{message\}\}/g, ctx.message)
+        .replace(/\{\{model\}\}/g, ctx.model)
+        .replace(/\{\{cwd\}\}/g, ctx.cwd)
+        .replace(/\{\{resume\}\}/g, ctx.resume ? 'true' : '');
+}
+
+function buildArgs(baseArgs: string[], conditionalArgs: Record<string, string[]> | undefined, ctx: ArgContext): string[] {
+    const args: string[] = [];
+    for (const a of baseArgs) {
+        const rendered = renderArg(a, ctx).trim();
+        if (rendered) args.push(rendered);
+    }
+    if (conditionalArgs) {
+        for (const [cond, list] of Object.entries(conditionalArgs)) {
+            const condValue = (ctx as unknown as Record<string, unknown>)[cond];
+            if (condValue) {
+                for (const a of list) {
+                    const rendered = renderArg(a, ctx).trim();
+                    if (rendered) args.push(rendered);
+                }
+            }
+        }
+    }
+    return args;
+}
+
+function getByPath(obj: unknown, pathStr: string): unknown {
+    if (!obj || !pathStr) return undefined;
+    const parts = pathStr.split('.');
+    let cur: any = obj;
+    for (const p of parts) {
+        if (cur == null) return undefined;
+        cur = cur[p];
+    }
+    return cur;
+}
+
+function parseJsonlOutput(output: string, match: Record<string, string> | undefined, field: string | undefined): string {
+    if (!field) return '';
+    let response = '';
+    const lines = output.trim().split('\n');
+    for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+            const json = JSON.parse(line);
+            let ok = true;
+            if (match) {
+                for (const [k, v] of Object.entries(match)) {
+                    if (getByPath(json, k) !== v) {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if (ok) {
+                const value = getByPath(json, field);
+                if (typeof value === 'string') response = value;
+            }
+        } catch {
+            // Ignore lines that aren't valid JSON
+        }
+    }
+    return response;
+}
 
 export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -75,84 +156,33 @@ export async function invokeAgent(
         : agentDir;
 
     const provider = agent.provider || 'anthropic';
-
-    if (provider === 'openai') {
-        log('INFO', `Using Codex CLI (agent: ${agentId})`);
-
-        const shouldResume = !shouldReset;
-
-        if (shouldReset) {
-            log('INFO', `🔄 Resetting Codex conversation for agent: ${agentId}`);
-        }
-
-        const modelId = resolveCodexModel(agent.model);
-        const codexArgs = ['exec'];
-        if (shouldResume) {
-            codexArgs.push('resume', '--last');
-        }
-        if (modelId) {
-            codexArgs.push('--model', modelId);
-        }
-        codexArgs.push('--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json', message);
-
-        const codexOutput = await runCommand('codex', codexArgs, workingDir);
-
-        // Parse JSONL output and extract final agent_message
-        let response = '';
-        const lines = codexOutput.trim().split('\n');
-        for (const line of lines) {
-            try {
-                const json = JSON.parse(line);
-                if (json.type === 'item.completed' && json.item?.type === 'agent_message') {
-                    response = json.item.text;
-                }
-            } catch (e) {
-                // Ignore lines that aren't valid JSON
-            }
-        }
-
-        return response || 'Sorry, I could not generate a response from Codex.';
-    } else if (provider === 'qoder') {
-        // QoderCLI provider
-        log('INFO', `Using QoderCLI provider (agent: ${agentId})`);
-
-        const continueConversation = !shouldReset;
-
-        if (shouldReset) {
-            log('INFO', `🔄 Resetting conversation for agent: ${agentId}`);
-        }
-
-        const modelId = resolveQoderModel(agent.model);
-        const qoderArgs = ['-w', workingDir];
-        if (modelId && modelId !== 'qoder') {
-            qoderArgs.push('--model', modelId);
-        }
-        if (continueConversation) {
-            qoderArgs.push('-c');
-        }
-        qoderArgs.push('-p', message);
-
-        return await runCommand('qodercli', qoderArgs, workingDir);
-    } else {
-        // Default to Claude (Anthropic)
-        log('INFO', `Using Claude provider (agent: ${agentId})`);
-
-        const continueConversation = !shouldReset;
-
-        if (shouldReset) {
-            log('INFO', `🔄 Resetting conversation for agent: ${agentId}`);
-        }
-
-        const modelId = resolveClaudeModel(agent.model);
-        const claudeArgs = ['--dangerously-skip-permissions'];
-        if (modelId) {
-            claudeArgs.push('--model', modelId);
-        }
-        if (continueConversation) {
-            claudeArgs.push('-c');
-        }
-        claudeArgs.push('-p', message);
-
-        return await runCommand('claude', claudeArgs, workingDir);
+    const providerConfig = getProviderConfig(provider);
+    if (!providerConfig) {
+        throw new Error(`Unknown provider: ${provider}`);
     }
+
+    const continueConversation = !shouldReset;
+    if (shouldReset) {
+        log('INFO', `🔄 Resetting conversation for agent: ${agentId}`);
+    }
+
+    log('INFO', `Using ${providerConfig.display_name} provider (agent: ${agentId})`);
+
+    const modelId = resolveProviderModel(provider, agent.model);
+    const ctx: ArgContext = {
+        message,
+        model: modelId,
+        cwd: workingDir,
+        resume: continueConversation,
+    };
+
+    const args = buildArgs(providerConfig.args, providerConfig.conditional_args, ctx);
+    const output = await runCommand(providerConfig.executable, args, workingDir);
+
+    if (providerConfig.output?.type === 'jsonl') {
+        const response = parseJsonlOutput(output, providerConfig.output.select?.match, providerConfig.output.select?.field);
+        return response || `Sorry, I could not generate a response from ${providerConfig.display_name}.`;
+    }
+
+    return output;
 }
