@@ -181,6 +181,7 @@ export async function invokeAgent(
     };
 
     const args = buildArgs(providerConfig.args, providerConfig.conditional_args, ctx);
+    log('INFO', `Invoking ${providerConfig.display_name}: ${providerConfig.executable} ${args.join(' ')}`);
     const output = await runCommand(providerConfig.executable, args, workingDir);
 
     if (providerConfig.output?.type === 'jsonl') {
