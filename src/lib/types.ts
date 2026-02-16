@@ -53,6 +53,26 @@ export interface MessageData {
     messageId: string;
     agent?: string; // optional: pre-routed agent id from channel client
     files?: string[];
+    // Internal message fields (agent-to-agent)
+    conversationId?: string; // links to parent conversation
+    fromAgent?: string;      // which agent sent this internal message
+}
+
+export interface Conversation {
+    id: string;
+    channel: string;
+    sender: string;
+    originalMessage: string;
+    messageId: string;
+    pending: number;
+    responses: ChainStep[];
+    files: Set<string>;
+    totalMessages: number;
+    maxMessages: number;
+    teamContext: { teamId: string; team: TeamConfig };
+    startTime: number;
+    // Track how many mentions each agent sent out (for inbox draining)
+    outgoingMentions: Map<string, number>;
 }
 
 export interface ResponseData {

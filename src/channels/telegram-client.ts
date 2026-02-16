@@ -13,19 +13,22 @@ import fs from 'fs';
 import path from 'path';
 import https from 'https';
 import http from 'http';
+import { ensureSenderPaired } from '../lib/pairing';
 import { transcribeAudio } from '../lib/transcribe';
 import { synthesizeSpeech } from '../lib/synthesize';
 
 const SCRIPT_DIR = path.resolve(__dirname, '..', '..');
 const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
-const TINYCLAW_HOME = fs.existsSync(path.join(_localTinyclaw, 'settings.json'))
-    ? _localTinyclaw
-    : path.join(require('os').homedir(), '.tinyclaw');
+const TINYCLAW_HOME = process.env.TINYCLAW_HOME
+    || (fs.existsSync(path.join(_localTinyclaw, 'settings.json'))
+        ? _localTinyclaw
+        : path.join(require('os').homedir(), '.tinyclaw'));
 const QUEUE_INCOMING = path.join(TINYCLAW_HOME, 'queue/incoming');
 const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
 const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/telegram.log');
 const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
 const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
+const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), FILES_DIR].forEach(dir => {
@@ -90,6 +93,7 @@ interface QueueData {
 interface ResponseData {
     channel: string;
     sender: string;
+    senderId?: string;
     message: string;
     originalMessage: string;
     timestamp: number;
@@ -275,12 +279,29 @@ function extFromMime(mime?: string): string {
     return map[mime] || '';
 }
 
+function pairingMessage(code: string): string {
+    return [
+        'This sender is not paired yet.',
+        `Your pairing code: ${code}`,
+        'Ask the TinyClaw owner to approve you with:',
+        `tinyclaw pairing approve ${code}`,
+    ].join('\n');
+}
+
 // Initialize Telegram bot (polling mode)
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
 // Bot ready
-bot.getMe().then((me: TelegramBot.User) => {
+bot.getMe().then(async (me: TelegramBot.User) => {
     log('INFO', `Telegram bot connected as @${me.username}`);
+
+    // Register bot commands so they appear in Telegram's "/" menu
+    await bot.setMyCommands([
+        { command: 'agent', description: 'List available agents' },
+        { command: 'team', description: 'List available teams' },
+        { command: 'reset', description: 'Reset conversation history' },
+    ]).catch((err: Error) => log('WARN', `Failed to register commands: ${err.message}`));
+
     log('INFO', 'Listening for messages...');
 }).catch((err: Error) => {
     log('ERROR', `Failed to connect: ${err.message}`);
@@ -395,9 +416,22 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         const sender = msg.from
             ? (msg.from.first_name + (msg.from.last_name ? ` ${msg.from.last_name}` : ''))
             : 'Unknown';
-        const senderId = msg.from ? msg.from.id.toString() : msg.chat.id.toString();
+        const senderId = msg.chat.id.toString();
 
         log('INFO', `Message from ${sender}: ${messageText.substring(0, 50)}${downloadedFiles.length > 0 ? ` [+${downloadedFiles.length} file(s)]` : ''}...`);
+
+        const pairing = ensureSenderPaired(PAIRING_FILE, 'telegram', senderId, sender);
+        if (!pairing.approved && pairing.code) {
+            if (pairing.isNewPending) {
+                log('INFO', `Blocked unpaired Telegram sender ${sender} (${senderId}) with code ${pairing.code}`);
+                await bot.sendMessage(msg.chat.id, pairingMessage(pairing.code), {
+                    reply_to_message_id: msg.message_id,
+                });
+            } else {
+                log('INFO', `Blocked pending Telegram sender ${sender} (${senderId}) without re-sending pairing message`);
+            }
+            return;
+        }
 
         // Help command
         if (msg.text && msg.text.trim().match(/^[!/]help$/i)) {
@@ -443,18 +477,41 @@ bot.on('message', async (msg: TelegramBot.Message) => {
             return;
         }
 
-        // Check for reset command
+        // Check for reset command: /reset @agent_id [@agent_id2 ...]
+        const resetMatch = messageText.trim().match(/^[!/]reset\s+(.+)$/i);
         if (messageText.trim().match(/^[!/]reset$/i)) {
-            log('INFO', 'Reset command received');
-
-            // Create reset flag
-            const resetFlagPath = path.join(SCRIPT_DIR, '.tinyclaw/reset_flag');
-            fs.writeFileSync(resetFlagPath, 'reset');
-
-            // Reply immediately
-            await bot.sendMessage(msg.chat.id, 'Conversation reset! Next message will start a fresh conversation.', {
+            await bot.sendMessage(msg.chat.id, 'Usage: /reset @agent_id [@agent_id2 ...]\nSpecify which agent(s) to reset.', {
                 reply_to_message_id: msg.message_id,
             });
+            return;
+        }
+        if (resetMatch) {
+            log('INFO', 'Per-agent reset command received');
+            const agentArgs = resetMatch[1].split(/\s+/).map(a => a.replace(/^@/, '').toLowerCase());
+            try {
+                const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
+                const settings = JSON.parse(settingsData);
+                const agents = settings.agents || {};
+                const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
+                const resetResults: string[] = [];
+                for (const agentId of agentArgs) {
+                    if (!agents[agentId]) {
+                        resetResults.push(`Agent '${agentId}' not found.`);
+                        continue;
+                    }
+                    const flagDir = path.join(workspacePath, agentId);
+                    if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
+                    fs.writeFileSync(path.join(flagDir, 'reset_flag'), 'reset');
+                    resetResults.push(`Reset @${agentId} (${agents[agentId].name}).`);
+                }
+                await bot.sendMessage(msg.chat.id, resetResults.join('\n'), {
+                    reply_to_message_id: msg.message_id,
+                });
+            } catch {
+                await bot.sendMessage(msg.chat.id, 'Could not process reset command. Check settings.', {
+                    reply_to_message_id: msg.message_id,
+                });
+            }
             return;
         }
 
@@ -563,11 +620,13 @@ async function checkOutgoingQueue(): Promise<void> {
 
             try {
                 const responseData: ResponseData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                const { messageId, message: responseText, sender } = responseData;
+                const { messageId, message: responseText, sender, senderId } = responseData;
 
-                // Find pending message
+                // Find pending message, or fall back to senderId for proactive messages
                 const pending = pendingMessages.get(messageId);
-                if (pending) {
+                const targetChatId = pending?.chatId ?? (senderId ? Number(senderId) : null);
+
+                if (targetChatId && !Number.isNaN(targetChatId)) {
                     // Send any attached files first
                     if (responseData.files && responseData.files.length > 0) {
                         for (const file of responseData.files) {
@@ -575,13 +634,13 @@ async function checkOutgoingQueue(): Promise<void> {
                                 if (!fs.existsSync(file)) continue;
                                 const ext = path.extname(file).toLowerCase();
                                 if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-                                    await bot.sendPhoto(pending.chatId, file);
+                                    await bot.sendPhoto(targetChatId, file);
                                 } else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) {
-                                    await bot.sendAudio(pending.chatId, file);
+                                    await bot.sendAudio(targetChatId, file);
                                 } else if (['.mp4', '.avi', '.mov', '.webm'].includes(ext)) {
-                                    await bot.sendVideo(pending.chatId, file);
+                                    await bot.sendVideo(targetChatId, file);
                                 } else {
-                                    await bot.sendDocument(pending.chatId, file);
+                                    await bot.sendDocument(targetChatId, file);
                                 }
                                 log('INFO', `Sent file to Telegram: ${path.basename(file)}`);
                             } catch (fileErr) {
@@ -611,25 +670,23 @@ async function checkOutgoingQueue(): Promise<void> {
                     if (responseText) {
                         const chunks = splitMessage(responseText);
 
-                        // First chunk as reply, rest as follow-up messages
                         if (chunks.length > 0) {
-                            await bot.sendMessage(pending.chatId, chunks[0]!, {
-                                reply_to_message_id: pending.messageId,
-                            });
+                            await bot.sendMessage(targetChatId, chunks[0]!, pending
+                                ? { reply_to_message_id: pending.messageId }
+                                : {},
+                            );
                         }
                         for (let i = 1; i < chunks.length; i++) {
-                            await bot.sendMessage(pending.chatId, chunks[i]!);
+                            await bot.sendMessage(targetChatId, chunks[i]!);
                         }
                     }
 
-                    log('INFO', `Sent response to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
+                    log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
 
-                    // Clean up
-                    pendingMessages.delete(messageId);
+                    if (pending) pendingMessages.delete(messageId);
                     fs.unlinkSync(filePath);
                 } else {
-                    // Message too old or already processed
-                    log('WARN', `No pending message for ${messageId}, cleaning up`);
+                    log('WARN', `No pending message for ${messageId} and no valid senderId, cleaning up`);
                     fs.unlinkSync(filePath);
                 }
             } catch (error) {

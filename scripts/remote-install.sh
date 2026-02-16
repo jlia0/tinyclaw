@@ -81,14 +81,19 @@ echo ""
 # Check if already installed
 if [ -d "$INSTALL_DIR" ]; then
     echo -e "${YELLOW}TinyClaw is already installed at $INSTALL_DIR${NC}"
+    echo "Settings and user data will be preserved."
     echo ""
-    read -p "Remove and reinstall? (y/N) " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        exit 0
+    # When piped from curl, stdin is not a terminal — auto-accept
+    if [ -t 0 ]; then
+        read -p "Re-install? (y/N) " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Installation cancelled."
+            exit 0
+        fi
+    else
+        echo "Non-interactive mode detected, proceeding with re-install..."
     fi
-    rm -rf "$INSTALL_DIR"
 fi
 
 # Detect if we can use pre-built bundle
@@ -176,8 +181,45 @@ chmod +x lib/setup-wizard.sh
 chmod +x lib/heartbeat-cron.sh
 chmod +x lib/update.sh
 
-# Run the install script
-"$INSTALL_DIR/scripts/install.sh"
+# Run the install script (creates symlink and configures PATH)
+"$INSTALL_DIR/scripts/install.sh" > /dev/null 2>&1
+
+echo -e "${GREEN}✓ CLI command installed${NC}"
+
+# Detect shell profile and ensure ~/.local/bin is in PATH
+# (install.sh may have already written to the profile, but this ensures
+# the remote-install output gives the user the right guidance)
+NEED_RESTART=false
+
+if ! command -v tinyclaw &> /dev/null; then
+    # Check if the symlink landed in ~/.local/bin
+    if [ -L "$HOME/.local/bin/tinyclaw" ]; then
+        SHELL_NAME="$(basename "$SHELL")"
+        case "$SHELL_NAME" in
+            zsh)  SHELL_PROFILE="$HOME/.zshrc" ;;
+            bash)
+                if [ -f "$HOME/.bash_profile" ]; then
+                    SHELL_PROFILE="$HOME/.bash_profile"
+                else
+                    SHELL_PROFILE="$HOME/.bashrc"
+                fi
+                ;;
+            *)    SHELL_PROFILE="$HOME/.profile" ;;
+        esac
+
+        PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
+
+        # Add to profile if not already present
+        if [ -n "$SHELL_PROFILE" ] && ! grep -qF '.local/bin' "$SHELL_PROFILE" 2>/dev/null; then
+            echo "" >> "$SHELL_PROFILE"
+            echo "# Added by TinyClaw installer" >> "$SHELL_PROFILE"
+            echo "$PATH_LINE" >> "$SHELL_PROFILE"
+            echo -e "${GREEN}✓ Added ~/.local/bin to PATH in ${SHELL_PROFILE/#$HOME/\~}${NC}"
+        fi
+
+        NEED_RESTART=true
+    fi
+fi
 
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
@@ -186,6 +228,12 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 echo -e "Installation directory: ${BLUE}$INSTALL_DIR${NC}"
 echo ""
+
+if [ "$NEED_RESTART" = true ]; then
+    echo -e "${YELLOW}Important: Restart your terminal (or run 'source ${SHELL_PROFILE/#$HOME/\~}') to use the 'tinyclaw' command.${NC}"
+    echo ""
+fi
+
 echo "Next steps:"
 echo ""
 echo -e "  ${GREEN}1.${NC} Start TinyClaw:"

@@ -17,7 +17,10 @@ done
 TINYCLAW_DIR="$(cd "$(dirname "$TINYCLAW_BIN")" && pwd)"
 
 # The actual installation is one directory up from bin/
-export TINYCLAW_HOME="$(dirname "$TINYCLAW_DIR")"
+REPO_ROOT="$(dirname "$TINYCLAW_DIR")"
+
+# Installed CLI always uses ~/.tinyclaw for data
+export TINYCLAW_HOME="$HOME/.tinyclaw"
 
 # Execute the main script with all arguments
-exec "$TINYCLAW_HOME/tinyclaw.sh" "$@"
+exec "$REPO_ROOT/tinyclaw.sh" "$@"

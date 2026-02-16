@@ -54,12 +54,29 @@ export function ensureAgentDirectory(agentDir: string): void {
         fs.copyFileSync(sourceAgents, targetAgents);
     }
 
-    // Symlink skills directory into .claude/skills
-    const sourceSkills = path.join(SCRIPT_DIR, '.agents', 'skills');
-    const targetSkills = path.join(agentDir, '.claude', 'skills');
-    if (fs.existsSync(sourceSkills) && !fs.existsSync(targetSkills)) {
+    // Copy AGENTS.md as .claude/CLAUDE.md
+    if (fs.existsSync(sourceAgents)) {
         fs.mkdirSync(path.join(agentDir, '.claude'), { recursive: true });
-        fs.symlinkSync(sourceSkills, targetSkills);
+        fs.copyFileSync(sourceAgents, path.join(agentDir, '.claude', 'CLAUDE.md'));
+    }
+
+    // Symlink skills directory into .claude/skills
+    // Prefer .agent/skills, fall back to .agents/skills
+    const sourceSkills = fs.existsSync(path.join(SCRIPT_DIR, '.agent', 'skills'))
+        ? path.join(SCRIPT_DIR, '.agent', 'skills')
+        : path.join(SCRIPT_DIR, '.agents', 'skills');
+    const targetClaudeSkills = path.join(agentDir, '.claude', 'skills');
+    if (fs.existsSync(sourceSkills) && !fs.existsSync(targetClaudeSkills)) {
+        fs.mkdirSync(path.join(agentDir, '.claude'), { recursive: true });
+        fs.symlinkSync(sourceSkills, targetClaudeSkills);
+    }
+
+    // Symlink .agent/skills to .claude/skills for agent-level access
+    const targetAgentDir = path.join(agentDir, '.agent');
+    const targetAgentSkills = path.join(targetAgentDir, 'skills');
+    if (!fs.existsSync(targetAgentSkills)) {
+        fs.mkdirSync(targetAgentDir, { recursive: true });
+        fs.symlinkSync(sourceSkills, targetAgentSkills);
     }
 
     // Create .tinyclaw directory and copy SOUL.md

@@ -109,7 +109,7 @@ Each agent has its own configuration in `.tinyclaw/settings.json`:
 }
 ```
 
-**Note:** The `working_directory` is automatically set to `<workspace>/<agent_id>/` when creating agents via `tinyclaw.sh agent add`.
+**Note:** The `working_directory` is automatically set to `<workspace>/<agent_id>/` when creating agents via `tinyclaw agent add`.
 
 ### 3. Agent Isolation
 
@@ -194,7 +194,7 @@ codex exec resume --last \
 
 ### Initial Setup
 
-During first-time setup (`./tinyclaw.sh setup`), you'll be prompted for:
+During first-time setup (`tinyclaw setup`), you'll be prompted for:
 
 1. **Workspace name** - Where to store agent directories
    - Default: `tinyclaw-workspace`
@@ -208,7 +208,7 @@ During first-time setup (`./tinyclaw.sh setup`), you'll be prompted for:
 
 **Interactive CLI:**
 ```bash
-./tinyclaw.sh agent add
+tinyclaw agent add
 ```
 
 This walks you through:
@@ -283,7 +283,7 @@ help me with this (goes to default agent - "assistant" by default)
 
 **From CLI:**
 ```bash
-./tinyclaw.sh agent list
+tinyclaw agent list
 ```
 
 **Output:**
@@ -309,12 +309,12 @@ Configured Agents
 
 **Show agent details:**
 ```bash
-./tinyclaw.sh agent show coder
+tinyclaw agent show coder
 ```
 
 **Reset agent conversation:**
 ```bash
-./tinyclaw.sh agent reset coder
+tinyclaw agent reset coder
 ```
 
 From chat:
@@ -324,7 +324,7 @@ From chat:
 
 **Remove agent:**
 ```bash
-./tinyclaw.sh agent remove coder
+tinyclaw agent remove coder
 ```
 
 ## Use Cases
@@ -440,12 +440,15 @@ This ensures backward compatibility with older configurations.
 
 ### Reset Flags
 
-Two types of reset flags:
+Per-agent reset: `<workspace>/<agent_id>/reset_flag` - resets a specific agent's conversation.
 
-1. **Global reset:** `~/.tinyclaw/reset_flag` - resets all agents
-2. **Per-agent reset:** `<workspace>/<agent_id>/reset_flag` - resets specific agent
+Reset flags are automatically cleaned up after use.
 
-Both are automatically cleaned up after use.
+Reset one or more agents:
+```bash
+tinyclaw reset coder
+tinyclaw reset coder researcher
+```
 
 ### Custom Workspaces
 
@@ -629,5 +632,5 @@ Potential features for agent management:
 ## See Also
 
 - [README.md](../README.md) - Main project documentation
-- Setup wizard: `./tinyclaw.sh setup`
-- Agent CLI: `./tinyclaw.sh agent --help`
+- Setup wizard: `tinyclaw setup`
+- Agent CLI: `tinyclaw agent --help`

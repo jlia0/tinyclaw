@@ -4,6 +4,32 @@
 # AGENTS_DIR set after loading settings (uses workspace path)
 AGENTS_DIR=""
 
+# Ensure all agent workspaces have .agents/skills symlinked
+ensure_agent_skills_links() {
+    local skills_src="$SCRIPT_DIR/.agents/skills"
+    if [ ! -d "$skills_src" ]; then
+        skills_src="$TINYCLAW_HOME/.agents/skills"
+    fi
+    [ -d "$skills_src" ] || return 0
+
+    local agents_dir="$WORKSPACE_PATH"
+    [ -d "$agents_dir" ] || return 0
+
+    local agent_ids
+    agent_ids=$(jq -r '(.agents // {}) | keys[]' "$SETTINGS_FILE" 2>/dev/null) || return 0
+
+    for agent_id in $agent_ids; do
+        local agent_dir="$agents_dir/$agent_id"
+        [ -d "$agent_dir" ] || continue
+
+        if [ ! -e "$agent_dir/.agents/skills" ]; then
+            mkdir -p "$agent_dir/.agents"
+            ln -s "$skills_src" "$agent_dir/.agents/skills"
+            log "Linked .agents/skills/ for agent @${agent_id}"
+        fi
+    done
+}
+
 # List all configured agents
 agent_list() {
     if [ ! -f "$SETTINGS_FILE" ]; then
@@ -161,10 +187,12 @@ agent_add() {
         "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
 
     # Create agent directory and copy configuration files
-    if [ -f "$SCRIPT_DIR/.tinyclaw/settings.json" ]; then
-        TINYCLAW_HOME="$SCRIPT_DIR/.tinyclaw"
-    else
-        TINYCLAW_HOME="$HOME/.tinyclaw"
+    if [ -z "$TINYCLAW_HOME" ]; then
+        if [ -f "$SCRIPT_DIR/.tinyclaw/settings.json" ]; then
+            TINYCLAW_HOME="$SCRIPT_DIR/.tinyclaw"
+        else
+            TINYCLAW_HOME="$HOME/.tinyclaw"
+        fi
     fi
     mkdir -p "$AGENTS_DIR/$AGENT_ID"
 
@@ -194,10 +222,25 @@ agent_add() {
         echo "  → Copied CLAUDE.md to .claude/ directory"
     fi
 
-    # Symlink skills directory into .claude/skills
-    if [ -d "$SCRIPT_DIR/.agents/skills" ] && [ ! -e "$AGENTS_DIR/$AGENT_ID/.claude/skills" ]; then
-        ln -s "$SCRIPT_DIR/.agents/skills" "$AGENTS_DIR/$AGENT_ID/.claude/skills"
-        echo "  → Linked skills to .claude/skills/"
+    # Resolve skills source directory
+    local skills_src="$SCRIPT_DIR/.agents/skills"
+    if [ ! -d "$skills_src" ]; then
+        skills_src="$TINYCLAW_HOME/.agents/skills"
+    fi
+
+    if [ -d "$skills_src" ]; then
+        # Symlink skills directory into .claude/skills
+        if [ ! -e "$AGENTS_DIR/$AGENT_ID/.claude/skills" ]; then
+            ln -s "$skills_src" "$AGENTS_DIR/$AGENT_ID/.claude/skills"
+            echo "  → Linked skills to .claude/skills/"
+        fi
+
+        # Symlink .agents/skills directory
+        if [ ! -e "$AGENTS_DIR/$AGENT_ID/.agents/skills" ]; then
+            mkdir -p "$AGENTS_DIR/$AGENT_ID/.agents"
+            ln -s "$skills_src" "$AGENTS_DIR/$AGENT_ID/.agents/skills"
+            echo "  → Linked skills to .agents/skills/"
+        fi
     fi
 
     # Create .tinyclaw directory and copy SOUL.md
@@ -256,9 +299,16 @@ agent_remove() {
     echo -e "${GREEN}✓ Agent '${agent_id}' removed.${NC}"
 }
 
-# Reset a specific agent's conversation
-agent_reset() {
+# Set provider and/or model for a specific agent
+agent_provider() {
     local agent_id="$1"
+    local provider_arg="$2"
+    local model_arg=""
+
+    # Parse optional --model flag
+    if [ "$3" = "--model" ] && [ -n "$4" ]; then
+        model_arg="$4"
+    fi
 
     if [ ! -f "$SETTINGS_FILE" ]; then
         echo -e "${RED}No settings file found.${NC}"
@@ -270,7 +320,104 @@ agent_reset() {
 
     if [ -z "$agent_json" ]; then
         echo -e "${RED}Agent '${agent_id}' not found.${NC}"
+        echo ""
+        echo "Available agents:"
+        jq -r '(.agents // {}) | keys[]' "$SETTINGS_FILE" 2>/dev/null | while read -r id; do
+            echo "  @${id}"
+        done
         exit 1
+    fi
+
+    if [ -z "$provider_arg" ]; then
+        # Show current provider/model for this agent
+        local cur_provider cur_model agent_name
+        cur_provider=$(jq -r "(.agents // {}).\"${agent_id}\".provider // \"anthropic\"" "$SETTINGS_FILE" 2>/dev/null)
+        cur_model=$(jq -r "(.agents // {}).\"${agent_id}\".model // empty" "$SETTINGS_FILE" 2>/dev/null)
+        agent_name=$(jq -r "(.agents // {}).\"${agent_id}\".name // \"${agent_id}\"" "$SETTINGS_FILE" 2>/dev/null)
+        echo -e "${BLUE}Agent: @${agent_id} (${agent_name})${NC}"
+        echo -e "${BLUE}Provider: ${GREEN}${cur_provider}${NC}"
+        if [ -n "$cur_model" ]; then
+            echo -e "${BLUE}Model:    ${GREEN}${cur_model}${NC}"
+        fi
+        return
+    fi
+
+    local tmp_file="$SETTINGS_FILE.tmp"
+
+    case "$provider_arg" in
+        anthropic)
+            if [ -n "$model_arg" ]; then
+                jq --arg id "$agent_id" --arg model "$model_arg" \
+                    '.agents[$id].provider = "anthropic" | .agents[$id].model = $model' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to Anthropic with model: ${model_arg}${NC}"
+            else
+                jq --arg id "$agent_id" \
+                    '.agents[$id].provider = "anthropic"' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to Anthropic${NC}"
+                echo ""
+                echo "Use 'tinyclaw agent provider ${agent_id} anthropic --model {sonnet|opus}' to also set the model."
+            fi
+            ;;
+        openai)
+            if [ -n "$model_arg" ]; then
+                jq --arg id "$agent_id" --arg model "$model_arg" \
+                    '.agents[$id].provider = "openai" | .agents[$id].model = $model' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to OpenAI with model: ${model_arg}${NC}"
+            else
+                jq --arg id "$agent_id" \
+                    '.agents[$id].provider = "openai"' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to OpenAI${NC}"
+                echo ""
+                echo "Use 'tinyclaw agent provider ${agent_id} openai --model {gpt-5.3-codex|gpt-5.2}' to also set the model."
+            fi
+            ;;
+        *)
+            echo "Usage: tinyclaw agent provider <agent_id> {anthropic|openai} [--model MODEL_NAME]"
+            echo ""
+            echo "Examples:"
+            echo "  tinyclaw agent provider coder                                    # Show current provider/model"
+            echo "  tinyclaw agent provider coder anthropic                           # Switch to Anthropic"
+            echo "  tinyclaw agent provider coder openai                              # Switch to OpenAI"
+            echo "  tinyclaw agent provider coder anthropic --model opus              # Switch to Anthropic Opus"
+            echo "  tinyclaw agent provider coder openai --model gpt-5.3-codex        # Switch to OpenAI GPT-5.3 Codex"
+            exit 1
+            ;;
+    esac
+
+    echo ""
+    echo "Note: Changes take effect on next message. Restart is not required."
+}
+
+# Reset a specific agent's conversation
+agent_reset() {
+    local agent_id="$1"
+
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}No settings file found.${NC}"
+        exit 1
+    fi
+
+    # Load settings if not already loaded
+    if [ -z "$AGENTS_DIR" ] || [ "$AGENTS_DIR" = "" ]; then
+        load_settings
+        AGENTS_DIR="$WORKSPACE_PATH"
+    fi
+
+    local agent_json
+    agent_json=$(jq -r "(.agents // {}).\"${agent_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
+
+    if [ -z "$agent_json" ]; then
+        echo -e "${RED}Agent '${agent_id}' not found.${NC}"
+        echo ""
+        echo "Available agents:"
+        jq -r '(.agents // {}) | keys[]' "$SETTINGS_FILE" 2>/dev/null | while read -r id; do
+            echo "  @${id}"
+        done
+        return 1
     fi
 
     mkdir -p "$AGENTS_DIR/$agent_id"
@@ -280,6 +427,37 @@ agent_reset() {
     agent_name=$(jq -r "(.agents // {}).\"${agent_id}\".name" "$SETTINGS_FILE" 2>/dev/null)
 
     echo -e "${GREEN}✓ Reset flag set for agent '${agent_id}' (${agent_name})${NC}"
+    echo "  The next message to @${agent_id} will start a fresh conversation."
+}
+
+# Reset multiple agents' conversations
+agent_reset_multiple() {
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}No settings file found.${NC}"
+        exit 1
+    fi
+
+    load_settings
+    AGENTS_DIR="$WORKSPACE_PATH"
+
+    local has_error=0
+    local reset_count=0
+
+    for agent_id in "$@"; do
+        agent_reset "$agent_id"
+        if [ $? -eq 0 ]; then
+            reset_count=$((reset_count + 1))
+        else
+            has_error=1
+        fi
+    done
+
     echo ""
-    echo "The next message to @${agent_id} will start a fresh conversation."
+    if [ "$reset_count" -gt 0 ]; then
+        echo -e "${GREEN}Reset ${reset_count} agent(s).${NC}"
+    fi
+
+    if [ "$has_error" -eq 1 ]; then
+        exit 1
+    fi
 }

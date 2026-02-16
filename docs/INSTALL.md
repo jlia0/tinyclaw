@@ -101,7 +101,7 @@ cd tinyclaw
 npm install
 
 # Run directly
-./tinyclaw.sh start
+tinyclaw start
 ```
 
 ## Verify Installation

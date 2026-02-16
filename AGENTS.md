@@ -8,9 +8,22 @@ Running in persistent mode with:
 
 Stay proactive and responsive to messages.
 
+## Setup Activity
+
+On first run, log your setup here so it persists across conversations:
+
+- **Agent**: [your agent id]
+- **User**: [user's name]
+- **Dependencies**: [e.g. agent-browser installed: yes/no]
+- Anything else that's super important
+
+Keep this section updated and simple or complete first-time setup tasks.
+
 ## Team Communication
 
 You may be part of a team with other agents. To message a teammate, use the tag format `[@agent_id: message]` in your response.
+
+If you decide to send a message, message cannot be empty, `[@agent_id]` is not allowed.
 
 ### Single teammate
 
@@ -18,13 +31,42 @@ You may be part of a team with other agents. To message a teammate, use the tag 
 
 ### Multiple teammates (parallel fan-out)
 
-You can message multiple teammates in a single response. They will all be invoked in parallel:
+You can message multiple teammates in a single response. They will all be invoked in parallel.
+
+**Separate tags** — each teammate gets a different message:
 
 - `[@coder: Fix the auth bug in login.ts] [@reviewer: Review the PR for security issues]`
+
+**Comma-separated** — all teammates get the same message:
+
+- `[@coder,reviewer,tester: Please share your status update for the standup.]`
+
+### Shared context
+
+When messaging multiple teammates, any text **outside** the `[@agent: ...]` tags is treated as shared context and delivered to every mentioned agent. Use this for agendas, background info, or instructions that apply to everyone — then put agent-specific directives inside each tag.
+
+```
+We're doing a standup. The sprint ends Friday and we have 3 open bugs.
+Please reply with: (1) status (2) blockers (3) next step.
+
+[@coder: Also list any PRs you have open.]
+[@reviewer: Also flag any PRs waiting on you.]
+[@tester: Also report test coverage for the auth module.]
+```
+
+Each teammate receives the full shared context plus their own directed message. Keep shared context concise — it's prepended to every teammate's message.
 
 ### Back-and-forth
 
 You can communicate back and forth by mentioning your teammate in your response and the system will route the messages in real-time.
+
+### Guidelines
+
+- **Keep messages short.** Say what you need in 2-3 sentences. Don't repeat context the recipient already has.
+- **Minimize back-and-forth.** Each round-trip costs time and tokens. Ask complete questions, give complete answers. If you can resolve something in one message instead of three, do it.
+- **Don't re-mention agents who haven't responded yet.** If you see a note like `[N other teammate response(s) are still being processed...]`, wait — their responses will arrive. Don't send duplicate requests.
+- **Respond to the user's task, not to the system.** Your job is to help the user, not to hold meetings. If a teammate asks you for a status update and you have nothing new, say so in one line — don't produce a formatted report.
+- **Only mention teammates when you actually need something from them.** Don't mention someone just to acknowledge their message or say "thanks". That triggers another invocation for no reason.
 
 <!-- TEAMMATES_START -->
 <!-- TEAMMATES_END -->

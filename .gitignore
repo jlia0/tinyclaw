@@ -5,14 +5,7 @@ node_modules/
 dist/
 
 # TinyClaw runtime files
-.tinyclaw/logs/
-.tinyclaw/channels
-.tinyclaw/whatsapp-session/
-.tinyclaw/queue/
-.tinyclaw/reset_flag
-.tinyclaw/settings.json
-.tinyclaw/files
-.tinyclaw/events
+.tinyclaw
 
 .wwebjs_cache
 *.log

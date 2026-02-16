@@ -76,15 +76,20 @@ cp -r bin/ "$BUNDLE_DIR/"
 cp -r src/ "$BUNDLE_DIR/"
 cp -r dist/ "$BUNDLE_DIR/"
 cp -r node_modules/ "$BUNDLE_DIR/"
-
-cp tinyclaw.sh "$BUNDLE_DIR/"
 cp -r scripts "$BUNDLE_DIR/"
 cp -r lib "$BUNDLE_DIR/"
+cp -r docs "$BUNDLE_DIR/" 2>/dev/null || true
+cp -r .agents "$BUNDLE_DIR/" 2>/dev/null || true
 
+cp tinyclaw.sh "$BUNDLE_DIR/"
 cp package.json "$BUNDLE_DIR/"
 cp package-lock.json "$BUNDLE_DIR/"
 cp tsconfig.json "$BUNDLE_DIR/"
+cp tsconfig.visualizer.json "$BUNDLE_DIR/" 2>/dev/null || true
 cp README.md "$BUNDLE_DIR/"
+cp AGENTS.md "$BUNDLE_DIR/"
+cp SOUL.md "$BUNDLE_DIR/"
+cp heartbeat.md "$BUNDLE_DIR/"
 cp .gitignore "$BUNDLE_DIR/"
 
 # Copy license if exists

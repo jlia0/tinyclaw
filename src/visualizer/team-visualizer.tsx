@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Team Visualizer — Real-time TUI for watching team collaboration chains.
+ * Team Visualizer — Real-time TUI for watching team conversations.
  *
  * Watches ~/.tinyclaw/events/ for structured JSON events emitted by the
  * queue processor and renders a live dashboard with Ink (React for CLI).
@@ -205,7 +205,7 @@ function ChainFlow({ arrows, agents }: { arrows: ChainArrow[]; agents: Record<st
     if (arrows.length === 0) return null;
     return (
         <Box flexDirection="column" marginY={1}>
-            <Text bold color="white">{'\u21C0'} Chain Flow</Text>
+            <Text bold color="white">{'\u21C0'} Message Flow</Text>
             <Box flexDirection="row" gap={1}>
                 {arrows.map((arrow, i) => (
                     <Box key={i}>
@@ -440,23 +440,15 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
             }
 
             case 'team_chain_start':
-                addLog('\u26D3', `Chain started: ${event.teamName} [${(event.agents as string[]).map(a => '@' + a).join(', ')}]`, 'magenta');
+                addLog('\u26D3', `Conversation started: ${event.teamName} [${(event.agents as string[]).map(a => '@' + a).join(', ')}]`, 'magenta');
                 setArrows([]);
                 break;
 
             case 'chain_step_start': {
                 const aid = String(event.agentId);
                 setAgentStates(prev => {
-                    const updated = { ...prev };
-                    for (const key of Object.keys(updated)) {
-                        if (key !== aid && updated[key].status === 'active') {
-                            updated[key] = { ...updated[key], status: 'waiting' as AgentStatus };
-                        }
-                    }
-                    if (updated[aid]) {
-                        updated[aid] = { ...updated[aid], status: 'active' as AgentStatus, lastActivity: `Step ${event.step}` };
-                    }
-                    return updated;
+                    if (!prev[aid]) return prev;
+                    return { ...prev, [aid]: { ...prev[aid], status: 'active' as AgentStatus, lastActivity: event.fromAgent ? `From @${event.fromAgent}` : 'Processing' } };
                 });
                 break;
             }
@@ -489,7 +481,7 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
 
             case 'team_chain_end': {
                 const chainAgents = event.agents as string[];
-                addLog('\u2714', `Chain complete [${chainAgents.map(a => '@' + a).join(' \u2192 ')}]`, 'green');
+                addLog('\u2714', `Conversation complete [${chainAgents.map(a => '@' + a).join(', ')}]`, 'green');
                 setAgentStates(prev => {
                     const updated = { ...prev };
                     for (const aid of chainAgents) {

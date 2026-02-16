@@ -1,15 +1,33 @@
-# TinyClaw 🦞
+<div align="center">
+  <img src="./docs/images/tinyclaw.png" alt="TinyClaw" width="600" />
+  <h1>TinyClaw 🦞</h1>
+  <p><strong>Multi-agent, Multi-team, Multi-channel, 24/7 AI assistant</strong></p>
+  <p>Run multiple teams of AI agents that collaborate with each other simultaneously with isolated workspaces.</p>
+  <p>
+    <img src="https://img.shields.io/badge/stability-experimental-orange.svg" alt="Experimental" />
+    <a href="https://opensource.org/licenses/MIT">
+      <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License" />
+    </a>
+    <a href="https://discord.gg/jH6AcEChuD">
+      <img src="https://img.shields.io/discord/1353722981163208785?logo=discord&logoColor=white&label=Discord&color=7289DA" alt="Discord" />
+    </a>
+    <a href="https://github.com/jlia0/tinyclaw/releases/latest">
+      <img src="https://img.shields.io/github/v/release/jlia0/tinyclaw?label=Latest&color=green" alt="Latest Release" />
+    </a>
+  </p>
+</div>
 
-**Multi-agent, multi-channel, 24/7 AI assistant**
-
-Run multiple AI agents simultaneously with isolated workspaces and conversation contexts. Route messages to specialized agents using simple `@agent_id` syntax.
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/c5ef5d3c-d9cf-4a00-b619-c31e4380df2e" width="600" controls></video>
+</div>
 
 ## ✨ Features
 
 - ✅ **Multi-agent** - Run multiple isolated AI agents with specialized roles
-- ✅ **Team collaboration** - Agents hand off work to teammates via chain execution and fan-out
-- ✅ **Multiple AI providers** - Anthropic Claude (Sonnet/Opus) and OpenAI (GPT/Codex)
+- ✅ **Multi-team collaboration** - Agents hand off work to teammates via chain execution and fan-out
 - ✅ **Multi-channel** - Discord, WhatsApp, and Telegram
+- ✅ **Team Observation** - You can observe agent teams conversations via `tinyclaw team visualize`
+- ✅ **Multiple AI providers** - Anthropic Claude and OpenAI Codex using existing subscriptions without breaking ToS
 - ✅ **Parallel processing** - Agents process messages concurrently
 - ✅ **Live TUI dashboard** - Real-time team visualizer for monitoring agent chains
 - ✅ **Persistent sessions** - Conversation context maintained across restarts
@@ -117,23 +135,25 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 
 ### Agent Commands
 
-| Command             | Description                 | Example                       |
-| ------------------- | --------------------------- | ----------------------------- |
-| `agent list`        | List all configured agents  | `tinyclaw agent list`         |
-| `agent add`         | Add new agent (interactive) | `tinyclaw agent add`          |
-| `agent show <id>`   | Show agent configuration    | `tinyclaw agent show coder`   |
-| `agent remove <id>` | Remove an agent             | `tinyclaw agent remove coder` |
-| `agent reset <id>`  | Reset agent conversation    | `tinyclaw agent reset coder`  |
+| Command                              | Description                      | Example                                          |
+| ------------------------------------ | -------------------------------- | ------------------------------------------------ |
+| `agent list`                         | List all configured agents       | `tinyclaw agent list`                            |
+| `agent add`                          | Add new agent (interactive)      | `tinyclaw agent add`                             |
+| `agent show <id>`                    | Show agent configuration         | `tinyclaw agent show coder`                      |
+| `agent remove <id>`                  | Remove an agent                  | `tinyclaw agent remove coder`                    |
+| `agent reset <id>`                   | Reset agent conversation         | `tinyclaw agent reset coder`                     |
+| `agent provider <id> [provider]`     | Show or set agent's AI provider  | `tinyclaw agent provider coder anthropic`        |
+| `agent provider <id> <p> --model <m>`| Set agent's provider and model   | `tinyclaw agent provider coder openai --model gpt-5.3-codex` |
 
 ### Team Commands
 
-| Command                  | Description                              | Example                       |
-| ------------------------ | ---------------------------------------- | ----------------------------- |
-| `team list`              | List all configured teams                | `tinyclaw team list`          |
-| `team add`               | Add new team (interactive)               | `tinyclaw team add`           |
-| `team show <id>`         | Show team configuration                  | `tinyclaw team show dev`      |
-| `team remove <id>`       | Remove a team                            | `tinyclaw team remove dev`    |
-| `team visualize [id]`    | Live TUI dashboard for team chains       | `tinyclaw team visualize dev` |
+| Command               | Description                        | Example                       |
+| --------------------- | ---------------------------------- | ----------------------------- |
+| `team list`           | List all configured teams          | `tinyclaw team list`          |
+| `team add`            | Add new team (interactive)         | `tinyclaw team add`           |
+| `team show <id>`      | Show team configuration            | `tinyclaw team show dev`      |
+| `team remove <id>`    | Remove a team                      | `tinyclaw team remove dev`    |
+| `team visualize [id]` | Live TUI dashboard for team chains | `tinyclaw team visualize dev` |
 
 ### Configuration Commands
 
@@ -145,11 +165,37 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 | `reset`                           | Reset all conversations      | `tinyclaw reset`                                 |
 | `channels reset <channel>`        | Reset channel authentication | `tinyclaw channels reset whatsapp`               |
 
+### Pairing Commands
+
+Use sender pairing to control who can message your agents.
+
+| Command                                | Description                                        | Example                                    |
+| -------------------------------------- | -------------------------------------------------- | ------------------------------------------ |
+| `pairing pending`                      | Show pending sender approvals (with pairing codes) | `tinyclaw pairing pending`                 |
+| `pairing approved`                     | Show approved senders                              | `tinyclaw pairing approved`                |
+| `pairing list`                         | Show both pending and approved senders             | `tinyclaw pairing list`                    |
+| `pairing approve <code>`               | Move a sender from pending to approved by code     | `tinyclaw pairing approve ABCD1234`        |
+| `pairing unpair <channel> <sender_id>` | Remove an approved sender from the allowlist       | `tinyclaw pairing unpair telegram 1234567` |
+
+Pairing behavior:
+
+- First message from unknown sender: TinyClaw generates a code and sends approval instructions.
+- Additional messages while still pending: TinyClaw blocks silently (no repeated pairing message).
+- After approval: messages from that sender are processed normally.
+
 ### Update Commands
 
 | Command  | Description                       | Example           |
 | -------- | --------------------------------- | ----------------- |
 | `update` | Update TinyClaw to latest version | `tinyclaw update` |
+
+> **Note:** If you are on v0.0.1 or v0.0.2, the update script was broken. Please re-install instead:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/jlia0/tinyclaw/main/scripts/remote-install.sh | bash
+> ```
+>
+> Your settings and user data will be preserved.
 
 <details>
 <summary><b>Update Details</b></summary>
@@ -189,17 +235,19 @@ export TINYCLAW_SKIP_UPDATE_CHECK=1
 
 These commands work in Discord, Telegram, and WhatsApp:
 
-| Command             | Description                                  | Example                              |
-| ------------------- | -------------------------------------------- | ------------------------------------ |
-| `@agent_id message` | Route message to specific agent              | `@coder fix the bug`                 |
-| `@team_id message`  | Route message to team leader                 | `@dev fix the auth bug`              |
-| `/agent`            | List all available agents                    | `/agent`                             |
-| `/team`             | List all available teams                     | `/team`                              |
-| `@agent_id /reset`  | Reset specific agent conversation            | `@coder /reset`                      |
-| `/reset`            | Reset conversation (WhatsApp/global)         | `/reset` or `!reset`                 |
-| `message`           | Send to default agent (no prefix)            | `help me with this`                  |
+| Command             | Description                          | Example                 |
+| ------------------- | ------------------------------------ | ----------------------- |
+| `@agent_id message` | Route message to specific agent      | `@coder fix the bug`    |
+| `@team_id message`  | Route message to team leader         | `@dev fix the auth bug` |
+| `/agent`            | List all available agents            | `/agent`                |
+| `/team`             | List all available teams             | `/team`                 |
+| `@agent_id /reset`  | Reset specific agent conversation    | `@coder /reset`         |
+| `/reset`            | Reset conversation (WhatsApp/global) | `/reset` or `!reset`    |
+| `message`           | Send to default agent (no prefix)    | `help me with this`     |
 
 **Note:** The `@agent_id` routing prefix requires a space after it (e.g., `@coder fix` not `@coderfix`).
+
+**Access control note:** before routing, channel clients apply sender pairing allowlist checks.
 
 ## 🤖 Using Agents
 
@@ -329,6 +377,7 @@ tinyclaw/
 │   ├── logs/             # All logs
 │   ├── channels/         # Channel state
 │   ├── files/            # Uploaded files
+│   ├── pairing.json      # Sender allowlist state (pending + approved)
 │   ├── chats/            # Team chain chat history
 │   │   └── {team_id}/    # Per-team chat logs
 │   ├── events/           # Real-time event files
@@ -482,6 +531,7 @@ tinyclaw logs all
 - WhatsApp not connecting → Reset auth: `tinyclaw channels reset whatsapp`
 - Messages stuck → Clear queue: `rm -rf .tinyclaw/queue/processing/*`
 - Agent not found → Check: `tinyclaw agent list`
+- Corrupted settings.json → TinyClaw auto-repairs invalid JSON (trailing commas, comments, BOM) and creates a `.bak` backup
 
 **Need help?**
 
