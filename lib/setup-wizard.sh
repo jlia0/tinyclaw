@@ -79,60 +79,128 @@ for ch in "${ENABLED_CHANNELS[@]}"; do
 done
 
 # Provider selection
-echo "Which AI provider?"
-echo ""
-echo "  1) Anthropic (Claude)  (recommended)"
-echo "  2) OpenAI (Codex/GPT)"
-echo ""
-read -rp "Choose [1-2]: " PROVIDER_CHOICE
+PROVIDER=""
+while [ -z "$PROVIDER" ]; do
+    echo "Which AI provider?"
+    echo ""
+    echo "  1) Anthropic (Claude)  (recommended)"
+    echo "  2) OpenAI (Codex/GPT)"
+    echo "  3) Qoder"
+    echo "  s) Skip (will use defaults)"
+    echo ""
+    read -rp "Choose [1-3, s]: " PROVIDER_CHOICE
 
-case "$PROVIDER_CHOICE" in
-    1) PROVIDER="anthropic" ;;
-    2) PROVIDER="openai" ;;
-    *)
-        echo -e "${RED}Invalid choice${NC}"
-        exit 1
-        ;;
-esac
+    case "$PROVIDER_CHOICE" in
+        1) PROVIDER="anthropic" ;;
+        2) PROVIDER="openai" ;;
+        3) PROVIDER="qoder" ;;
+        [sS])
+            echo -e "${YELLOW}Skipping provider selection (will use defaults)${NC}"
+            PROVIDER="anthropic"
+            break
+            ;;
+        *)
+            echo -e "${RED}Invalid choice, please try again${NC}"
+            echo ""
+            ;;
+    esac
+done
+
 echo -e "${GREEN}✓ Provider: $PROVIDER${NC}"
 echo ""
 
 # Model selection based on provider
+MODEL=""
 if [ "$PROVIDER" = "anthropic" ]; then
-    echo "Which Claude model?"
-    echo ""
-    echo "  1) Sonnet  (fast, recommended)"
-    echo "  2) Opus    (smartest)"
-    echo ""
-    read -rp "Choose [1-2]: " MODEL_CHOICE
+    while [ -z "$MODEL" ]; do
+        echo "Which Claude model?"
+        echo ""
+        echo "  1) Sonnet  (fast, recommended)"
+        echo "  2) Opus    (smartest)"
+        echo "  s) Skip (use default)"
+        echo ""
+        read -rp "Choose [1-2, s]: " MODEL_CHOICE
 
-    case "$MODEL_CHOICE" in
-        1) MODEL="sonnet" ;;
-        2) MODEL="opus" ;;
-        *)
-            echo -e "${RED}Invalid choice${NC}"
-            exit 1
-            ;;
-    esac
+        case "$MODEL_CHOICE" in
+            1) MODEL="sonnet" ;;
+            2) MODEL="opus" ;;
+            [sS])
+                echo -e "${YELLOW}Using default model: sonnet${NC}"
+                MODEL="sonnet"
+                break
+                ;;
+            *)
+                echo -e "${RED}Invalid choice, please try again${NC}"
+                echo ""
+                ;;
+        esac
+    done
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
     echo ""
-else
-    # OpenAI models
-    echo "Which OpenAI model?"
-    echo ""
-    echo "  1) GPT-5.3 Codex  (recommended)"
-    echo "  2) GPT-5.2"
-    echo ""
-    read -rp "Choose [1-2]: " MODEL_CHOICE
+elif [ "$PROVIDER" = "qoder" ]; then
+    while [ -z "$MODEL" ]; do
+        echo "Which Qoder model?"
+        echo ""
+        echo "  1) auto         (automatic selection)"
+        echo "  2) efficient    (fast, cost-effective)"
+        echo "  3) gmodel"
+        echo "  4) kmodel"
+        echo "  5) lite         (lightweight)"
+        echo "  6) mmodel"
+        echo "  7) performance  (balanced)"
+        echo "  8) qmodel"
+        echo "  9) ultimate     (most capable)"
+        echo "  s) Skip (use default: auto)"
+        echo ""
+        read -rp "Choose [1-9, s]: " MODEL_CHOICE
 
-    case "$MODEL_CHOICE" in
-        1) MODEL="gpt-5.3-codex" ;;
-        2) MODEL="gpt-5.2" ;;
-        *)
-            echo -e "${RED}Invalid choice${NC}"
-            exit 1
-            ;;
-    esac
+        case "$MODEL_CHOICE" in
+            1) MODEL="auto" ;;
+            2) MODEL="efficient" ;;
+            3) MODEL="gmodel" ;;
+            4) MODEL="kmodel" ;;
+            5) MODEL="lite" ;;
+            6) MODEL="mmodel" ;;
+            7) MODEL="performance" ;;
+            8) MODEL="qmodel" ;;
+            9) MODEL="ultimate" ;;
+            [sS])
+                echo -e "${YELLOW}Using default model: auto${NC}"
+                MODEL="auto"
+                break
+                ;;
+            *)
+                echo -e "${RED}Invalid choice, please try again${NC}"
+                echo ""
+                ;;
+        esac
+    done
+    echo -e "${GREEN}✓ Model: $MODEL${NC}"
+    echo ""
+elif [ "$PROVIDER" = "openai" ]; then
+    while [ -z "$MODEL" ]; do
+        echo "Which OpenAI model?"
+        echo ""
+        echo "  1) GPT-5.3 Codex  (recommended)"
+        echo "  2) GPT-5.2"
+        echo "  s) Skip (use default)"
+        echo ""
+        read -rp "Choose [1-2, s]: " MODEL_CHOICE
+
+        case "$MODEL_CHOICE" in
+            1) MODEL="gpt-5.3-codex" ;;
+            2) MODEL="gpt-5.2" ;;
+            [sS])
+                echo -e "${YELLOW}Using default model: gpt-5.3-codex${NC}"
+                MODEL="gpt-5.3-codex"
+                break
+                ;;
+            *)
+                echo -e "${RED}Invalid choice, please try again${NC}"
+                echo ""
+                ;;
+        esac
+    done
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
     echo ""
 fi
@@ -216,27 +284,91 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
         read -rp "  Display name: " NEW_AGENT_NAME
         [ -z "$NEW_AGENT_NAME" ] && NEW_AGENT_NAME="$NEW_AGENT_ID"
 
-        echo "  Provider: 1) Anthropic  2) OpenAI"
-        read -rp "  Choose [1-2, default: 1]: " NEW_PROVIDER_CHOICE
-        case "$NEW_PROVIDER_CHOICE" in
-            2) NEW_PROVIDER="openai" ;;
-            *) NEW_PROVIDER="anthropic" ;;
-        esac
+        NEW_PROVIDER=""
+        while [ -z "$NEW_PROVIDER" ]; do
+            echo "  Provider: 1) Anthropic  2) OpenAI  3) Qoder"
+            echo "           s) Skip (use default: anthropic)"
+            read -rp "  Choose [1-3, s, default: 1]: " NEW_PROVIDER_CHOICE
+            case "$NEW_PROVIDER_CHOICE" in
+                2) NEW_PROVIDER="openai" ;;
+                3) NEW_PROVIDER="qoder" ;;
+                [sS])
+                    echo -e "  ${YELLOW}Using default provider: anthropic${NC}"
+                    NEW_PROVIDER="anthropic"
+                    break
+                    ;;
+                ""|1) NEW_PROVIDER="anthropic" ;;
+                *)
+                    echo -e "  ${RED}Invalid choice, please try again${NC}"
+                    echo ""
+                    ;;
+            esac
+        done
 
+        NEW_MODEL=""
         if [ "$NEW_PROVIDER" = "anthropic" ]; then
-            echo "  Model: 1) Sonnet  2) Opus"
-            read -rp "  Choose [1-2, default: 1]: " NEW_MODEL_CHOICE
-            case "$NEW_MODEL_CHOICE" in
-                2) NEW_MODEL="opus" ;;
-                *) NEW_MODEL="sonnet" ;;
-            esac
-        else
-            echo "  Model: 1) GPT-5.3 Codex  2) GPT-5.2"
-            read -rp "  Choose [1-2, default: 1]: " NEW_MODEL_CHOICE
-            case "$NEW_MODEL_CHOICE" in
-                2) NEW_MODEL="gpt-5.2" ;;
-                *) NEW_MODEL="gpt-5.3-codex" ;;
-            esac
+            while [ -z "$NEW_MODEL" ]; do
+                echo "  Model: 1) Sonnet  2) Opus  s) Skip (use default: sonnet)"
+                read -rp "  Choose [1-2, s, default: 1]: " NEW_MODEL_CHOICE
+                case "$NEW_MODEL_CHOICE" in
+                    2) NEW_MODEL="opus" ;;
+                    [sS])
+                        echo -e "  ${YELLOW}Using default model: sonnet${NC}"
+                        NEW_MODEL="sonnet"
+                        break
+                        ;;
+                    ""|1) NEW_MODEL="sonnet" ;;
+                    *)
+                        echo -e "  ${RED}Invalid choice, please try again${NC}"
+                        echo ""
+                        ;;
+                esac
+            done
+        elif [ "$NEW_PROVIDER" = "qoder" ]; then
+            while [ -z "$NEW_MODEL" ]; do
+                echo "  Model: 1) auto  2) efficient  3) gmodel  4) kmodel  5) lite"
+                echo "         6) mmodel  7) performance  8) qmodel  9) ultimate"
+                echo "         s) Skip (use default: auto)"
+                read -rp "  Choose [1-9, s, default: 1]: " NEW_MODEL_CHOICE
+                case "$NEW_MODEL_CHOICE" in
+                    2) NEW_MODEL="efficient" ;;
+                    3) NEW_MODEL="gmodel" ;;
+                    4) NEW_MODEL="kmodel" ;;
+                    5) NEW_MODEL="lite" ;;
+                    6) NEW_MODEL="mmodel" ;;
+                    7) NEW_MODEL="performance" ;;
+                    8) NEW_MODEL="qmodel" ;;
+                    9) NEW_MODEL="ultimate" ;;
+                    [sS])
+                        echo -e "  ${YELLOW}Using default model: auto${NC}"
+                        NEW_MODEL="auto"
+                        break
+                        ;;
+                    ""|1) NEW_MODEL="auto" ;;
+                    *)
+                        echo -e "  ${RED}Invalid choice, please try again${NC}"
+                        echo ""
+                        ;;
+                esac
+            done
+        elif [ "$NEW_PROVIDER" = "openai" ]; then
+            while [ -z "$NEW_MODEL" ]; do
+                echo "  Model: 1) GPT-5.3 Codex  2) GPT-5.2  s) Skip (use default: gpt-5.3-codex)"
+                read -rp "  Choose [1-2, s, default: 1]: " NEW_MODEL_CHOICE
+                case "$NEW_MODEL_CHOICE" in
+                    2) NEW_MODEL="gpt-5.2" ;;
+                    [sS])
+                        echo -e "  ${YELLOW}Using default model: gpt-5.3-codex${NC}"
+                        NEW_MODEL="gpt-5.3-codex"
+                        break
+                        ;;
+                    ""|1) NEW_MODEL="gpt-5.3-codex" ;;
+                    *)
+                        echo -e "  ${RED}Invalid choice, please try again${NC}"
+                        echo ""
+                        ;;
+                esac
+            done
         fi
 
         NEW_AGENT_DIR="$WORKSPACE_PATH/$NEW_AGENT_ID"
@@ -270,6 +402,8 @@ TELEGRAM_TOKEN="${TOKENS[telegram]:-}"
 # Use jq to build valid JSON to avoid escaping issues with agent prompts
 if [ "$PROVIDER" = "anthropic" ]; then
     MODELS_SECTION='"models": { "provider": "anthropic", "anthropic": { "model": "'"${MODEL}"'" } }'
+elif [ "$PROVIDER" = "qoder" ]; then
+    MODELS_SECTION='"models": { "provider": "qoder", "qoder": { "model": "'"${MODEL}"'" } }'
 else
     MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
 fi

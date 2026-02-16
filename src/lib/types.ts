@@ -1,7 +1,7 @@
 export interface AgentConfig {
     name: string;
-    provider: string;       // 'anthropic' or 'openai'
-    model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
+    provider: string;       // 'anthropic', 'openai', or 'qoder'
+    model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex', 'qoder'
     working_directory: string;
 }
 
@@ -28,11 +28,14 @@ export interface Settings {
         whatsapp?: {};
     };
     models?: {
-        provider?: string; // 'anthropic' or 'openai'
+        provider?: string; // 'anthropic', 'openai', or 'qoder'
         anthropic?: {
             model?: string;
         };
         openai?: {
+            model?: string;
+        };
+        qoder?: {
             model?: string;
         };
     };
@@ -102,4 +105,16 @@ export const CLAUDE_MODEL_IDS: Record<string, string> = {
 export const CODEX_MODEL_IDS: Record<string, string> = {
     'gpt-5.2': 'gpt-5.2',
     'gpt-5.3-codex': 'gpt-5.3-codex',
+};
+
+export const QODER_MODEL_IDS: Record<string, string> = {
+    'auto': 'auto',
+    'efficient': 'efficient',
+    'gmodel': 'gmodel',
+    'kmodel': 'kmodel',
+    'lite': 'lite',
+    'mmodel': 'mmodel',
+    'performance': 'performance',
+    'qmodel': 'qmodel',
+    'ultimate': 'ultimate',
 };

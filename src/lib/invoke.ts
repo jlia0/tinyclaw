@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
-import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel } from './config';
+import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveQoderModel } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent-setup';
 
@@ -112,6 +112,27 @@ export async function invokeAgent(
         }
 
         return response || 'Sorry, I could not generate a response from Codex.';
+    } else if (provider === 'qoder') {
+        // QoderCLI provider
+        log('INFO', `Using QoderCLI provider (agent: ${agentId})`);
+
+        const continueConversation = !shouldReset;
+
+        if (shouldReset) {
+            log('INFO', `🔄 Resetting conversation for agent: ${agentId}`);
+        }
+
+        const modelId = resolveQoderModel(agent.model);
+        const qoderArgs = ['-w', workingDir];
+        if (modelId) {
+            qoderArgs.push('--model', modelId);
+        }
+        if (continueConversation) {
+            qoderArgs.push('-c');
+        }
+        qoderArgs.push('-p', message);
+
+        return await runCommand('qodercli', qoderArgs, workingDir);
     } else {
         // Default to Claude (Anthropic)
         log('INFO', `Using Claude provider (agent: ${agentId})`);
