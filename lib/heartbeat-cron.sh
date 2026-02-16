@@ -81,17 +81,16 @@ while true; do
         # Generate unique message ID
         MESSAGE_ID="heartbeat_${AGENT_ID}_$(date +%s)_$$"
 
-        # Write to queue with @agent_id routing prefix
-        cat > "$QUEUE_INCOMING/${MESSAGE_ID}.json" << EOF
-{
-  "channel": "heartbeat",
-  "sender": "System",
-  "senderId": "heartbeat_${AGENT_ID}",
-  "message": "@${AGENT_ID} ${PROMPT}",
-  "timestamp": $(date +%s)000,
-  "messageId": "$MESSAGE_ID"
-}
-EOF
+        # Write to queue with @agent_id routing prefix (use jq to properly escape message content)
+        jq -n \
+          --arg channel "heartbeat" \
+          --arg sender "System" \
+          --arg senderId "heartbeat_${AGENT_ID}" \
+          --arg message "@${AGENT_ID} ${PROMPT}" \
+          --argjson timestamp "$(date +%s)000" \
+          --arg messageId "$MESSAGE_ID" \
+          '{channel: $channel, sender: $sender, senderId: $senderId, message: $message, timestamp: $timestamp, messageId: $messageId}' \
+          > "$QUEUE_INCOMING/${MESSAGE_ID}.json"
 
         log "  ✓ Queued for @$AGENT_ID: $MESSAGE_ID"
     done
