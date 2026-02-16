@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["ES2022"],
+    "outDir": "./dist/visualizer",
+    "rootDir": "./src/visualizer",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx",
+    "sourceMap": true,
+    "declaration": false,
+    "isolatedModules": true
+  },
+  "include": ["src/visualizer/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

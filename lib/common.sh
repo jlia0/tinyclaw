@@ -39,9 +39,9 @@ declare -A CHANNEL_DISPLAY=(
     [telegram]="Telegram"
 )
 declare -A CHANNEL_SCRIPT=(
-    [discord]="dist/discord-client.js"
-    [whatsapp]="dist/whatsapp-client.js"
-    [telegram]="dist/telegram-client.js"
+    [discord]="dist/channels/discord-client.js"
+    [whatsapp]="dist/channels/whatsapp-client.js"
+    [telegram]="dist/channels/telegram-client.js"
 )
 declare -A CHANNEL_ALIAS=(
     [discord]="dc"
@@ -68,6 +68,7 @@ log() {
 }
 
 # Load settings from JSON
+# Returns: 0 = success, 1 = file not found / no config, 2 = invalid JSON
 load_settings() {
     if [ ! -f "$SETTINGS_FILE" ]; then
         return 1
@@ -78,6 +79,11 @@ load_settings() {
         echo -e "${RED}Error: jq is required for parsing settings${NC}"
         echo "Install with: brew install jq (macOS) or apt-get install jq (Linux)"
         return 1
+    fi
+
+    # Validate JSON syntax before attempting to parse
+    if ! jq empty "$SETTINGS_FILE" 2>/dev/null; then
+        return 2
     fi
 
     # Load workspace path

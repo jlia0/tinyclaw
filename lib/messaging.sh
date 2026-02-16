@@ -65,7 +65,7 @@ channels_reset() {
         echo -e "${GREEN}✓ WhatsApp session cleared${NC}"
         echo ""
         echo "Restart TinyClaw to re-authenticate:"
-        echo -e "  ${GREEN}./tinyclaw.sh restart${NC}"
+        echo -e "  ${GREEN}tinyclaw restart${NC}"
         return
     fi
 
@@ -74,7 +74,7 @@ channels_reset() {
     if [ -n "$token_key" ]; then
         echo ""
         echo "To reset ${display}, run the setup wizard to update your bot token:"
-        echo -e "  ${GREEN}./tinyclaw.sh setup${NC}"
+        echo -e "  ${GREEN}tinyclaw setup${NC}"
         echo ""
         echo "Or manually edit .tinyclaw/settings.json to change ${token_key}"
     fi

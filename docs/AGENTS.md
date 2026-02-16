@@ -109,7 +109,7 @@ Each agent has its own configuration in `.tinyclaw/settings.json`:
 }
 ```
 
-**Note:** The `working_directory` is automatically set to `<workspace>/<agent_id>/` when creating agents via `tinyclaw.sh agent add`.
+**Note:** The `working_directory` is automatically set to `<workspace>/<agent_id>/` when creating agents via `tinyclaw agent add`.
 
 ### 3. Agent Isolation
 
@@ -194,7 +194,7 @@ codex exec resume --last \
 
 ### Initial Setup
 
-During first-time setup (`./tinyclaw.sh setup`), you'll be prompted for:
+During first-time setup (`tinyclaw setup`), you'll be prompted for:
 
 1. **Workspace name** - Where to store agent directories
    - Default: `tinyclaw-workspace`
@@ -208,7 +208,7 @@ During first-time setup (`./tinyclaw.sh setup`), you'll be prompted for:
 
 **Interactive CLI:**
 ```bash
-./tinyclaw.sh agent add
+tinyclaw agent add
 ```
 
 This walks you through:
@@ -283,7 +283,7 @@ help me with this (goes to default agent - "assistant" by default)
 
 **From CLI:**
 ```bash
-./tinyclaw.sh agent list
+tinyclaw agent list
 ```
 
 **Output:**
@@ -309,12 +309,12 @@ Configured Agents
 
 **Show agent details:**
 ```bash
-./tinyclaw.sh agent show coder
+tinyclaw agent show coder
 ```
 
 **Reset agent conversation:**
 ```bash
-./tinyclaw.sh agent reset coder
+tinyclaw agent reset coder
 ```
 
 From chat:
@@ -324,7 +324,7 @@ From chat:
 
 **Remove agent:**
 ```bash
-./tinyclaw.sh agent remove coder
+tinyclaw agent remove coder
 ```
 
 ## Use Cases
@@ -440,12 +440,15 @@ This ensures backward compatibility with older configurations.
 
 ### Reset Flags
 
-Two types of reset flags:
+Per-agent reset: `<workspace>/<agent_id>/reset_flag` - resets a specific agent's conversation.
 
-1. **Global reset:** `~/.tinyclaw/reset_flag` - resets all agents
-2. **Per-agent reset:** `<workspace>/<agent_id>/reset_flag` - resets specific agent
+Reset flags are automatically cleaned up after use.
 
-Both are automatically cleaned up after use.
+Reset one or more agents:
+```bash
+tinyclaw reset coder
+tinyclaw reset coder researcher
+```
 
 ### Custom Workspaces
 
@@ -550,14 +553,77 @@ interface ResponseData {
 
 State is managed by the CLI itself (claude or codex) through the `-c` flag and working directory isolation.
 
+## Teams
+
+Teams are named groups of agents that can collaborate by forwarding messages to each other via `@teammate` mentions in their responses.
+
+### How Team Collaboration Works
+
+1. User sends `@dev fix the auth bug` (where `dev` is a team with leader `coder`)
+2. Queue processor resolves `@dev` → team → leader agent `@coder`
+3. Coder's AI responds: `"I fixed the bug in auth.ts. @reviewer please check my changes"`
+4. Queue processor scans response, sees `@reviewer` is a teammate in team `dev`
+5. Queue processor calls reviewer with coder's response (prefixed with context)
+6. Reviewer responds: `"Changes look good, approved!"`
+7. Combined response sent to user: `@coder: ... \n---\n @reviewer: ...`
+
+The chain ends naturally when an agent responds without mentioning a teammate.
+
+### Team Configuration
+
+Teams are stored in `~/.tinyclaw/settings.json`:
+
+```json
+{
+  "teams": {
+    "dev": {
+      "name": "Development Team",
+      "agents": ["coder", "reviewer"],
+      "leader_agent": "coder"
+    }
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `name` | Human-readable display name |
+| `agents` | Array of agent IDs (must exist in `.agents`) |
+| `leader_agent` | Agent that receives `@team_id` messages first |
+
+Team IDs share the `@` routing namespace with agents, so no collisions are allowed.
+
+### Managing Teams
+
+**CLI Commands:**
+```bash
+tinyclaw team list                # List all teams
+tinyclaw team add                 # Add a new team (interactive)
+tinyclaw team show dev            # Show team configuration
+tinyclaw team remove dev          # Remove a team
+```
+
+**In-chat Commands:**
+```
+/team                             # List all teams
+@dev fix the auth bug             # Route to team leader
+@coder fix the auth bug           # Route directly to agent (team context still active)
+```
+
+### Direct Agent Routing with Teams
+
+When you message an agent directly (e.g., `@coder fix this`), team context is automatically activated if the agent belongs to a team. This means teammate mentions in the agent's response will still be followed.
+
+### Agent AGENTS.md Updates
+
+When an agent is added to a team, its `AGENTS.md` file is automatically updated with a team collaboration section listing teammates and instructions for using `@teammate_id` mentions.
+
 ## Future Enhancements
 
 Potential features for agent management:
 
-- **Agent delegation:** Agents can call other agents
 - **Shared context:** Optional shared memory between agents
 - **Agent scheduling:** Time-based or event-based agent activation
-- **Agent groups:** Organize agents into hierarchies
 - **Web dashboard:** Visual agent management and monitoring
 - **Agent analytics:** Track usage, performance per agent
 - **Workspace templates:** Pre-configured agent workspaces for common use cases
@@ -566,5 +632,5 @@ Potential features for agent management:
 ## See Also
 
 - [README.md](../README.md) - Main project documentation
-- Setup wizard: `./tinyclaw.sh setup`
-- Agent CLI: `./tinyclaw.sh agent --help`
+- Setup wizard: `tinyclaw setup`
+- Agent CLI: `tinyclaw agent --help`

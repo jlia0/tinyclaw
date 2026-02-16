@@ -111,7 +111,7 @@ show_update_notification() {
     echo -e "  Current: ${RED}v${current_version}${NC}"
     echo -e "  Latest:  ${GREEN}v${latest_version}${NC}"
     echo ""
-    echo -e "  Update:  ${GREEN}./tinyclaw.sh update${NC}"
+    echo -e "  Update:  ${GREEN}tinyclaw update${NC}"
     echo -e "  Changes: ${BLUE}https://github.com/$GITHUB_REPO/releases/v${latest_version}${NC}"
     echo ""
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -176,12 +176,12 @@ do_update() {
     echo ""
 
     # Download bundle
-    local bundle_url="https://github.com/$GITHUB_REPO/releases/download/v${latest_version}/tinyclaw-bundle-${latest_version}.tar.gz"
+    local bundle_url="https://github.com/$GITHUB_REPO/releases/download/v${latest_version}/tinyclaw-bundle.tar.gz"
     local temp_dir=$(mktemp -d)
     local bundle_file="$temp_dir/tinyclaw-bundle.tar.gz"
 
     echo -e "${BLUE}[1/4] Downloading...${NC}"
-    if ! curl -L -o "$bundle_file" "$bundle_url" 2>&1 | grep -v "^  "; then
+    if ! curl -fSL -o "$bundle_file" "$bundle_url" 2>&1 | grep -v "^  "; then
         echo -e "${RED}Error: Download failed${NC}"
         rm -rf "$temp_dir"
         return 1
@@ -210,21 +210,15 @@ do_update() {
     cd "$temp_dir"
     tar -xzf "$bundle_file"
 
-    # Copy new files (preserve .tinyclaw/)
-    cp -r tinyclaw/bin "$SCRIPT_DIR/"
-    cp -r tinyclaw/src "$SCRIPT_DIR/"
-    cp -r tinyclaw/dist "$SCRIPT_DIR/"
-    cp -r tinyclaw/lib "$SCRIPT_DIR/"
-    cp -r tinyclaw/scripts "$SCRIPT_DIR/"
-    cp tinyclaw/tinyclaw.sh "$SCRIPT_DIR/"
-    cp tinyclaw/package.json "$SCRIPT_DIR/"
-    cp tinyclaw/package-lock.json "$SCRIPT_DIR/" 2>/dev/null || true
+    # Copy all bundle files into install dir.
+    # User data (settings.json, queue/, logs/, etc.) is not in the bundle
+    # so it won't be overwritten.
+    cp -a tinyclaw/. "$SCRIPT_DIR/"
 
-    # Make executable
-    chmod +x "$SCRIPT_DIR/bin/tinyclaw"
+    # Make scripts executable
+    find "$SCRIPT_DIR/bin" "$SCRIPT_DIR/lib" "$SCRIPT_DIR/scripts" \
+        -type f \( -name "*.sh" -o -name "tinyclaw" \) -exec chmod +x {} +
     chmod +x "$SCRIPT_DIR/tinyclaw.sh"
-    chmod +x "$SCRIPT_DIR/lib/setup-wizard.sh"
-    chmod +x "$SCRIPT_DIR/lib/heartbeat-cron.sh"
 
     rm -rf "$temp_dir"
 
@@ -243,6 +237,6 @@ do_update() {
     echo "Backup location: $backup_dir"
     echo ""
     echo "Start TinyClaw:"
-    echo -e "  ${GREEN}./tinyclaw.sh start${NC}"
+    echo -e "  ${GREEN}tinyclaw start${NC}"
     echo ""
 }

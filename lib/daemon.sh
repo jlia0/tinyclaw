@@ -38,7 +38,38 @@ start_daemon() {
     fi
 
     # Load settings or run setup wizard
-    if ! load_settings; then
+    load_settings
+    local load_rc=$?
+
+    if [ $load_rc -eq 2 ]; then
+        # JSON file exists but contains invalid JSON
+        echo -e "${RED}Error: settings.json exists but contains invalid JSON${NC}"
+        echo ""
+        local jq_err
+        jq_err=$(jq empty "$SETTINGS_FILE" 2>&1)
+        echo -e "  ${YELLOW}${jq_err}${NC}"
+        echo ""
+
+        # Attempt auto-fix using jsonrepair (npm package)
+        echo -e "${YELLOW}Attempting to auto-fix...${NC}"
+        local repair_output
+        repair_output=$(node -e 'const{jsonrepair}=require("jsonrepair");const fs=require("fs");try{const raw=fs.readFileSync(process.argv[1],"utf8");const fixed=jsonrepair(raw);JSON.parse(fixed);fs.copyFileSync(process.argv[1],process.argv[1]+".bak");fs.writeFileSync(process.argv[1],JSON.stringify(JSON.parse(fixed),null,2)+"\n");console.log("ok")}catch(e){console.error(e.message);process.exit(1)}' "$SETTINGS_FILE" 2>&1)
+
+        if [ $? -eq 0 ]; then
+            echo -e "  ${GREEN}✓ JSON auto-fixed successfully${NC}"
+            echo -e "  Backup saved to ${SETTINGS_FILE}.bak"
+            echo ""
+            load_settings
+            load_rc=$?
+        fi
+
+        if [ $load_rc -ne 0 ]; then
+            echo -e "${RED}Could not repair settings.json${NC}"
+            echo "  Fix manually: $SETTINGS_FILE"
+            echo "  Or reconfigure: tinyclaw setup"
+            return 1
+        fi
+    elif [ $load_rc -ne 0 ]; then
         echo -e "${YELLOW}No configuration found. Running setup wizard...${NC}"
         echo ""
         "$SCRIPT_DIR/lib/setup-wizard.sh"
@@ -50,16 +81,19 @@ start_daemon() {
     fi
 
     if [ ${#ACTIVE_CHANNELS[@]} -eq 0 ]; then
-        echo -e "${RED}No channels configured. Run './tinyclaw.sh setup' to reconfigure${NC}"
+        echo -e "${RED}No channels configured. Run 'tinyclaw setup' to reconfigure${NC}"
         return 1
     fi
+
+    # Ensure all agent workspaces have .agents/skills symlink
+    ensure_agent_skills_links
 
     # Validate tokens for channels that need them
     for ch in "${ACTIVE_CHANNELS[@]}"; do
         local token_key="${CHANNEL_TOKEN_KEY[$ch]:-}"
         if [ -n "$token_key" ] && [ -z "${CHANNEL_TOKENS[$ch]:-}" ]; then
             echo -e "${RED}${CHANNEL_DISPLAY[$ch]} is configured but bot token is missing${NC}"
-            echo "Run './tinyclaw.sh setup' to reconfigure"
+            echo "Run 'tinyclaw setup' to reconfigure"
             return 1
         fi
     done
@@ -140,8 +174,8 @@ start_daemon() {
         echo -e "${YELLOW}Starting WhatsApp client...${NC}"
         echo ""
 
-        QR_FILE="$SCRIPT_DIR/.tinyclaw/channels/whatsapp_qr.txt"
-        READY_FILE="$SCRIPT_DIR/.tinyclaw/channels/whatsapp_ready"
+        QR_FILE="$TINYCLAW_HOME/channels/whatsapp_qr.txt"
+        READY_FILE="$TINYCLAW_HOME/channels/whatsapp_ready"
         QR_DISPLAYED=false
 
         for i in {1..60}; do
@@ -188,13 +222,13 @@ start_daemon() {
             echo -e "${RED}WhatsApp didn't connect within 60 seconds${NC}"
             echo ""
             echo -e "${YELLOW}Try restarting TinyClaw:${NC}"
-            echo -e "  ${GREEN}./tinyclaw.sh restart${NC}"
+            echo -e "  ${GREEN}tinyclaw restart${NC}"
             echo ""
             echo "Or check WhatsApp client status:"
             echo -e "  ${GREEN}tmux attach -t $TMUX_SESSION${NC}"
             echo ""
             echo "Or check logs:"
-            echo -e "  ${GREEN}./tinyclaw.sh logs whatsapp${NC}"
+            echo -e "  ${GREEN}tinyclaw logs whatsapp${NC}"
             echo ""
         fi
     fi
@@ -205,8 +239,8 @@ start_daemon() {
 
     echo ""
     echo -e "${GREEN}Commands:${NC}"
-    echo "  Status:  ./tinyclaw.sh status"
-    echo "  Logs:    ./tinyclaw.sh logs [$channel_names|queue]"
+    echo "  Status:  tinyclaw status"
+    echo "  Logs:    tinyclaw logs [$channel_names|queue]"
     echo "  Attach:  tmux attach -t $TMUX_SESSION"
     echo ""
 
@@ -265,13 +299,13 @@ status_daemon() {
         echo "  Attach: tmux attach -t $TMUX_SESSION"
     else
         echo -e "Tmux Session: ${RED}Not Running${NC}"
-        echo "  Start: ./tinyclaw.sh start"
+        echo "  Start: tinyclaw start"
     fi
 
     echo ""
 
     # Channel process status
-    local ready_file="$SCRIPT_DIR/.tinyclaw/channels/whatsapp_ready"
+    local ready_file="$TINYCLAW_HOME/channels/whatsapp_ready"
 
     for ch in "${ALL_CHANNELS[@]}"; do
         local display="${CHANNEL_DISPLAY[$ch]}"

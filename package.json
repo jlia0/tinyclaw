@@ -1,19 +1,28 @@
 {
   "name": "tinyclaw",
-  "version": "0.0.1",
-  "description": "TinyClaw is a tiny agent that acts as your 24/7 personal assistant",
+  "version": "0.0.5",
+  "description": "Multi-agent, multi-team, multi-channel 24/7 AI assistant",
   "scripts": {
-    "build": "tsc",
-    "whatsapp": "node dist/whatsapp-client.js",
-    "discord": "node dist/discord-client.js",
-    "telegram": "node dist/telegram-client.js",
-    "queue": "node dist/queue-processor.js"
+    "build": "tsc && tsc -p tsconfig.visualizer.json && echo '{\"type\":\"module\"}' > dist/visualizer/package.json",
+    "build:main": "tsc",
+    "build:visualizer": "tsc -p tsconfig.visualizer.json && echo '{\"type\":\"module\"}' > dist/visualizer/package.json",
+    "whatsapp": "node dist/channels/whatsapp-client.js",
+    "discord": "node dist/channels/discord-client.js",
+    "telegram": "node dist/channels/telegram-client.js",
+    "queue": "node dist/queue-processor.js",
+    "visualize": "node dist/visualizer/team-visualizer.js"
   },
   "dependencies": {
+    "@types/react": "^19.2.14",
     "discord.js": "^14.16.0",
     "dotenv": "^16.4.0",
+    "ink": "^6.7.0",
+    "ink-gradient": "^4.0.0",
+    "ink-spinner": "^5.0.0",
+    "jsonrepair": "^3.13.2",
     "node-telegram-bot-api": "^0.67.0",
     "qrcode-terminal": "^0.12.0",
+    "react": "^19.2.4",
     "whatsapp-web.js": "^1.34.6"
   },
   "devDependencies": {

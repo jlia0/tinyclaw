@@ -16,6 +16,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -60,13 +63,19 @@ jobs:
           cp -r node_modules/ "$BUNDLE_DIR/"
           cp -r scripts/ "$BUNDLE_DIR/"
           cp -r lib/ "$BUNDLE_DIR/"
+          cp -r docs/ "$BUNDLE_DIR/"
+          cp -r .agents/ "$BUNDLE_DIR/"
 
           cp tinyclaw.sh "$BUNDLE_DIR/"
 
           cp package.json "$BUNDLE_DIR/"
           cp package-lock.json "$BUNDLE_DIR/"
           cp tsconfig.json "$BUNDLE_DIR/"
+          cp tsconfig.visualizer.json "$BUNDLE_DIR/"
           cp README.md "$BUNDLE_DIR/"
+          cp AGENTS.md "$BUNDLE_DIR/"
+          cp SOUL.md "$BUNDLE_DIR/"
+          cp heartbeat.md "$BUNDLE_DIR/"
           cp .gitignore "$BUNDLE_DIR/"
 
           # Make scripts executable
@@ -90,40 +99,21 @@ jobs:
           echo "bundle_name=$BUNDLE_NAME" >> $GITHUB_OUTPUT
           echo "bundle_size=$BUNDLE_SIZE" >> $GITHUB_OUTPUT
 
-      - name: Generate release notes
+      - name: Extract release notes from tag
         id: release_notes
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
-          cat > release_notes.md <<EOF
+          # Use for-each-ref to reliably get the annotated tag message (not the commit message)
+          TAG_MESSAGE=$(git for-each-ref --format='%(contents)' "refs/tags/$VERSION")
+          if [ -n "$TAG_MESSAGE" ]; then
+            echo "$TAG_MESSAGE" > release_notes.md
+          else
+            cat > release_notes.md <<EOF
           ## TinyClaw $VERSION
 
-          ### Installation
-
-          #### Quick Install (Recommended)
-
-          \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/remote-install.sh | bash
-          \`\`\`
-
-          This will automatically download and install TinyClaw with all dependencies.
-
-          #### Manual Install
-
-          1. Download \`tinyclaw-bundle.tar.gz\`
-          2. Extract: \`tar -xzf tinyclaw-bundle.tar.gz\`
-          3. Install: \`cd tinyclaw && ./scripts/install.sh\`
-
-          ### What's Changed
-
           See commits since last release for detailed changes.
-
-          ### Requirements
-
-          - Node.js v14+
-          - tmux
-          - Claude Code CLI
-          - Linux or macOS
           EOF
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

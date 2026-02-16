@@ -2,21 +2,28 @@
 # TinyClaw - Main daemon using tmux + claude -c -p + messaging channels
 #
 # To add a new channel:
-#   1. Create src/<channel>-client.ts
+#   1. Create src/channels/<channel>-client.ts
 #   2. Add the channel ID to ALL_CHANNELS in lib/common.sh
 #   3. Fill in the CHANNEL_* registry arrays in lib/common.sh
 #   4. Run setup wizard to enable it
 
-# Use TINYCLAW_HOME if set (for CLI wrapper), otherwise detect from script location
-if [ -n "$TINYCLAW_HOME" ]; then
-    SCRIPT_DIR="$TINYCLAW_HOME"
-else
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# SCRIPT_DIR = repo root (where bash scripts live)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# TINYCLAW_HOME = data directory (settings, queue, logs, etc.)
+# - Installed CLI sets this to ~/.tinyclaw via bin/tinyclaw
+# - Local dev: detect from local .tinyclaw/ or fall back to ~/.tinyclaw
+if [ -z "$TINYCLAW_HOME" ]; then
+    if [ -f "$SCRIPT_DIR/.tinyclaw/settings.json" ]; then
+        TINYCLAW_HOME="$SCRIPT_DIR/.tinyclaw"
+    else
+        TINYCLAW_HOME="$HOME/.tinyclaw"
+    fi
 fi
+
 TMUX_SESSION="tinyclaw"
-# Centralize all logs to ~/.tinyclaw/logs
-LOG_DIR="$HOME/.tinyclaw/logs"
-SETTINGS_FILE="$HOME/.tinyclaw/settings.json"
+LOG_DIR="$TINYCLAW_HOME/logs"
+SETTINGS_FILE="$TINYCLAW_HOME/settings.json"
 
 mkdir -p "$LOG_DIR"
 
@@ -25,6 +32,8 @@ source "$SCRIPT_DIR/lib/common.sh"
 source "$SCRIPT_DIR/lib/daemon.sh"
 source "$SCRIPT_DIR/lib/messaging.sh"
 source "$SCRIPT_DIR/lib/agents.sh"
+source "$SCRIPT_DIR/lib/teams.sh"
+source "$SCRIPT_DIR/lib/pairing.sh"
 source "$SCRIPT_DIR/lib/update.sh"
 
 # --- Main command dispatch ---
@@ -57,12 +66,19 @@ case "${1:-}" in
         logs "$2"
         ;;
     reset)
-        echo -e "${YELLOW}Resetting conversation...${NC}"
-        touch "$SCRIPT_DIR/.tinyclaw/reset_flag"
-        echo -e "${GREEN}✓ Reset flag set${NC}"
-        echo ""
-        echo "The next message will start a fresh conversation (without -c)."
-        echo "After that, conversation will continue normally."
+        if [ -z "$2" ]; then
+            echo "Usage: $0 reset <agent_id> [agent_id2 ...]"
+            echo ""
+            echo "Reset specific agent conversation(s)."
+            echo ""
+            echo "Examples:"
+            echo "  $0 reset coder"
+            echo "  $0 reset coder researcher"
+            echo "  $0 reset coder researcher reviewer"
+            exit 1
+        fi
+        shift  # remove 'reset'
+        agent_reset_multiple "$@"
         ;;
     channels)
         if [ "$2" = "reset" ] && [ -n "$3" ]; then
@@ -116,7 +132,7 @@ case "${1:-}" in
                         jq ".models.provider = \"anthropic\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                         echo -e "${GREEN}✓ Switched to Anthropic provider${NC}"
                         echo ""
-                        echo "Use './tinyclaw.sh model {sonnet|opus}' to set the model."
+                        echo "Use 'tinyclaw model {sonnet|opus}' to set the model."
                     fi
                     ;;
                 openai)
@@ -138,7 +154,7 @@ case "${1:-}" in
                         jq ".models.provider = \"openai\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                         echo -e "${GREEN}✓ Switched to OpenAI/Codex provider${NC}"
                         echo ""
-                        echo "Use './tinyclaw.sh model {gpt-5.3-codex|gpt-5.2}' to set the model."
+                        echo "Use 'tinyclaw model {gpt-5.3-codex|gpt-5.2}' to set the model."
                         echo "Note: Make sure you have the 'codex' CLI installed and authenticated."
                     fi
                     ;;
@@ -251,20 +267,36 @@ case "${1:-}" in
                 ;;
             reset)
                 if [ -z "$3" ]; then
-                    echo "Usage: $0 agent reset <agent_id>"
+                    echo "Usage: $0 agent reset <agent_id> [agent_id2 ...]"
                     exit 1
                 fi
-                agent_reset "$3"
+                shift 2  # remove 'agent' and 'reset'
+                agent_reset_multiple "$@"
+                ;;
+            provider)
+                if [ -z "$3" ]; then
+                    echo "Usage: $0 agent provider <agent_id> [provider] [--model MODEL_NAME]"
+                    echo ""
+                    echo "Examples:"
+                    echo "  $0 agent provider coder                                    # Show current provider/model"
+                    echo "  $0 agent provider coder anthropic                           # Switch to Anthropic"
+                    echo "  $0 agent provider coder openai                              # Switch to OpenAI"
+                    echo "  $0 agent provider coder anthropic --model opus              # Switch to Anthropic Opus"
+                    echo "  $0 agent provider coder openai --model gpt-5.3-codex        # Switch to OpenAI GPT-5.3 Codex"
+                    exit 1
+                fi
+                agent_provider "$3" "$4" "$5" "$6"
                 ;;
             *)
-                echo "Usage: $0 agent {list|add|remove|show|reset}"
+                echo "Usage: $0 agent {list|add|remove|show|reset|provider}"
                 echo ""
                 echo "Agent Commands:"
                 echo "  list                   List all configured agents"
                 echo "  add                    Add a new agent interactively"
                 echo "  remove <id>            Remove an agent"
                 echo "  show <id>              Show agent configuration"
-                echo "  reset <id>             Reset an agent's conversation"
+                echo "  reset <id> [id2 ...]   Reset agent conversation(s)"
+                echo "  provider <id> [...]    Show or set agent's provider and model"
                 echo ""
                 echo "Examples:"
                 echo "  $0 agent list"
@@ -272,11 +304,79 @@ case "${1:-}" in
                 echo "  $0 agent show coder"
                 echo "  $0 agent remove coder"
                 echo "  $0 agent reset coder"
+                echo "  $0 agent reset coder researcher"
+                echo "  $0 agent provider coder anthropic --model opus"
                 echo ""
                 echo "In chat, use '@agent_id message' to route to a specific agent."
                 exit 1
                 ;;
         esac
+        ;;
+    team)
+        case "${2:-}" in
+            list|ls)
+                team_list
+                ;;
+            add)
+                team_add
+                ;;
+            remove|rm)
+                if [ -z "$3" ]; then
+                    echo "Usage: $0 team remove <team_id>"
+                    exit 1
+                fi
+                team_remove "$3"
+                ;;
+            show)
+                if [ -z "$3" ]; then
+                    echo "Usage: $0 team show <team_id>"
+                    exit 1
+                fi
+                team_show "$3"
+                ;;
+            visualize|viz)
+                # Build visualizer if needed
+                if [ ! -f "$SCRIPT_DIR/dist/visualizer/team-visualizer.js" ] || \
+                   [ "$SCRIPT_DIR/src/visualizer/team-visualizer.tsx" -nt "$SCRIPT_DIR/dist/visualizer/team-visualizer.js" ]; then
+                    echo -e "${BLUE}Building team visualizer...${NC}"
+                    cd "$SCRIPT_DIR" && npm run build:visualizer 2>/dev/null
+                    if [ $? -ne 0 ]; then
+                        echo -e "${RED}Failed to build visualizer.${NC}"
+                        exit 1
+                    fi
+                fi
+                if [ -n "$3" ]; then
+                    node "$SCRIPT_DIR/dist/visualizer/team-visualizer.js" --team "$3"
+                else
+                    node "$SCRIPT_DIR/dist/visualizer/team-visualizer.js"
+                fi
+                ;;
+            *)
+                echo "Usage: $0 team {list|add|remove|show|visualize}"
+                echo ""
+                echo "Team Commands:"
+                echo "  list                   List all configured teams"
+                echo "  add                    Add a new team interactively"
+                echo "  remove <id>            Remove a team"
+                echo "  show <id>              Show team configuration"
+                echo "  visualize [team_id]    Live TUI dashboard for team collaboration"
+                echo ""
+                echo "Examples:"
+                echo "  $0 team list"
+                echo "  $0 team add"
+                echo "  $0 team show dev"
+                echo "  $0 team remove dev"
+                echo "  $0 team visualize"
+                echo "  $0 team visualize dev"
+                echo ""
+                echo "In chat, use '@team_id message' to route to a team's leader agent."
+                echo "Agents can collaborate by mentioning @teammate in responses."
+                exit 1
+                ;;
+        esac
+        ;;
+    pairing)
+        pairing_command "${2:-}" "${3:-}"
         ;;
     attach)
         tmux attach -t "$TMUX_SESSION"
@@ -291,7 +391,7 @@ case "${1:-}" in
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
         echo -e "${BLUE}TinyClaw - Claude Code + Messaging Channels${NC}"
         echo ""
-        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset|channels|provider|model|agent|update|attach}"
+        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channels|provider|model|agent|team|pairing|update|attach}"
         echo ""
         echo "Commands:"
         echo "  start                    Start TinyClaw"
@@ -301,11 +401,13 @@ case "${1:-}" in
         echo "  setup                    Run setup wizard (change channels/provider/model/heartbeat)"
         echo "  send <msg>               Send message to AI manually"
         echo "  logs [type]              View logs ($local_names|heartbeat|daemon|queue|all)"
-        echo "  reset                    Reset conversation (next message starts fresh)"
+        echo "  reset <id> [id2 ...]     Reset specific agent conversation(s)"
         echo "  channels reset <channel> Reset channel auth ($local_names)"
         echo "  provider [name] [--model model]  Show or switch AI provider"
         echo "  model [name]             Show or switch AI model"
-        echo "  agent {list|add|remove|show|reset}  Manage agents"
+        echo "  agent {list|add|remove|show|reset|provider}  Manage agents"
+        echo "  team {list|add|remove|show|visualize}  Manage teams"
+        echo "  pairing {pending|approved|list|approve <code>|unpair <channel> <sender_id>}  Manage sender approvals"
         echo "  update                   Update TinyClaw to latest version"
         echo "  attach                   Attach to tmux session"
         echo ""
@@ -314,9 +416,17 @@ case "${1:-}" in
         echo "  $0 status"
         echo "  $0 provider openai --model gpt-5.3-codex"
         echo "  $0 model opus"
+        echo "  $0 reset coder"
+        echo "  $0 reset coder researcher"
         echo "  $0 agent list"
         echo "  $0 agent add"
+        echo "  $0 team list"
+        echo "  $0 team visualize dev"
+        echo "  $0 pairing pending"
+        echo "  $0 pairing approve ABCD1234"
+        echo "  $0 pairing unpair telegram 123456789"
         echo "  $0 send '@coder fix the bug'"
+        echo "  $0 send '@dev fix the auth bug'"
         echo "  $0 channels reset whatsapp"
         echo "  $0 logs telegram"
         echo ""

@@ -21,7 +21,7 @@ brew install bash
 export PATH="/opt/homebrew/bin:$PATH"
 
 # Or run directly with the new bash
-/opt/homebrew/bin/bash ./tinyclaw.sh start
+tinyclaw start
 ```
 
 ### Node.js dependencies not installing

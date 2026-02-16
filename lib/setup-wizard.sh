@@ -11,8 +11,6 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-mkdir -p "$PROJECT_ROOT/.tinyclaw"
-
 echo ""
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  TinyClaw - Setup Wizard${NC}"
@@ -361,9 +359,9 @@ done
 echo -e "${GREEN}✓ Configuration saved to ~/.tinyclaw/settings.json${NC}"
 echo ""
 echo "You can manage agents later with:"
-echo -e "  ${GREEN}./tinyclaw.sh agent list${NC}    - List agents"
-echo -e "  ${GREEN}./tinyclaw.sh agent add${NC}     - Add more agents"
+echo -e "  ${GREEN}tinyclaw agent list${NC}    - List agents"
+echo -e "  ${GREEN}tinyclaw agent add${NC}     - Add more agents"
 echo ""
 echo "You can now start TinyClaw:"
-echo -e "  ${GREEN}./tinyclaw.sh start${NC}"
+echo -e "  ${GREEN}tinyclaw start${NC}"
 echo ""

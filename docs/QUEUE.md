@@ -294,24 +294,17 @@ This prevents confusion and teases the upcoming feature!
 
 ## Reset System
 
-### Global Reset
-
-Creates `~/.tinyclaw/reset_flag`:
-
-```bash
-./tinyclaw.sh reset
-```
-
-Next message to **any agent** starts fresh (no `-c` flag).
-
 ### Per-Agent Reset
 
-Creates `~/workspace/{agent_id}/reset_flag`:
+Creates `<workspace>/<agent_id>/reset_flag`:
 
 ```bash
-./tinyclaw.sh agent reset coder
+tinyclaw reset coder
+tinyclaw reset coder researcher    # reset multiple agents
+tinyclaw agent reset coder
 # Or in chat:
-@coder /reset
+/reset @coder
+/reset @coder @researcher
 ```
 
 Next message to **that agent** starts fresh.
@@ -321,12 +314,11 @@ Next message to **that agent** starts fresh.
 Queue processor checks before each message:
 
 ```typescript
-const globalReset = fs.existsSync(RESET_FLAG);
 const agentReset = fs.existsSync(`${agentDir}/reset_flag`);
 
-if (globalReset || agentReset) {
+if (agentReset) {
   // Don't pass -c flag to CLI
-  // Delete flag files
+  // Delete flag file
 }
 ```
 
@@ -436,12 +428,12 @@ tail -f ~/.tinyclaw/logs/queue.log
 
 **Messages stuck in incoming:**
 - Queue processor not running
-- Check: `./tinyclaw.sh status`
+- Check: `tinyclaw status`
 
 **Messages stuck in processing:**
 - AI CLI crashed or hung
 - Manual cleanup: `rm ~/.tinyclaw/queue/processing/*`
-- Restart: `./tinyclaw.sh restart`
+- Restart: `tinyclaw restart`
 
 **No responses generated:**
 - Check agent routing (wrong @agent_id?)
