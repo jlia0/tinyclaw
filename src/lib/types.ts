@@ -14,6 +14,7 @@ export interface TeamConfig {
 export interface ChainStep {
     agentId: string;
     response: string;
+    sessionId?: string;
 }
 
 export interface Settings {
@@ -83,6 +84,9 @@ export interface ResponseData {
     messageId: string;
     agent?: string; // which agent handled this
     files?: string[];
+    sessionId?: string;
+    partial?: boolean;
+    updateType?: 'activity' | 'final';
 }
 
 export interface QueueFile {

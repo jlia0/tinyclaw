@@ -67,6 +67,9 @@ interface ResponseData {
     timestamp: number;
     messageId: string;
     files?: string[];
+    sessionId?: string;
+    partial?: boolean;
+    updateType?: 'activity' | 'final';
 }
 
 function sanitizeFileName(fileName: string): string {
@@ -481,14 +484,15 @@ async function checkOutgoingQueue(): Promise<void> {
 
     try {
         const files = fs.readdirSync(QUEUE_OUTGOING)
-            .filter(f => f.startsWith('telegram_') && f.endsWith('.json'));
+            .filter(f => f.startsWith('telegram_') && f.endsWith('.json'))
+            .sort();
 
         for (const file of files) {
             const filePath = path.join(QUEUE_OUTGOING, file);
 
             try {
                 const responseData: ResponseData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                const { messageId, message: responseText, sender, senderId } = responseData;
+                const { messageId, message: responseText, sender, senderId, sessionId } = responseData;
 
                 // Find pending message, or fall back to senderId for proactive messages
                 const pending = pendingMessages.get(messageId);
@@ -519,7 +523,11 @@ async function checkOutgoingQueue(): Promise<void> {
 
                     // Split message if needed (Telegram 4096 char limit)
                     if (responseText) {
-                        const chunks = splitMessage(responseText);
+                        // Append session ID to final (non-partial) responses
+                        const messageWithSession = (!responseData.partial && sessionId)
+                            ? `${responseText}\n\nSession: ${sessionId}`
+                            : responseText;
+                        const chunks = splitMessage(messageWithSession);
 
                         if (chunks.length > 0) {
                             await bot.sendMessage(targetChatId, chunks[0]!, pending
@@ -534,7 +542,11 @@ async function checkOutgoingQueue(): Promise<void> {
 
                     log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
 
-                    if (pending) pendingMessages.delete(messageId);
+                    // Only clear pending state when the final response arrives
+                    // Partial (activity) updates keep the message pending
+                    if (!responseData.partial) {
+                        if (pending) pendingMessages.delete(messageId);
+                    }
                     fs.unlinkSync(filePath);
                 } else {
                     log('WARN', `No pending message for ${messageId} and no valid senderId, cleaning up`);

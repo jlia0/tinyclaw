@@ -24,7 +24,7 @@ import {
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
-import { invokeAgent } from './lib/invoke';
+import { invokeAgent, AgentInvokeResult } from './lib/invoke';
 
 // Ensure directories exist
 [QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, FILES_DIR, path.dirname(LOG_FILE)].forEach(dir => {
@@ -232,6 +232,36 @@ async function processMessage(messageFile: string): Promise<void> {
         const { channel, sender, message: rawMessage, timestamp, messageId } = messageData;
         const isInternal = !!messageData.conversationId;
 
+        // Helper to write responses (both partial activity updates and final responses)
+        const writeResponse = (payload: {
+            message: string;
+            agent?: string;
+            files?: string[];
+            sessionId?: string;
+            partial?: boolean;
+            updateType?: 'activity' | 'final';
+        }): void => {
+            const responseData: ResponseData = {
+                channel,
+                sender,
+                message: payload.message,
+                originalMessage: rawMessage,
+                timestamp: Date.now(),
+                messageId,
+                agent: payload.agent,
+                files: payload.files,
+                sessionId: payload.sessionId,
+                partial: payload.partial,
+                updateType: payload.updateType,
+            };
+
+            const responseFile = channel === 'heartbeat'
+                ? path.join(QUEUE_OUTGOING, `${messageId}.json`)
+                : path.join(QUEUE_OUTGOING, `${channel}_${messageId}_${Date.now()}.json`);
+
+            fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
+        };
+
         log('INFO', `Processing [${isInternal ? 'internal' : channel}] ${isInternal ? `@${messageData.fromAgent}→@${messageData.agent}` : `from ${sender}`}: ${rawMessage.substring(0, 50)}...`);
         if (!isInternal) {
             emitEvent('message_received', { channel, sender, message: rawMessage.substring(0, 120), messageId });
@@ -340,11 +370,31 @@ async function processMessage(messageFile: string): Promise<void> {
             }
         }
 
+        // Activity streaming: send real-time tool use updates to Telegram
+        const streamActivitiesEnabled = channel === 'telegram';
+        const activityEmitterForAgent = (activeAgentId: string) => (activity: string): void => {
+            const prefix = streamActivitiesEnabled && teamContext ? `@${activeAgentId}: ` : '';
+            const activityMessage = `${prefix}${activity}`;
+            log('DEBUG', `[ACTIVITY] Emitting activity for ${activeAgentId}: ${activity}`);
+            writeResponse({
+                message: activityMessage,
+                agent: activeAgentId,
+                partial: true,
+                updateType: 'activity',
+            });
+        };
+
         // Invoke agent
         emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: messageData.fromAgent || null });
         let response: string;
+        let sessionId: string | undefined;
         try {
-            response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+            const invokeResult = await invokeAgent(
+                agent, agentId, message, workspacePath, shouldReset, agents, teams,
+                streamActivitiesEnabled ? { onActivity: activityEmitterForAgent(agentId) } : undefined
+            );
+            response = invokeResult.text;
+            sessionId = invokeResult.sessionId;
         } catch (error) {
             const provider = agent.provider || 'anthropic';
             log('ERROR', `${provider === 'openai' ? 'Codex' : 'Claude'} error (agent: ${agentId}): ${(error as Error).message}`);
@@ -368,22 +418,13 @@ async function processMessage(messageFile: string): Promise<void> {
             // Handle long responses — send as file attachment
             const { message: responseMessage, files: allFiles } = handleLongResponse(finalResponse, outboundFiles);
 
-            const responseData: ResponseData = {
-                channel,
-                sender,
+            writeResponse({
                 message: responseMessage,
-                originalMessage: rawMessage,
-                timestamp: Date.now(),
-                messageId,
                 agent: agentId,
                 files: allFiles.length > 0 ? allFiles : undefined,
-            };
-
-            const responseFile = channel === 'heartbeat'
-                ? path.join(QUEUE_OUTGOING, `${messageId}.json`)
-                : path.join(QUEUE_OUTGOING, `${channel}_${messageId}_${Date.now()}.json`);
-
-            fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
+                sessionId,
+                updateType: 'final',
+            });
 
             log('INFO', `✓ Response ready [${channel}] ${sender} via agent:${agentId} (${finalResponse.length} chars)`);
             emitEvent('response_ready', { channel, sender, agentId, responseLength: finalResponse.length, responseText: finalResponse, messageId });
@@ -422,7 +463,7 @@ async function processMessage(messageFile: string): Promise<void> {
         }
 
         // Record this agent's response
-        conv.responses.push({ agentId, response });
+        conv.responses.push({ agentId, response, sessionId });
         conv.totalMessages++;
         collectFiles(response, conv.files);
 
