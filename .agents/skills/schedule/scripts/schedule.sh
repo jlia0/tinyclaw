@@ -103,9 +103,9 @@ build_cron_command() {
 QUEUE_INCOMING="$QUEUE_INCOMING"
 TS=\$(date +%s)
 MSG_ID="${label}_\${TS}_\$\$"
-cat > "\$QUEUE_INCOMING/\${MSG_ID}.json" <<JSON
-{"channel":"$channel","sender":"$sender","senderId":"${TAG_PREFIX}:${label}","message":"@${agent} ${escaped_message}","timestamp":\${TS}000,"messageId":"\$MSG_ID"}
-JSON
+printf '{"channel":"%s","sender":"%s","senderId":"%s","message":"%s","timestamp":%s000,"messageId":"%s"}\n' \
+    "$channel" "$sender" "${TAG_PREFIX}:${label}" "@${agent} ${escaped_message}" "\$TS" "\$MSG_ID" \
+    > "\$QUEUE_INCOMING/\${MSG_ID}.json"
 HELPER
     chmod +x "$helper"
 
