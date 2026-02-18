@@ -65,6 +65,7 @@ The setup wizard will guide you through:
 5. **AI provider** - Select Anthropic (Claude) or OpenAI
 6. **Model selection** - Choose model (e.g., Sonnet, Opus, GPT-5.3)
 7. **Heartbeat interval** - Set proactive check-in frequency
+8. **Memory retrieval (optional)** - Enable/disable QMD-based memory at setup time
 
 <details>
 <summary><b>📱 Channel Setup Guides</b></summary>
@@ -394,7 +395,10 @@ Located at `.tinyclaw/settings.json`:
       "min_score": 0.05,
       "max_chars": 2500,
       "update_interval_seconds": 120,
-      "use_semantic_search": false
+      "use_semantic_search": false,
+      "disable_query_expansion": true,
+      "allow_unsafe_vsearch": false,
+      "debug_logging": false
     }
   }
 }
@@ -424,6 +428,11 @@ qmd status
 # Optional: if qmd is not in PATH, set memory.qmd.command in settings.json
 tinyclaw restart
 ```
+
+Safety note:
+- If `use_semantic_search` is enabled, TinyClaw defaults to safe mode and will fall back to BM25 unless disable-expansion support is detected.
+- Set `memory.qmd.allow_unsafe_vsearch: true` only if you explicitly want to allow unguarded `vsearch`.
+- Set `memory.qmd.debug_logging: true` to print QMD memory debug logs (command/mode/timeout) in `queue.log`.
 
 ### Heartbeat Configuration
 

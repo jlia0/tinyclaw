@@ -21,6 +21,7 @@ if [ -f "$SCRIPT_DIR/.tinyclaw/settings.json" ]; then
 else
     SETTINGS_FILE="$HOME/.tinyclaw/settings.json"
 fi
+RESET_FLAG_FILE="$(dirname "$SETTINGS_FILE")/reset_flag"
 
 mkdir -p "$LOG_DIR"
 
@@ -63,7 +64,7 @@ case "${1:-}" in
         ;;
     reset)
         echo -e "${YELLOW}Resetting conversation...${NC}"
-        touch "$SCRIPT_DIR/.tinyclaw/reset_flag"
+        touch "$RESET_FLAG_FILE"
         echo -e "${GREEN}✓ Reset flag set${NC}"
         echo ""
         echo "The next message will start a fresh conversation (without -c)."

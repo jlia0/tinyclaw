@@ -51,6 +51,13 @@ export interface Settings {
             max_chars?: number;
             update_interval_seconds?: number;
             use_semantic_search?: boolean;
+            disable_query_expansion?: boolean;
+            allow_unsafe_vsearch?: boolean;
+            quick_precheck_enabled?: boolean;
+            precheck_timeout_ms?: number;
+            search_timeout_ms?: number;
+            vector_search_timeout_ms?: number;
+            debug_logging?: boolean;
         };
     };
 }

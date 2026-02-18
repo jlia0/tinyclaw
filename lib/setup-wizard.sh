@@ -174,6 +174,39 @@ DEFAULT_AGENT_NAME=$(echo "$DEFAULT_AGENT_NAME" | tr ' ' '-' | tr -cd 'a-zA-Z0-9
 echo -e "${GREEN}✓ Default agent: $DEFAULT_AGENT_NAME${NC}"
 echo ""
 
+# Optional memory retrieval setup
+echo "Enable memory retrieval (QMD)?"
+echo -e "${YELLOW}(Optional. If disabled, TinyClaw still works normally.)${NC}"
+echo ""
+read -rp "Enable memory retrieval? [y/N]: " ENABLE_MEMORY
+
+MEMORY_ENABLED=false
+USE_SEMANTIC_SEARCH=false
+QMD_COMMAND=""
+
+if [[ "$ENABLE_MEMORY" =~ ^[yY] ]]; then
+    MEMORY_ENABLED=true
+
+    if [ -x "$HOME/.bun/bin/qmd" ]; then
+        QMD_COMMAND="$HOME/.bun/bin/qmd"
+    elif command -v qmd >/dev/null 2>&1; then
+        QMD_COMMAND="$(command -v qmd)"
+    fi
+
+    if [ -n "$QMD_COMMAND" ]; then
+        echo -e "${GREEN}✓ Found qmd: $QMD_COMMAND${NC}"
+    else
+        echo -e "${YELLOW}⚠ qmd not found in PATH right now.${NC}"
+        echo -e "${YELLOW}  You can install later with: bun install -g github:tobi/qmd${NC}"
+    fi
+
+    read -rp "Use semantic search (vector)? [y/N]: " USE_SEMANTIC
+    if [[ "$USE_SEMANTIC" =~ ^[yY] ]]; then
+        USE_SEMANTIC_SEARCH=true
+    fi
+fi
+echo ""
+
 # --- Additional Agents (optional) ---
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  Additional Agents (Optional)${NC}"
@@ -274,6 +307,12 @@ else
     MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
 fi
 
+if [ "$MEMORY_ENABLED" = true ]; then
+    MEMORY_SECTION='"memory": { "enabled": true, "qmd": { "enabled": true, "command": "'"${QMD_COMMAND}"'", "top_k": 4, "min_score": 0.05, "max_chars": 2500, "update_interval_seconds": 300, "use_semantic_search": '"${USE_SEMANTIC_SEARCH}"', "disable_query_expansion": true, "allow_unsafe_vsearch": false, "debug_logging": false } },'
+else
+    MEMORY_SECTION='"memory": { "enabled": false },'
+fi
+
 cat > "$SETTINGS_FILE" <<EOF
 {
   "workspace": {
@@ -292,6 +331,7 @@ cat > "$SETTINGS_FILE" <<EOF
   },
   ${AGENTS_JSON}
   ${MODELS_SECTION},
+  ${MEMORY_SECTION}
   "monitoring": {
     "heartbeat_interval": ${HEARTBEAT_INTERVAL}
   }
