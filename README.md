@@ -68,6 +68,12 @@ git clone https://github.com/jlia0/tinyclaw.git
 cd tinyclaw && npm install && ./scripts/install.sh
 ```
 
+**Option 4: Advanced for Developers with Docker Installed**
+
+1. Git Clone in vscode
+2. Command Pallet -> DevContainers: Reopen in Container
+3. ./tinyclaw.sh commands or ./scripts/install.sh to install
+
 ### First Run
 
 ```bash
@@ -135,15 +141,15 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 
 ### Agent Commands
 
-| Command                              | Description                      | Example                                          |
-| ------------------------------------ | -------------------------------- | ------------------------------------------------ |
-| `agent list`                         | List all configured agents       | `tinyclaw agent list`                            |
-| `agent add`                          | Add new agent (interactive)      | `tinyclaw agent add`                             |
-| `agent show <id>`                    | Show agent configuration         | `tinyclaw agent show coder`                      |
-| `agent remove <id>`                  | Remove an agent                  | `tinyclaw agent remove coder`                    |
-| `agent reset <id>`                   | Reset agent conversation         | `tinyclaw agent reset coder`                     |
-| `agent provider <id> [provider]`     | Show or set agent's AI provider  | `tinyclaw agent provider coder anthropic`        |
-| `agent provider <id> <p> --model <m>`| Set agent's provider and model   | `tinyclaw agent provider coder openai --model gpt-5.3-codex` |
+| Command                               | Description                     | Example                                                      |
+| ------------------------------------- | ------------------------------- | ------------------------------------------------------------ |
+| `agent list`                          | List all configured agents      | `tinyclaw agent list`                                        |
+| `agent add`                           | Add new agent (interactive)     | `tinyclaw agent add`                                         |
+| `agent show <id>`                     | Show agent configuration        | `tinyclaw agent show coder`                                  |
+| `agent remove <id>`                   | Remove an agent                 | `tinyclaw agent remove coder`                                |
+| `agent reset <id>`                    | Reset agent conversation        | `tinyclaw agent reset coder`                                 |
+| `agent provider <id> [provider]`      | Show or set agent's AI provider | `tinyclaw agent provider coder anthropic`                    |
+| `agent provider <id> <p> --model <m>` | Set agent's provider and model  | `tinyclaw agent provider coder openai --model gpt-5.3-codex` |
 
 ### Team Commands
 
