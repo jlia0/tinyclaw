@@ -1,0 +1,26 @@
+{
+    "name": "TinyClaw Dev",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "postCreateCommand": "bash .devcontainer/post-create.sh",
+    "remoteUser": "node",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "dbaeumer.vscode-eslint",
+                "esbenp.prettier-vscode",
+                "mads-hartmann.bash-ide-vscode"
+            ],
+            "settings": {
+                "editor.formatOnSave": true,
+                "editor.tabSize": 2,
+                "editor.insertSpaces": true,
+                "files.insertFinalNewline": true,
+                "files.trimTrailingWhitespace": true,
+                "typescript.tsdk": "node_modules/typescript/lib"
+            }
+        }
+    }
+}
