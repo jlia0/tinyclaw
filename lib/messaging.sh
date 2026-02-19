@@ -1,19 +1,34 @@
 #!/usr/bin/env bash
 # Messaging and logging functions for TinyClaw
 
-# Send message to Claude and get response
+# Send message by writing to the incoming queue
 send_message() {
     local message="$1"
-    local source="${2:-manual}"
+    local channel="${2:-cli}"
 
-    log "[$source] Sending: ${message:0:50}..."
+    local queue_incoming="$TINYCLAW_HOME/queue/incoming"
+    mkdir -p "$queue_incoming"
 
-    cd "$SCRIPT_DIR"
-    RESPONSE=$(claude --dangerously-skip-permissions -c -p "$message" 2>&1)
+    local timestamp
+    timestamp=$(date +%s%3N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1000))')
+    local msg_id="${channel}_${timestamp}_$$"
+    local queue_file="$queue_incoming/${msg_id}.json"
 
-    echo "$RESPONSE"
+    # Write queue message in the same format used by other channels
+    cat > "$queue_file" <<QEOF
+{
+  "channel": "$channel",
+  "sender": "CLI User",
+  "senderId": "cli",
+  "message": $(printf '%s' "$message" | jq -Rs .),
+  "timestamp": $timestamp,
+  "messageId": "$msg_id"
+}
+QEOF
 
-    log "[$source] Response length: ${#RESPONSE} chars"
+    log "[$channel] Queued message: ${message:0:50}..."
+    echo -e "${GREEN}✓ Message queued${NC} (id: $msg_id)"
+    echo "The queue processor will handle it. Check logs with: tinyclaw logs queue"
 }
 
 # View logs
