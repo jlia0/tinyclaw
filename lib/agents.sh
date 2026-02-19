@@ -54,10 +54,17 @@ agent_list() {
     echo "================="
     echo ""
 
-    jq -r '(.agents // {}) | to_entries[] | "\(.key)|\(.value.name)|\(.value.provider)|\(.value.model)|\(.value.working_directory)"' "$SETTINGS_FILE" 2>/dev/null | \
-    while IFS='|' read -r id name provider model workdir; do
+    jq -r '(.agents // {}) | to_entries[] | "\(.key)|\(.value.name)|\(.value.provider)|\(.value.model)|\(.value.working_directory)|\(.value.chrome // "null")"' "$SETTINGS_FILE" 2>/dev/null | \
+    while IFS='|' read -r id name provider model workdir chrome; do
         echo -e "  ${GREEN}@${id}${NC} - ${name}"
         echo "    Provider:  ${provider}/${model}"
+        if [ "$provider" = "anthropic" ]; then
+            if [ "$chrome" = "false" ]; then
+                echo "    Chrome:    disabled"
+            else
+                echo "    Chrome:    enabled"
+            fi
+        fi
         echo "    Directory: ${workdir}"
         echo ""
     done
@@ -188,6 +195,17 @@ agent_add() {
         esac
     fi
 
+    # Chrome browser automation (Anthropic only)
+    AGENT_CHROME="true"
+    if [ "$AGENT_PROVIDER" = "anthropic" ]; then
+        echo ""
+        read -rp "Enable Chrome browser automation? [Y/n]: " AGENT_CHROME_INPUT
+        if [[ "$AGENT_CHROME_INPUT" =~ ^[nN] ]]; then
+            AGENT_CHROME="false"
+        fi
+        echo -e "${GREEN}✓ Chrome: $AGENT_CHROME${NC}"
+    fi
+
     # Working directory - automatically set to agent directory
     AGENT_WORKDIR="$AGENTS_DIR/$AGENT_ID"
 
@@ -196,17 +214,33 @@ agent_add() {
 
     # Build the agent JSON object
     local agent_json
-    agent_json=$(jq -n \
-        --arg name "$AGENT_NAME" \
-        --arg provider "$AGENT_PROVIDER" \
-        --arg model "$AGENT_MODEL" \
-        --arg workdir "$AGENT_WORKDIR" \
-        '{
-            name: $name,
-            provider: $provider,
-            model: $model,
-            working_directory: $workdir
-        }')
+    if [ "$AGENT_PROVIDER" = "anthropic" ]; then
+        agent_json=$(jq -n \
+            --arg name "$AGENT_NAME" \
+            --arg provider "$AGENT_PROVIDER" \
+            --arg model "$AGENT_MODEL" \
+            --arg workdir "$AGENT_WORKDIR" \
+            --argjson chrome "$AGENT_CHROME" \
+            '{
+                name: $name,
+                provider: $provider,
+                model: $model,
+                working_directory: $workdir,
+                chrome: $chrome
+            }')
+    else
+        agent_json=$(jq -n \
+            --arg name "$AGENT_NAME" \
+            --arg provider "$AGENT_PROVIDER" \
+            --arg model "$AGENT_MODEL" \
+            --arg workdir "$AGENT_WORKDIR" \
+            '{
+                name: $name,
+                provider: $provider,
+                model: $model,
+                working_directory: $workdir
+            }')
+    fi
 
     # Ensure agents section exists and add the new agent
     jq --arg id "$AGENT_ID" --argjson agent "$agent_json" \

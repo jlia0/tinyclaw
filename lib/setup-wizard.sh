@@ -187,6 +187,17 @@ else
     echo ""
 fi
 
+# Chrome browser automation (Anthropic only)
+CHROME_ENABLED="true"
+if [ "$PROVIDER" = "anthropic" ]; then
+    read -rp "Enable Chrome browser automation? [Y/n]: " CHROME_INPUT
+    if [[ "$CHROME_INPUT" =~ ^[nN] ]]; then
+        CHROME_ENABLED="false"
+    fi
+    echo -e "${GREEN}✓ Chrome: $CHROME_ENABLED${NC}"
+    echo ""
+fi
+
 # Heartbeat interval
 echo "Heartbeat interval (seconds)?"
 echo -e "${YELLOW}(How often Claude checks in proactively)${NC}"
@@ -244,7 +255,11 @@ DEFAULT_AGENT_DIR="$WORKSPACE_PATH/$DEFAULT_AGENT_NAME"
 # Capitalize first letter of agent name (proper bash method)
 DEFAULT_AGENT_DISPLAY="$(tr '[:lower:]' '[:upper:]' <<< "${DEFAULT_AGENT_NAME:0:1}")${DEFAULT_AGENT_NAME:1}"
 AGENTS_JSON='"agents": {'
-AGENTS_JSON="$AGENTS_JSON \"$DEFAULT_AGENT_NAME\": { \"name\": \"$DEFAULT_AGENT_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_AGENT_DIR\" }"
+if [ "$PROVIDER" = "anthropic" ]; then
+    AGENTS_JSON="$AGENTS_JSON \"$DEFAULT_AGENT_NAME\": { \"name\": \"$DEFAULT_AGENT_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_AGENT_DIR\", \"chrome\": $CHROME_ENABLED }"
+else
+    AGENTS_JSON="$AGENTS_JSON \"$DEFAULT_AGENT_NAME\": { \"name\": \"$DEFAULT_AGENT_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_AGENT_DIR\" }"
+fi
 
 ADDITIONAL_AGENTS=()  # Track additional agent IDs for directory creation
 
@@ -308,7 +323,21 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
 
         NEW_AGENT_DIR="$WORKSPACE_PATH/$NEW_AGENT_ID"
 
-        AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_AGENT_DIR\" }"
+        # Chrome browser automation (Anthropic only)
+        NEW_CHROME_ENABLED="true"
+        if [ "$NEW_PROVIDER" = "anthropic" ]; then
+            read -rp "  Enable Chrome browser automation? [Y/n]: " NEW_CHROME_INPUT
+            if [[ "$NEW_CHROME_INPUT" =~ ^[nN] ]]; then
+                NEW_CHROME_ENABLED="false"
+            fi
+            echo -e "  ${GREEN}✓ Chrome: $NEW_CHROME_ENABLED${NC}"
+        fi
+
+        if [ "$NEW_PROVIDER" = "anthropic" ]; then
+            AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_AGENT_DIR\", \"chrome\": $NEW_CHROME_ENABLED }"
+        else
+            AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_AGENT_DIR\" }"
+        fi
 
         # Track this agent for directory creation later
         ADDITIONAL_AGENTS+=("$NEW_AGENT_ID")

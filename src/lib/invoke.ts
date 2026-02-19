@@ -164,6 +164,9 @@ export async function invokeAgent(
 
         const modelId = resolveClaudeModel(agent.model);
         const claudeArgs = ['--dangerously-skip-permissions'];
+        if (agent.chrome !== false) {
+            claudeArgs.push('--chrome');
+        }
         if (modelId) {
             claudeArgs.push('--model', modelId);
         }

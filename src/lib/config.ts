@@ -88,6 +88,7 @@ export function getDefaultAgentFromModels(settings: Settings): AgentConfig {
         provider,
         model,
         working_directory: defaultAgentDir,
+        ...(provider === 'anthropic' ? { chrome: true } : {}),
     };
 }
 

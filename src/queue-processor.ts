@@ -574,7 +574,8 @@ function logAgentConfig(): void {
     const agentCount = Object.keys(agents).length;
     log('INFO', `Loaded ${agentCount} agent(s):`);
     for (const [id, agent] of Object.entries(agents)) {
-        log('INFO', `  ${id}: ${agent.name} [${agent.provider}/${agent.model}] cwd=${agent.working_directory}`);
+        const chromeStatus = agent.provider === 'anthropic' ? ` chrome=${agent.chrome !== false}` : '';
+        log('INFO', `  ${id}: ${agent.name} [${agent.provider}/${agent.model}]${chromeStatus} cwd=${agent.working_directory}`);
     }
 
     const teamCount = Object.keys(teams).length;
