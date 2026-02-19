@@ -3,6 +3,8 @@ export interface AgentConfig {
     provider: string;       // 'anthropic', 'openai', or 'opencode'
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
+    system_prompt?: string;
+    prompt_file?: string;
 }
 
 export interface TeamConfig {

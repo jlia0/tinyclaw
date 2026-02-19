@@ -106,6 +106,34 @@ export async function getLogs(limit = 100): Promise<{ lines: string[] }> {
   return apiFetch(`/api/logs?limit=${limit}`);
 }
 
+export async function saveAgent(
+  id: string,
+  agent: AgentConfig
+): Promise<{ ok: boolean; agent: AgentConfig }> {
+  return apiFetch(`/api/agents/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(agent),
+  });
+}
+
+export async function deleteAgent(id: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function saveTeam(
+  id: string,
+  team: TeamConfig
+): Promise<{ ok: boolean; team: TeamConfig }> {
+  return apiFetch(`/api/teams/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(team),
+  });
+}
+
+export async function deleteTeam(id: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/teams/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function sendMessage(payload: {
   message: string;
   agent?: string;

@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import http from 'http';
-import { MessageData, ResponseData, Settings, Conversation } from './types';
+import { MessageData, ResponseData, Settings, AgentConfig, TeamConfig, Conversation } from './types';
 import {
     QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING,
     LOG_FILE, EVENTS_DIR, CHATS_DIR, SETTINGS_FILE,
@@ -57,6 +57,16 @@ function jsonResponse(res: http.ServerResponse, status: number, body: unknown): 
         'Access-Control-Allow-Headers': 'Content-Type',
     });
     res.end(payload);
+}
+
+// ── Settings persistence ─────────────────────────────────────────────────────
+
+/** Read, mutate, and persist settings.json atomically. */
+function mutateSettings(fn: (settings: Settings) => void): Settings {
+    const settings = getSettings();
+    fn(settings);
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n');
+    return settings;
 }
 
 // ── Server ───────────────────────────────────────────────────────────────────
@@ -242,6 +252,75 @@ export function startApiServer(
                 }
                 chats.sort((a, b) => b.time - a.time);
                 return jsonResponse(res, 200, chats);
+            }
+
+            // ── PUT /api/agents/:id — Create or update an agent ─────────
+            if (req.method === 'PUT' && pathname.startsWith('/api/agents/')) {
+                const agentId = pathname.slice('/api/agents/'.length);
+                if (!agentId) return jsonResponse(res, 400, { error: 'agent id is required' });
+                const body = JSON.parse(await readBody(req)) as Partial<AgentConfig>;
+                if (!body.name || !body.provider || !body.model) {
+                    return jsonResponse(res, 400, { error: 'name, provider, and model are required' });
+                }
+                const settings = mutateSettings(s => {
+                    if (!s.agents) s.agents = {};
+                    s.agents[agentId] = {
+                        name: body.name!,
+                        provider: body.provider!,
+                        model: body.model!,
+                        working_directory: body.working_directory || '',
+                        ...(body.system_prompt ? { system_prompt: body.system_prompt } : {}),
+                        ...(body.prompt_file ? { prompt_file: body.prompt_file } : {}),
+                    };
+                });
+                log('INFO', `[API] Agent '${agentId}' saved`);
+                return jsonResponse(res, 200, { ok: true, agent: settings.agents![agentId] });
+            }
+
+            // ── DELETE /api/agents/:id — Delete an agent ─────────────────
+            if (req.method === 'DELETE' && pathname.startsWith('/api/agents/')) {
+                const agentId = pathname.slice('/api/agents/'.length);
+                if (!agentId) return jsonResponse(res, 400, { error: 'agent id is required' });
+                const settings = getSettings();
+                if (!settings.agents?.[agentId]) {
+                    return jsonResponse(res, 404, { error: `agent '${agentId}' not found` });
+                }
+                mutateSettings(s => { delete s.agents![agentId]; });
+                log('INFO', `[API] Agent '${agentId}' deleted`);
+                return jsonResponse(res, 200, { ok: true });
+            }
+
+            // ── PUT /api/teams/:id — Create or update a team ─────────────
+            if (req.method === 'PUT' && pathname.startsWith('/api/teams/')) {
+                const teamId = pathname.slice('/api/teams/'.length);
+                if (!teamId) return jsonResponse(res, 400, { error: 'team id is required' });
+                const body = JSON.parse(await readBody(req)) as Partial<TeamConfig>;
+                if (!body.name || !body.agents || !body.leader_agent) {
+                    return jsonResponse(res, 400, { error: 'name, agents, and leader_agent are required' });
+                }
+                const settings = mutateSettings(s => {
+                    if (!s.teams) s.teams = {};
+                    s.teams[teamId] = {
+                        name: body.name!,
+                        agents: body.agents!,
+                        leader_agent: body.leader_agent!,
+                    };
+                });
+                log('INFO', `[API] Team '${teamId}' saved`);
+                return jsonResponse(res, 200, { ok: true, team: settings.teams![teamId] });
+            }
+
+            // ── DELETE /api/teams/:id — Delete a team ────────────────────
+            if (req.method === 'DELETE' && pathname.startsWith('/api/teams/')) {
+                const teamId = pathname.slice('/api/teams/'.length);
+                if (!teamId) return jsonResponse(res, 400, { error: 'team id is required' });
+                const settings = getSettings();
+                if (!settings.teams?.[teamId]) {
+                    return jsonResponse(res, 404, { error: `team '${teamId}' not found` });
+                }
+                mutateSettings(s => { delete s.teams![teamId]; });
+                log('INFO', `[API] Team '${teamId}' deleted`);
+                return jsonResponse(res, 200, { ok: true });
             }
 
             // ── 404 ──────────────────────────────────────────────────────
