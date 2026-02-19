@@ -7,31 +7,78 @@ import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent-setup';
 import { buildMemoryBlock } from './memory';
 
-const CLAUDE_MEMORY_FILENAME = 'MEMORY.md';
+const CLAUDE_SYSTEM_FILENAME = 'CLAUDE.md';
 
-function getClaudeMemoryFilePath(workingDir: string): string {
-    return path.join(workingDir, '.claude', CLAUDE_MEMORY_FILENAME);
+function getClaudeSystemFilePath(workingDir: string): string {
+    return path.join(workingDir, '.claude', CLAUDE_SYSTEM_FILENAME);
 }
 
-function deleteClaudeMemoryFile(memoryFilePath: string): void {
-    if (fs.existsSync(memoryFilePath)) {
-        fs.unlinkSync(memoryFilePath);
-    }
-}
-
-function writeClaudeMemoryFile(memoryFilePath: string, memoryBlock: string): void {
-    const claudeDir = path.dirname(memoryFilePath);
+function injectClaudeMemory(systemFilePath: string, memoryBlock: string, agentId: string): () => void {
+    const claudeDir = path.dirname(systemFilePath);
     fs.mkdirSync(claudeDir, { recursive: true });
+
+    const existed = fs.existsSync(systemFilePath);
+    const original = existed ? fs.readFileSync(systemFilePath, 'utf8') : '';
+    const markerId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const startMarker = `<!-- TINYCLAW_MEMORY_START:${markerId} -->`;
+    const endMarker = `<!-- TINYCLAW_MEMORY_END:${markerId} -->`;
     const body = memoryBlock.trim();
-    const content = [
-        '# Runtime Memory Context',
+    const runtimeSection = [
+        startMarker,
+        '## Runtime Memory Context',
         '',
-        'Auto-generated for the current invocation. Do not persist manually.',
+        'Auto-generated for current invocation only.',
         '',
         body,
         '',
+        endMarker,
     ].join('\n');
-    fs.writeFileSync(memoryFilePath, content, 'utf8');
+    const merged = original.trim().length > 0
+        ? `${original.trimEnd()}\n\n${runtimeSection}`
+        : runtimeSection;
+
+    fs.writeFileSync(systemFilePath, merged, 'utf8');
+
+    return () => {
+        if (!fs.existsSync(systemFilePath)) {
+            if (existed) {
+                log('WARN', `Memory cleanup marker missing for @${agentId}: .claude/${CLAUDE_SYSTEM_FILENAME} disappeared during invoke`);
+            }
+            return;
+        }
+
+        const current = fs.readFileSync(systemFilePath, 'utf8');
+        const startIdx = current.indexOf(startMarker);
+        const endIdx = current.indexOf(endMarker, startIdx >= 0 ? startIdx : 0);
+        if (startIdx < 0 || endIdx < 0) {
+            log('WARN', `Memory cleanup marker missing for @${agentId}: skipped restore to avoid overwriting .claude/${CLAUDE_SYSTEM_FILENAME}`);
+            return;
+        }
+
+        const endExclusive = endIdx + endMarker.length;
+        const stripped = `${current.slice(0, startIdx)}${current.slice(endExclusive)}`;
+        const normalized = stripped
+            .replace(/\n{3,}/g, '\n\n')
+            .replace(/^\s+|\s+$/g, '');
+
+        if (!normalized) {
+            if (existed) {
+                fs.writeFileSync(systemFilePath, original, 'utf8');
+            } else {
+                fs.unlinkSync(systemFilePath);
+            }
+            return;
+        }
+
+        fs.writeFileSync(systemFilePath, `${normalized}\n`, 'utf8');
+    };
+}
+
+function deleteLegacyClaudeMemoryFile(workingDir: string): void {
+    const legacyPath = path.join(workingDir, '.claude', 'MEMORY.md');
+    if (fs.existsSync(legacyPath)) {
+        fs.unlinkSync(legacyPath);
+    }
 }
 
 export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
@@ -164,17 +211,20 @@ export async function invokeAgent(
         }
         claudeArgs.push('-p', message);
 
-        const memoryFilePath = getClaudeMemoryFilePath(workingDir);
-        // Defensive cleanup in case previous invocation crashed before deleting.
-        deleteClaudeMemoryFile(memoryFilePath);
+        const systemFilePath = getClaudeSystemFilePath(workingDir);
+        let restoreSystemFile: (() => void) | null = null;
+        // Defensive cleanup from old MEMORY.md injection behavior.
+        deleteLegacyClaudeMemoryFile(workingDir);
         try {
             if (memoryBlock) {
-                writeClaudeMemoryFile(memoryFilePath, memoryBlock);
-                log('INFO', `Memory source injection for @${agentId}: .claude/${CLAUDE_MEMORY_FILENAME}`);
+                restoreSystemFile = injectClaudeMemory(systemFilePath, memoryBlock, agentId);
+                log('INFO', `Memory source injection for @${agentId}: .claude/${CLAUDE_SYSTEM_FILENAME} (runtime section)`);
             }
             return await runCommand('claude', claudeArgs, workingDir);
         } finally {
-            deleteClaudeMemoryFile(memoryFilePath);
+            if (restoreSystemFile) {
+                restoreSystemFile();
+            }
         }
     }
 }

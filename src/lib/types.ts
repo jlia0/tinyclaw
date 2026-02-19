@@ -43,6 +43,21 @@ export interface Settings {
     };
     memory?: {
         enabled?: boolean;
+        rerank?: {
+            enabled?: boolean;
+            answer_signal_patterns?: string[];
+            low_confidence_patterns?: string[];
+            answer_signal_bonus?: number;
+            low_confidence_penalty?: number;
+            code_pattern_bonus?: number;
+            term_hit_bonus?: number;
+        };
+        retention?: {
+            enabled?: boolean;
+            retain_days?: number;
+            max_turn_files_per_agent?: number;
+            cleanup_interval_seconds?: number;
+        };
         qmd?: {
             enabled?: boolean;
             command?: string;

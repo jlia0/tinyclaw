@@ -4,6 +4,7 @@ import path from 'path';
 import { AgentConfig, Settings } from './types';
 import { TINYCLAW_HOME } from './config';
 import { log } from './logging';
+import { computeHeuristicScoreDelta, isLowConfidenceText, resolveMemoryRerankOptions } from './memory-rerank';
 
 const MEMORY_ROOT = path.join(TINYCLAW_HOME, 'memory');
 const MEMORY_TURNS_DIR = path.join(MEMORY_ROOT, 'turns');
@@ -12,23 +13,32 @@ const DEFAULT_TOP_K = 4;
 const DEFAULT_MIN_SCORE = 0.0;
 const DEFAULT_MAX_CHARS = 2500;
 const DEFAULT_UPDATE_INTERVAL_SECONDS = 120;
+const DEFAULT_EMBED_INTERVAL_SECONDS = 600;
+const DEFAULT_RETAIN_DAYS = 30;
+const DEFAULT_MAX_TURN_FILES_PER_AGENT = 2000;
+const DEFAULT_CLEANUP_INTERVAL_SECONDS = 300;
 const DEFAULT_PRECHECK_TIMEOUT_MS = 800;
 const DEFAULT_TEXT_SEARCH_TIMEOUT_MS = 3000;
 const DEFAULT_VECTOR_SEARCH_TIMEOUT_MS = 10000;
+const QMD_FALLBACK_WARN_INTERVAL_MS = 10 * 60 * 1000;
+const VSEARCH_EXPERIMENTAL_INFO_INTERVAL_MS = 10 * 60 * 1000;
 
 let qmdChecked = false;
 let qmdAvailable = false;
-let qmdUnavailableLogged = false;
+const qmdUnavailableLoggedByAgent = new Map<string, boolean>();
 let qmdCommandPath: string | null = null;
 let qmdCheckKey = '';
 let qmdDisableExpansionCheckKey = '';
 let qmdDisableExpansionSupported = false;
-let qmdUnsafeFallbackLogged = false;
 
 const collectionPrepared = new Set<string>();
 const lastCollectionUpdateMs = new Map<string, number>();
 const lastCollectionEmbedMs = new Map<string, number>();
-const MEMORY_CHANNELS = new Set(['telegram', 'discord', 'whatsapp']);
+const embedInFlightByCollection = new Set<string>();
+const lastTurnsCleanupMs = new Map<string, number>();
+const lastUnsafeFallbackWarnMsByAgent = new Map<string, number>();
+const lastVsearchExperimentalInfoMsByAgent = new Map<string, number>();
+export const MEMORY_ELIGIBLE_CHANNELS = new Set(['telegram', 'discord', 'whatsapp']);
 
 interface QmdResult {
     score: number;
@@ -69,6 +79,13 @@ interface TurnSections {
     assistant: string;
 }
 
+interface RetentionConfig {
+    enabled: boolean;
+    retainDays: number;
+    maxTurnFilesPerAgent: number;
+    cleanupIntervalSeconds: number;
+}
+
 function getQmdConfig(settings: Settings): QmdConfig {
     const memoryCfg = settings.memory?.qmd;
     const command = typeof memoryCfg?.command === 'string' ? memoryCfg.command.trim() : '';
@@ -83,9 +100,7 @@ function getQmdConfig(settings: Settings): QmdConfig {
             : DEFAULT_UPDATE_INTERVAL_SECONDS,
         embedIntervalSeconds: Number.isFinite(memoryCfg?.embed_interval_seconds)
             ? Math.max(10, Number(memoryCfg?.embed_interval_seconds))
-            : (Number.isFinite(memoryCfg?.update_interval_seconds)
-                ? Math.max(10, Number(memoryCfg?.update_interval_seconds))
-                : DEFAULT_UPDATE_INTERVAL_SECONDS),
+            : DEFAULT_EMBED_INTERVAL_SECONDS,
         useSemanticSearch: memoryCfg?.use_semantic_search === true,
         disableQueryExpansion: memoryCfg?.disable_query_expansion !== false,
         allowUnsafeVsearch: memoryCfg?.allow_unsafe_vsearch === true,
@@ -103,11 +118,63 @@ function getQmdConfig(settings: Settings): QmdConfig {
     };
 }
 
+function getRetentionConfig(settings?: Settings): RetentionConfig {
+    const retentionCfg = settings?.memory?.retention;
+    return {
+        enabled: retentionCfg?.enabled !== false,
+        retainDays: Number.isFinite(retentionCfg?.retain_days)
+            ? Math.max(1, Number(retentionCfg?.retain_days))
+            : DEFAULT_RETAIN_DAYS,
+        maxTurnFilesPerAgent: Number.isFinite(retentionCfg?.max_turn_files_per_agent)
+            ? Math.max(100, Number(retentionCfg?.max_turn_files_per_agent))
+            : DEFAULT_MAX_TURN_FILES_PER_AGENT,
+        cleanupIntervalSeconds: Number.isFinite(retentionCfg?.cleanup_interval_seconds)
+            ? Math.max(30, Number(retentionCfg?.cleanup_interval_seconds))
+            : DEFAULT_CLEANUP_INTERVAL_SECONDS,
+    };
+}
+
 function logQmdDebug(agentId: string, qmdCfg: QmdConfig, stage: string, details: string): void {
     if (!qmdCfg.debugLogging) {
         return;
     }
     log('INFO', `Memory debug @${agentId} [${stage}]: ${details}`);
+}
+
+function logThrottled(
+    key: string,
+    cache: Map<string, number>,
+    intervalMs: number,
+    level: 'INFO' | 'WARN',
+    message: string
+): void {
+    const now = Date.now();
+    const last = cache.get(key) || 0;
+    if (now - last < intervalMs) {
+        return;
+    }
+    cache.set(key, now);
+    log(level, message);
+}
+
+function warnUnsafeFallback(agentId: string, reason: string): void {
+    logThrottled(
+        agentId,
+        lastUnsafeFallbackWarnMsByAgent,
+        QMD_FALLBACK_WARN_INTERVAL_MS,
+        'WARN',
+        `QMD vsearch fallback for @${agentId}: ${reason}`
+    );
+}
+
+function infoVsearchExperimental(agentId: string): void {
+    logThrottled(
+        agentId,
+        lastVsearchExperimentalInfoMsByAgent,
+        VSEARCH_EXPERIMENTAL_INFO_INTERVAL_MS,
+        'INFO',
+        `QMD vsearch is experimental for @${agentId}.`
+    );
 }
 
 function sanitizeId(raw: string): string {
@@ -239,7 +306,7 @@ function isDisableExpansionSupported(): boolean {
 }
 
 function shouldUseMemoryForChannel(channel: string): boolean {
-    return MEMORY_CHANNELS.has(channel);
+    return MEMORY_ELIGIBLE_CHANNELS.has(channel);
 }
 
 async function ensureCollection(agentId: string): Promise<string> {
@@ -281,8 +348,28 @@ async function maybeEmbedCollection(collectionName: string, embedIntervalSeconds
     if (now - last < embedIntervalSeconds * 1000) {
         return;
     }
-    await runCommand(qmdCommandPath || 'qmd', ['embed', '--collections', collectionName], undefined, 30000);
+    // Apply backoff from the trigger time to avoid tight retries on repeated failures.
     lastCollectionEmbedMs.set(collectionName, now);
+    await runCommand(qmdCommandPath || 'qmd', ['embed', '--collections', collectionName], undefined, 30000);
+}
+
+function triggerEmbedCollectionAsync(agentId: string, collectionName: string, qmdCfg: QmdConfig): void {
+    if (embedInFlightByCollection.has(collectionName)) {
+        logQmdDebug(agentId, qmdCfg, 'embed', 'skip trigger (in-flight)');
+        return;
+    }
+    embedInFlightByCollection.add(collectionName);
+    void maybeEmbedCollection(collectionName, qmdCfg.embedIntervalSeconds)
+        .then(() => {
+            logQmdDebug(agentId, qmdCfg, 'embed', `triggered interval=${qmdCfg.embedIntervalSeconds}s`);
+        })
+        .catch((error) => {
+            log('WARN', `Memory embed skipped for @${agentId}: ${(error as Error).message}`);
+            logQmdDebug(agentId, qmdCfg, 'embed', 'failed; continuing with existing vectors');
+        })
+        .finally(() => {
+            embedInFlightByCollection.delete(collectionName);
+        });
 }
 
 function buildLexicalQueryVariants(message: string): string[] {
@@ -358,11 +445,28 @@ function normalizeInline(text: string): string {
     return text.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeQueryKey(text: string): string {
+    return text
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeFilenameKey(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 function truncateInline(text: string, max: number): string {
     if (text.length <= max) {
         return text;
     }
     return `${text.slice(0, max)}...`;
+}
+
+function summarizeSnippetForLog(text: string, max = 120): string {
+    const oneLine = normalizeInline(text).replace(/\n/g, ' ');
+    return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max)}...`;
 }
 
 function parseTurnSections(content: string): TurnSections {
@@ -386,7 +490,21 @@ function loadTurnSectionsFromSource(source: string, agentId: string): TurnSectio
         return null;
     }
     const rel = decodeURIComponent(m[1]);
-    const fullPath = path.join(getAgentTurnsDir(agentId), rel);
+    const agentDir = getAgentTurnsDir(agentId);
+    let fullPath = path.join(agentDir, rel);
+    if (!fs.existsSync(fullPath)) {
+        // qmd may normalize source path (e.g. casing and punctuation like "_" -> "-").
+        // Resolve with a tolerant fallback so we can hydrate turn sections reliably.
+        const wanted = normalizeFilenameKey(path.basename(rel));
+        try {
+            const found = fs.readdirSync(agentDir).find(name => normalizeFilenameKey(name) === wanted);
+            if (found) {
+                fullPath = path.join(agentDir, found);
+            }
+        } catch {
+            return null;
+        }
+    }
     if (!fs.existsSync(fullPath)) {
         return null;
     }
@@ -398,16 +516,13 @@ function loadTurnSectionsFromSource(source: string, agentId: string): TurnSectio
     }
 }
 
-function isLowConfidenceAnswer(text: string): boolean {
-    return /不知道|没有.*信息|无法|不清楚|need more context|don't have any information|i don't have|not enough information/i.test(text);
-}
-
-function rerankAndHydrateResults(results: QmdResult[], message: string, agentId: string): QmdResult[] {
+function rerankAndHydrateResults(results: QmdResult[], message: string, agentId: string, settings?: Settings): QmdResult[] {
     if (results.length === 0) {
         return results;
     }
     const terms = Array.from(new Set((message.toLowerCase().match(/[a-z0-9_-]{2,}|[\u4e00-\u9fff]{1,3}/g) || [])));
-    const codePattern = /\b[A-Z]{3,}(?:-[A-Z0-9]+){2,}\b/;
+    const rerankOptions = resolveMemoryRerankOptions(settings);
+    const normalizedMessage = normalizeQueryKey(message);
 
     return results
         .map((result) => {
@@ -422,23 +537,24 @@ function rerankAndHydrateResults(results: QmdResult[], message: string, agentId:
                     snippet = `User: ${truncateInline(user, 180)}\nAssistant: ${truncateInline(assistant, 260)}`;
                 }
 
-                if (codePattern.test(assistant)) score += 0.5;
-                if (/代号|key|code|是|喜欢|likes?/i.test(assistant)) score += 0.2;
-                if (isLowConfidenceAnswer(assistant)) score -= 0.5;
-
-                const hay = `${user} ${assistant}`.toLowerCase();
-                for (const t of terms) {
-                    if (hay.includes(t)) score += 0.04;
+                score += computeHeuristicScoreDelta(user, assistant, terms, rerankOptions);
+                const lowConfidence = isLowConfidenceText(assistant, rerankOptions);
+                if (lowConfidence) {
+                    return null;
                 }
             }
 
             return { score, snippet, source: result.source };
         })
+        .filter((row): row is QmdResult => !!row)
         .sort((a, b) => b.score - a.score);
 }
 
-async function quickHasLexicalHit(message: string, collectionName: string, qmdCfg: QmdConfig): Promise<boolean> {
-    const variants = buildLexicalQueryVariants(message);
+async function quickHasLexicalHit(
+    variants: string[],
+    collectionName: string,
+    qmdCfg: QmdConfig
+): Promise<boolean> {
     for (const query of variants) {
         const args = ['search', query, '--json', '-c', collectionName, '-n', '1', '--min-score', String(qmdCfg.minScore)];
         const { stdout } = await runCommand(qmdCommandPath || 'qmd', args, undefined, qmdCfg.precheckTimeoutMs);
@@ -487,22 +603,19 @@ function formatMemoryPrompt(results: QmdResult[], maxChars: number): string {
     ].join('\n');
 }
 
-function resolveRetrievalMode(qmdCfg: QmdConfig): { useVsearch: boolean; label: 'qmd-bm25' | 'qmd-vsearch' } {
+function resolveRetrievalMode(agentId: string, qmdCfg: QmdConfig): { useVsearch: boolean; label: 'qmd-bm25' | 'qmd-vsearch' } {
     let useVsearch = qmdCfg.useSemanticSearch;
     if (useVsearch && !qmdCfg.allowUnsafeVsearch) {
         if (!qmdCfg.disableQueryExpansion) {
             useVsearch = false;
-            if (!qmdUnsafeFallbackLogged) {
-                log('WARN', 'QMD vsearch requested without disable_query_expansion; fallback to BM25 for safety. Set memory.qmd.allow_unsafe_vsearch=true to override.');
-                qmdUnsafeFallbackLogged = true;
-            }
+            warnUnsafeFallback(agentId, 'disable_query_expansion is false; using BM25. Set memory.qmd.allow_unsafe_vsearch=true to override.');
         } else if (!isDisableExpansionSupported()) {
             useVsearch = false;
-            if (!qmdUnsafeFallbackLogged) {
-                log('WARN', 'QMD disable-query-expansion support not detected; fallback to BM25 to avoid unexpected model downloads. Run scripts/patch-qmd-no-expansion.sh or set memory.qmd.allow_unsafe_vsearch=true.');
-                qmdUnsafeFallbackLogged = true;
-            }
+            warnUnsafeFallback(agentId, 'safe vsearch support not detected; using BM25. Run scripts/patch-qmd-no-expansion.sh or set memory.qmd.allow_unsafe_vsearch=true.');
         }
+    }
+    if (useVsearch) {
+        infoVsearchExperimental(agentId);
     }
 
     return {
@@ -512,12 +625,12 @@ function resolveRetrievalMode(qmdCfg: QmdConfig): { useVsearch: boolean; label: 
 }
 
 async function runBm25WithVariants(
-    message: string,
+    variants: string[],
+    fallbackQuery: string,
     collectionName: string,
     qmdCfg: QmdConfig
 ): Promise<QueryResult> {
-    const variants = buildLexicalQueryVariants(message);
-    let lastQuery = message;
+    let lastQuery = fallbackQuery;
     for (const query of variants) {
         lastQuery = query;
         const args = ['search', query, '--json', '-c', collectionName, '-n', String(qmdCfg.topK), '--min-score', String(qmdCfg.minScore)];
@@ -546,13 +659,14 @@ export async function buildMemoryBlock(
 
     const hasQmd = await isQmdAvailable(qmdCfg.command);
     if (!hasQmd) {
-        if (!qmdUnavailableLogged) {
-            log('WARN', 'qmd not found in PATH, memory retrieval disabled');
-            qmdUnavailableLogged = true;
+        if (!qmdUnavailableLoggedByAgent.get(agentId)) {
+            log('WARN', `qmd not found in PATH, memory retrieval disabled for @${agentId}`);
+            qmdUnavailableLoggedByAgent.set(agentId, true);
         }
         log('INFO', `Memory source for @${agentId}: none (qmd unavailable)`);
         return '';
     }
+    qmdUnavailableLoggedByAgent.delete(agentId);
     logQmdDebug(agentId, qmdCfg, 'qmd', `command=${qmdCommandPath || 'qmd'}`);
 
     try {
@@ -561,15 +675,19 @@ export async function buildMemoryBlock(
         await maybeUpdateCollection(collectionName, qmdCfg.updateIntervalSeconds);
         logQmdDebug(agentId, qmdCfg, 'update', `interval=${qmdCfg.updateIntervalSeconds}s`);
 
-        if (qmdCfg.quickPrecheckEnabled) {
+        const mode = resolveRetrievalMode(agentId, qmdCfg);
+        const queryVariants = buildLexicalQueryVariants(message);
+
+        // Only keep precheck for vsearch path. For BM25 it duplicates work and adds latency.
+        if (qmdCfg.quickPrecheckEnabled && mode.useVsearch) {
             try {
                 logQmdDebug(
                     agentId,
                     qmdCfg,
                     'precheck',
-                    `cmd=search timeout=${qmdCfg.precheckTimeoutMs}ms min_score=${qmdCfg.minScore} variants=${buildLexicalQueryVariants(message).length}`
+                    `cmd=search timeout=${qmdCfg.precheckTimeoutMs}ms min_score=${qmdCfg.minScore} variants=${queryVariants.length}`
                 );
-                const hasQuickHit = await quickHasLexicalHit(message, collectionName, qmdCfg);
+                const hasQuickHit = await quickHasLexicalHit(queryVariants, collectionName, qmdCfg);
                 if (!hasQuickHit) {
                     log('INFO', `Memory source for @${agentId}: none (qmd precheck no-hit)`);
                     return '';
@@ -579,17 +697,12 @@ export async function buildMemoryBlock(
                 log('INFO', `Memory source for @${agentId}: none (qmd precheck error)`);
                 return '';
             }
+        } else if (qmdCfg.quickPrecheckEnabled && !mode.useVsearch) {
+            logQmdDebug(agentId, qmdCfg, 'precheck', 'skipped for bm25 mode (avoid duplicate searches)');
         }
 
-        const mode = resolveRetrievalMode(qmdCfg);
         if (mode.useVsearch) {
-            try {
-                await maybeEmbedCollection(collectionName, qmdCfg.embedIntervalSeconds);
-                logQmdDebug(agentId, qmdCfg, 'embed', `interval=${qmdCfg.embedIntervalSeconds}s`);
-            } catch (error) {
-                log('WARN', `Memory embed skipped for @${agentId}: ${(error as Error).message}`);
-                logQmdDebug(agentId, qmdCfg, 'embed', 'failed; continuing with existing vectors');
-            }
+            triggerEmbedCollectionAsync(agentId, collectionName, qmdCfg);
         }
         const queryArgs = mode.useVsearch
             ? ['vsearch', message, '--json', '-c', collectionName, '-n', String(qmdCfg.topK), '--min-score', String(qmdCfg.minScore)]
@@ -610,15 +723,49 @@ export async function buildMemoryBlock(
                 results: parseQmdResults(stdout),
                 query: message,
             })))()
-            : runBm25WithVariants(message, collectionName, qmdCfg);
-        const { results, query } = await queryResult;
+            : runBm25WithVariants(queryVariants, message, collectionName, qmdCfg);
+        let { results, query } = await queryResult;
         logQmdDebug(agentId, qmdCfg, 'query-used', `mode=${mode.label} query=\"${query}\"`);
         if (results.length === 0) {
             log('INFO', `Memory source for @${agentId}: none (${mode.label} no-hit)`);
             return '';
         }
 
-        const rankedResults = rerankAndHydrateResults(results, message, agentId);
+        let rankedResults = rerankAndHydrateResults(results, message, agentId, settings);
+        logQmdDebug(
+            agentId,
+            qmdCfg,
+            'rerank',
+            `raw=${results.length} ranked=${rankedResults.length} top=${rankedResults
+                .slice(0, 3)
+                .map((r, i) => `${i + 1}:${r.score.toFixed(3)}:${summarizeSnippetForLog(r.snippet, 90)}`)
+                .join(' | ')}`
+        );
+        if (mode.useVsearch && rankedResults.length === 0) {
+            logQmdDebug(agentId, qmdCfg, 'query', 'vsearch results filtered out; fallback=bm25');
+            const bm25Fallback = await runBm25WithVariants(queryVariants, message, collectionName, qmdCfg);
+            results = bm25Fallback.results;
+            query = bm25Fallback.query;
+            logQmdDebug(agentId, qmdCfg, 'query-used', `mode=qmd-bm25-fallback query=\"${query}\"`);
+            if (results.length === 0) {
+                log('INFO', `Memory source for @${agentId}: none (qmd-vsearch filtered + bm25 no-hit)`);
+                return '';
+            }
+            rankedResults = rerankAndHydrateResults(results, message, agentId, settings);
+            logQmdDebug(
+                agentId,
+                qmdCfg,
+                'rerank',
+                `fallback raw=${results.length} ranked=${rankedResults.length} top=${rankedResults
+                    .slice(0, 3)
+                    .map((r, i) => `${i + 1}:${r.score.toFixed(3)}:${summarizeSnippetForLog(r.snippet, 90)}`)
+                    .join(' | ')}`
+            );
+            if (rankedResults.length === 0) {
+                log('INFO', `Memory source for @${agentId}: none (qmd-vsearch filtered + bm25 filtered)`);
+                return '';
+            }
+        }
 
         const memoryBlock = formatMemoryPrompt(rankedResults, qmdCfg.maxChars);
         if (!memoryBlock) {
@@ -647,7 +794,7 @@ export async function enrichMessageWithMemory(
 }
 
 function timestampFilename(ts: number): string {
-    return new Date(ts).toISOString().replace(/[:.]/g, '-');
+    return new Date(ts).toISOString().replace(/[:.]/g, '-').toLowerCase();
 }
 
 function truncate(text: string, max = 16000): string {
@@ -655,6 +802,77 @@ function truncate(text: string, max = 16000): string {
         return text;
     }
     return `${text.substring(0, max)}\n\n[truncated]`;
+}
+
+function maybeCleanupTurns(agentId: string, settings?: Settings): void {
+    const retention = getRetentionConfig(settings);
+    if (!retention.enabled) {
+        return;
+    }
+
+    const now = Date.now();
+    const last = lastTurnsCleanupMs.get(agentId) || 0;
+    if (now - last < retention.cleanupIntervalSeconds * 1000) {
+        return;
+    }
+    lastTurnsCleanupMs.set(agentId, now);
+
+    const dir = getAgentTurnsDir(agentId);
+    if (!fs.existsSync(dir)) {
+        return;
+    }
+
+    let entries = fs.readdirSync(dir)
+        .filter(name => name.endsWith('.md'))
+        .map(name => {
+            const filePath = path.join(dir, name);
+            const stat = fs.statSync(filePath);
+            return {
+                name,
+                filePath,
+                mtimeMs: stat.mtimeMs,
+            };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    if (entries.length === 0) {
+        return;
+    }
+
+    const cutoffMs = now - retention.retainDays * 24 * 60 * 60 * 1000;
+    const keep: typeof entries = [];
+    const remove: typeof entries = [];
+
+    for (const e of entries) {
+        if (e.mtimeMs < cutoffMs) {
+            remove.push(e);
+        } else {
+            keep.push(e);
+        }
+    }
+
+    if (keep.length > retention.maxTurnFilesPerAgent) {
+        const overflow = keep.slice(retention.maxTurnFilesPerAgent);
+        remove.push(...overflow);
+        keep.splice(retention.maxTurnFilesPerAgent);
+    }
+
+    if (remove.length === 0) {
+        return;
+    }
+
+    let deleted = 0;
+    for (const e of remove) {
+        try {
+            fs.unlinkSync(e.filePath);
+            deleted++;
+        } catch {
+            // Keep going; best-effort cleanup.
+        }
+    }
+    if (deleted > 0) {
+        log('INFO', `Memory turns cleanup for @${agentId}: deleted ${deleted} file(s), kept ${keep.length}`);
+    }
 }
 
 export async function saveTurnToMemory(params: {
@@ -666,6 +884,7 @@ export async function saveTurnToMemory(params: {
     userMessage: string;
     agentResponse: string;
     timestampMs?: number;
+    settings?: Settings;
 }): Promise<void> {
     try {
         const timestampMs = params.timestampMs || Date.now();
@@ -693,6 +912,7 @@ export async function saveTurnToMemory(params: {
         ];
 
         fs.writeFileSync(filePath, lines.join('\n'));
+        maybeCleanupTurns(params.agentId, params.settings);
     } catch (error) {
         log('WARN', `Failed to persist memory turn for @${params.agentId}: ${(error as Error).message}`);
     }

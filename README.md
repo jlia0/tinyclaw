@@ -388,6 +388,15 @@ Located at `.tinyclaw/settings.json`:
   },
   "memory": {
     "enabled": true,
+    "rerank": {
+      "enabled": true
+    },
+    "retention": {
+      "enabled": true,
+      "retain_days": 30,
+      "max_turn_files_per_agent": 2000,
+      "cleanup_interval_seconds": 300
+    },
     "qmd": {
       "enabled": true,
       "command": "/home/me/.bun/bin/qmd",
@@ -395,7 +404,7 @@ Located at `.tinyclaw/settings.json`:
       "min_score": 0.05,
       "max_chars": 2500,
       "update_interval_seconds": 120,
-      "embed_interval_seconds": 120,
+      "embed_interval_seconds": 600,
       "use_semantic_search": false,
       "disable_query_expansion": true,
       "allow_unsafe_vsearch": false,
@@ -413,6 +422,8 @@ TinyClaw can use external memory retrieval with `qmd` (BM25 by default).
 - Retrieval runs only for user chat channels (`telegram`, `discord`, `whatsapp`).
 - Heartbeat/system messages are excluded from retrieval and memory persistence.
 - Turns are stored in `~/.tinyclaw/memory/turns/<agent_id>/`.
+- Turn files are cleaned automatically (default: keep 30 days and max 2000 files per agent).
+- Retrieval reranking heuristics are configurable via `memory.rerank` (can be disabled).
 
 Quick setup:
 
@@ -431,10 +442,11 @@ tinyclaw restart
 ```
 
 Safety note:
-- If `use_semantic_search` is enabled, TinyClaw defaults to safe mode and will fall back to BM25 unless disable-expansion support is detected.
+- `use_semantic_search` (`qmd-vsearch`) is currently **experimental**.
+- If semantic search is enabled, TinyClaw defaults to safe mode and will fall back to BM25 unless disable-expansion support is detected.
 - Set `memory.qmd.allow_unsafe_vsearch: true` only if you explicitly want to allow unguarded `vsearch`.
 - Set `memory.qmd.debug_logging: true` to print QMD memory debug logs (command/mode/timeout) in `queue.log`.
-- When semantic search is enabled, TinyClaw periodically runs `qmd embed` (interval controlled by `memory.qmd.embed_interval_seconds`).
+- When semantic search is enabled, TinyClaw periodically runs `qmd embed` in background (non-blocking). Default `embed_interval_seconds` is `600`.
 
 ### Heartbeat Configuration
 

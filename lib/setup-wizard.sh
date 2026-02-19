@@ -200,7 +200,7 @@ if [[ "$ENABLE_MEMORY" =~ ^[yY] ]]; then
         echo -e "${YELLOW}  You can install later with: bun install -g github:tobi/qmd${NC}"
     fi
 
-    read -rp "Use semantic search (vector)? [y/N]: " USE_SEMANTIC
+    read -rp "Use semantic search (vector, experimental)? [y/N]: " USE_SEMANTIC
     if [[ "$USE_SEMANTIC" =~ ^[yY] ]]; then
         USE_SEMANTIC_SEARCH=true
     fi
@@ -308,7 +308,7 @@ else
 fi
 
 if [ "$MEMORY_ENABLED" = true ]; then
-    MEMORY_SECTION='"memory": { "enabled": true, "qmd": { "enabled": true, "command": "'"${QMD_COMMAND}"'", "top_k": 4, "min_score": 0.05, "max_chars": 2500, "update_interval_seconds": 300, "embed_interval_seconds": 300, "use_semantic_search": '"${USE_SEMANTIC_SEARCH}"', "disable_query_expansion": true, "allow_unsafe_vsearch": false, "debug_logging": false } },'
+    MEMORY_SECTION='"memory": { "enabled": true, "qmd": { "enabled": true, "command": "'"${QMD_COMMAND}"'", "top_k": 4, "min_score": 0.05, "max_chars": 2500, "update_interval_seconds": 300, "embed_interval_seconds": 600, "use_semantic_search": '"${USE_SEMANTIC_SEARCH}"', "disable_query_expansion": true, "allow_unsafe_vsearch": false, "debug_logging": false } },'
 else
     MEMORY_SECTION='"memory": { "enabled": false },'
 fi

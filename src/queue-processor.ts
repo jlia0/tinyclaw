@@ -21,12 +21,10 @@ import {
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
-import { saveTurnToMemory } from './lib/memory';
-
-const MEMORY_PERSIST_CHANNELS = new Set(['telegram', 'discord', 'whatsapp']);
+import { saveTurnToMemory, MEMORY_ELIGIBLE_CHANNELS } from './lib/memory';
 
 function shouldPersistMemoryTurn(channel: string): boolean {
-    return MEMORY_PERSIST_CHANNELS.has(channel);
+    return MEMORY_ELIGIBLE_CHANNELS.has(channel);
 }
 
 // Ensure directories exist
@@ -156,6 +154,7 @@ async function processMessage(messageFile: string): Promise<void> {
                         userMessage: message,
                         agentResponse: finalResponse,
                         timestampMs: Date.now(),
+                        settings,
                     });
                 }
             } catch (error) {
@@ -206,6 +205,7 @@ async function processMessage(messageFile: string): Promise<void> {
                             userMessage: currentMessage,
                             agentResponse: stepResponse,
                             timestampMs: Date.now(),
+                            settings,
                         });
                     }
                 } catch (error) {
@@ -278,6 +278,7 @@ async function processMessage(messageFile: string): Promise<void> {
                                         userMessage: mMessage,
                                         agentResponse: mResponse,
                                         timestampMs: Date.now(),
+                                        settings,
                                     });
                                 }
                             } catch (error) {
