@@ -523,15 +523,29 @@ async function checkOutgoingQueue(): Promise<void> {
                         const chunks = splitMessage(responseText);
                         const parseMode = responseData.metadata?.parseMode as TelegramBot.ParseMode | undefined;
 
+                        const sendChunk = async (text: string, opts: TelegramBot.SendMessageOptions): Promise<void> => {
+                            try {
+                                await bot.sendMessage(targetChatId, text, opts);
+                            } catch (sendErr) {
+                                if (parseMode && opts.parse_mode) {
+                                    log('WARN', `MarkdownV2 send failed, falling back to plain text: ${(sendErr as Error).message}`);
+                                    delete opts.parse_mode;
+                                    await bot.sendMessage(targetChatId, text, opts);
+                                } else {
+                                    throw sendErr;
+                                }
+                            }
+                        };
+
                         if (chunks.length > 0) {
                             const opts: TelegramBot.SendMessageOptions = pending
                                 ? { reply_to_message_id: pending.messageId }
                                 : {};
                             if (parseMode) opts.parse_mode = parseMode;
-                            await bot.sendMessage(targetChatId, chunks[0]!, opts);
+                            await sendChunk(chunks[0]!, opts);
                         }
                         for (let i = 1; i < chunks.length; i++) {
-                            await bot.sendMessage(targetChatId, chunks[i]!, parseMode ? { parse_mode: parseMode } : {});
+                            await sendChunk(chunks[i]!, parseMode ? { parse_mode: parseMode } : {});
                         }
                     }
 
