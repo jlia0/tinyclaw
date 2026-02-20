@@ -80,60 +80,14 @@ export function getAgentResetFlag(agentId: string, workspacePath: string): strin
 }
 
 /**
- * Detect if message mentions multiple agents (easter egg for future feature).
- * If all mentioned agents are in the same team, returns empty (team chain handles it).
- */
-export function detectMultipleAgents(message: string, agents: Record<string, AgentConfig>, teams: Record<string, TeamConfig>): string[] {
-    const mentions = message.match(/@(\S+)/g) || [];
-    const validAgents: string[] = [];
-
-    for (const mention of mentions) {
-        const agentId = mention.slice(1).toLowerCase();
-        if (agents[agentId]) {
-            validAgents.push(agentId);
-        }
-    }
-
-    // If multiple agents are all in the same team, don't trigger easter egg
-    if (validAgents.length > 1) {
-        for (const [, team] of Object.entries(teams)) {
-            if (validAgents.every(a => team.agents.includes(a))) {
-                return []; // Same team — chain will handle collaboration
-            }
-        }
-    }
-
-    return validAgents;
-}
-
-/**
  * Parse @agent_id or @team_id prefix from a message.
  * Returns { agentId, message, isTeam } where message has the prefix stripped.
- * Returns { agentId: 'error', message: '...' } if multiple agents detected (across teams).
  */
 export function parseAgentRouting(
     rawMessage: string,
     agents: Record<string, AgentConfig>,
     teams: Record<string, TeamConfig> = {}
 ): { agentId: string; message: string; isTeam?: boolean } {
-    // Easter egg: Check for multiple agent mentions (only for agents NOT in the same team)
-    const mentionedAgents = detectMultipleAgents(rawMessage, agents, teams);
-    if (mentionedAgents.length > 1) {
-        const agentList = mentionedAgents.map(t => `@${t}`).join(', ');
-        return {
-            agentId: 'error',
-            message: `🚀 **Agent-to-Agent Collaboration - Coming Soon!**\n\n` +
-                `You mentioned multiple agents: ${agentList}\n\n` +
-                `Right now, I can only route to one agent at a time. But we're working on something cool:\n\n` +
-                `✨ **Multi-Agent Coordination** - Agents will be able to collaborate on complex tasks!\n` +
-                `✨ **Smart Routing** - Send instructions to multiple agents at once!\n` +
-                `✨ **Agent Handoffs** - One agent can delegate to another!\n\n` +
-                `For now, please send separate messages to each agent:\n` +
-                mentionedAgents.map(t => `• \`@${t} [your message]\``).join('\n') + '\n\n' +
-                `_Stay tuned for updates! 🎉_`
-        };
-    }
-
     const match = rawMessage.match(/^@(\S+)\s+([\s\S]*)$/);
     if (match) {
         const candidateId = match[1].toLowerCase();

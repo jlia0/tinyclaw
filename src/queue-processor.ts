@@ -253,24 +253,6 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             isTeamRouted = !!routing.isTeam;
         }
 
-        // Easter egg: Handle multiple agent mentions (only for external messages)
-        if (!isInternal && agentId === 'error') {
-            log('INFO', `Multiple agents detected, sending easter egg message`);
-
-            enqueueResponse({
-                channel,
-                sender,
-                senderId: dbMsg.sender_id ?? undefined,
-                message: message,
-                originalMessage: rawMessage,
-                messageId,
-            });
-
-            dbCompleteMessage(dbMsg.id);
-            log('INFO', `✓ Easter egg sent to ${sender}`);
-            return;
-        }
-
         // Fall back to default if agent not found
         if (!agents[agentId]) {
             agentId = 'default';
