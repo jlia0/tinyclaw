@@ -9,7 +9,7 @@ import {
 } from "@/lib/api";
 import {
   Zap, Plus, Users, LayoutDashboard, ScrollText,
-  Settings, SlidersHorizontal,
+  Settings, SlidersHorizontal, ClipboardList,
 } from "lucide-react";
 
 export function Sidebar() {
@@ -46,6 +46,7 @@ export function Sidebar() {
         </Link>
         {[
           { href: "/", label: "Dashboard", icon: LayoutDashboard },
+          { href: "/tasks", label: "Tasks", icon: ClipboardList },
           { href: "/logs", label: "Logs", icon: ScrollText },
         ].map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);

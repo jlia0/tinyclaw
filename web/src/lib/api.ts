@@ -143,6 +143,41 @@ export async function sendMessage(payload: {
   return apiFetch("/api/message", { method: "POST", body: JSON.stringify(payload) });
 }
 
+// ── Tasks ─────────────────────────────────────────────────────────────────
+
+export type TaskStatus = "backlog" | "in_progress" | "review" | "done";
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  assignee: string;
+  assigneeType: "agent" | "team" | "";
+  createdAt: number;
+  updatedAt: number;
+}
+
+export async function getTasks(): Promise<Task[]> {
+  return apiFetch("/api/tasks");
+}
+
+export async function createTask(task: Partial<Task>): Promise<{ ok: boolean; task: Task }> {
+  return apiFetch("/api/tasks", { method: "POST", body: JSON.stringify(task) });
+}
+
+export async function updateTask(id: string, task: Partial<Task>): Promise<{ ok: boolean; task: Task }> {
+  return apiFetch(`/api/tasks/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(task) });
+}
+
+export async function deleteTask(id: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function reorderTasks(columns: Record<string, string[]>): Promise<{ ok: boolean }> {
+  return apiFetch("/api/tasks/reorder", { method: "PUT", body: JSON.stringify({ columns }) });
+}
+
 // ── SSE ───────────────────────────────────────────────────────────────────
 
 export function subscribeToEvents(

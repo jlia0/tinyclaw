@@ -13,6 +13,19 @@ export interface TeamConfig {
     leader_agent: string;
 }
 
+export type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'done';
+
+export interface Task {
+    id: string;
+    title: string;
+    description: string;
+    status: TaskStatus;
+    assignee: string;       // agent or team id, empty = unassigned
+    assigneeType: 'agent' | 'team' | '';
+    createdAt: number;
+    updatedAt: number;
+}
+
 export interface ChainStep {
     agentId: string;
     response: string;

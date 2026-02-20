@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import http from 'http';
-import { MessageData, ResponseData, Settings, AgentConfig, TeamConfig, Conversation } from './types';
+import { MessageData, ResponseData, Settings, AgentConfig, TeamConfig, Conversation, Task, TaskStatus } from './types';
 import {
     SCRIPT_DIR, TINYCLAW_HOME,
     QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING,
@@ -68,6 +68,23 @@ function mutateSettings(fn: (settings: Settings) => void): Settings {
     fn(settings);
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n');
     return settings;
+}
+
+// ── Task persistence ─────────────────────────────────────────────────────────
+
+const TASKS_FILE = path.join(TINYCLAW_HOME, 'tasks.json');
+
+function readTasks(): Task[] {
+    try {
+        if (!fs.existsSync(TASKS_FILE)) return [];
+        return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
+    } catch {
+        return [];
+    }
+}
+
+function writeTasks(tasks: Task[]): void {
+    fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2) + '\n');
 }
 
 // ── Agent workspace provisioning ─────────────────────────────────────────────
@@ -431,6 +448,81 @@ export function startApiServer(
                 }
                 mutateSettings(s => { delete s.teams![teamId]; });
                 log('INFO', `[API] Team '${teamId}' deleted`);
+                return jsonResponse(res, 200, { ok: true });
+            }
+
+            // ── GET /api/tasks — List all tasks ──────────────────────────
+            if (req.method === 'GET' && pathname === '/api/tasks') {
+                return jsonResponse(res, 200, readTasks());
+            }
+
+            // ── POST /api/tasks — Create a task ─────────────────────────
+            if (req.method === 'POST' && pathname === '/api/tasks') {
+                const body = JSON.parse(await readBody(req)) as Partial<Task>;
+                if (!body.title) {
+                    return jsonResponse(res, 400, { error: 'title is required' });
+                }
+                const tasks = readTasks();
+                const task: Task = {
+                    id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                    title: body.title,
+                    description: body.description || '',
+                    status: body.status || 'backlog',
+                    assignee: body.assignee || '',
+                    assigneeType: body.assigneeType || '',
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                };
+                tasks.push(task);
+                writeTasks(tasks);
+                log('INFO', `[API] Task created: ${task.title}`);
+                return jsonResponse(res, 200, { ok: true, task });
+            }
+
+            // ── PUT /api/tasks/reorder — Bulk update task statuses/order ─
+            if (req.method === 'PUT' && pathname === '/api/tasks/reorder') {
+                const body = JSON.parse(await readBody(req)) as { columns: Record<string, string[]> };
+                if (!body.columns) {
+                    return jsonResponse(res, 400, { error: 'columns map is required' });
+                }
+                const tasks = readTasks();
+                for (const [status, taskIds] of Object.entries(body.columns)) {
+                    for (const taskId of taskIds) {
+                        const task = tasks.find(t => t.id === taskId);
+                        if (task) {
+                            task.status = status as TaskStatus;
+                            task.updatedAt = Date.now();
+                        }
+                    }
+                }
+                writeTasks(tasks);
+                return jsonResponse(res, 200, { ok: true });
+            }
+
+            // ── PUT /api/tasks/:id — Update a task ──────────────────────
+            if (req.method === 'PUT' && pathname.startsWith('/api/tasks/')) {
+                const taskId = pathname.slice('/api/tasks/'.length);
+                if (!taskId) return jsonResponse(res, 400, { error: 'task id is required' });
+                const body = JSON.parse(await readBody(req)) as Partial<Task>;
+                const tasks = readTasks();
+                const idx = tasks.findIndex(t => t.id === taskId);
+                if (idx === -1) return jsonResponse(res, 404, { error: 'task not found' });
+                tasks[idx] = { ...tasks[idx], ...body, id: taskId, updatedAt: Date.now() };
+                writeTasks(tasks);
+                log('INFO', `[API] Task updated: ${taskId}`);
+                return jsonResponse(res, 200, { ok: true, task: tasks[idx] });
+            }
+
+            // ── DELETE /api/tasks/:id — Delete a task ───────────────────
+            if (req.method === 'DELETE' && pathname.startsWith('/api/tasks/')) {
+                const taskId = pathname.slice('/api/tasks/'.length);
+                if (!taskId) return jsonResponse(res, 400, { error: 'task id is required' });
+                const tasks = readTasks();
+                const idx = tasks.findIndex(t => t.id === taskId);
+                if (idx === -1) return jsonResponse(res, 404, { error: 'task not found' });
+                tasks.splice(idx, 1);
+                writeTasks(tasks);
+                log('INFO', `[API] Task deleted: ${taskId}`);
                 return jsonResponse(res, 200, { ok: true });
             }
 
