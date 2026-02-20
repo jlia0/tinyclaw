@@ -1,19 +1,64 @@
 #!/usr/bin/env bash
 # Messaging and logging functions for TinyClaw
 
-# Send message to Claude and get response
+# Send message by writing to the incoming queue
 send_message() {
     local message="$1"
-    local source="${2:-manual}"
+    local channel="${2:-cli}"
 
-    log "[$source] Sending: ${message:0:50}..."
+    local queue_incoming="$TINYCLAW_HOME/queue/incoming"
+    mkdir -p "$queue_incoming"
 
-    cd "$SCRIPT_DIR"
-    RESPONSE=$(claude --dangerously-skip-permissions -c -p "$message" 2>&1)
+    local timestamp
+    timestamp=$(date +%s%3N 2>/dev/null || python3 -c 'import time; print(int(time.time()*1000))')
+    local msg_id="${channel}_${timestamp}_$$"
+    local queue_file="$queue_incoming/${msg_id}.json"
 
-    echo "$RESPONSE"
+    # Write queue message in the same format used by other channels
+    cat > "$queue_file" <<QEOF
+{
+  "channel": "$channel",
+  "sender": "CLI User",
+  "senderId": "cli",
+  "message": $(printf '%s' "$message" | jq -Rs .),
+  "timestamp": $timestamp,
+  "messageId": "$msg_id"
+}
+QEOF
 
-    log "[$source] Response length: ${#RESPONSE} chars"
+    log "[$channel] Queued message: ${message:0:50}..."
+    echo -e "${GREEN}✓ Message queued${NC}"
+
+    # Poll outgoing queue for the response
+    local queue_outgoing="$TINYCLAW_HOME/queue/outgoing"
+    local timeout=300  # 5 minutes
+    local elapsed=0
+    local interval=1
+
+    echo -n "Waiting for response..."
+
+    while [ "$elapsed" -lt "$timeout" ]; do
+        # Queue processor writes: {channel}_{messageId}_{timestamp}.json
+        local response_file
+        response_file=$(find "$queue_outgoing" -name "${channel}_${msg_id}_*.json" -print -quit 2>/dev/null)
+
+        if [ -n "$response_file" ]; then
+            echo ""
+            echo ""
+            local response
+            response=$(jq -r '.message' "$response_file" 2>/dev/null)
+            echo "$response"
+            rm -f "$response_file"
+            return
+        fi
+
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+        echo -n "."
+    done
+
+    echo ""
+    echo -e "${YELLOW}Timed out waiting for response. Check logs with: tinyclaw logs queue${NC}"
 }
 
 # View logs
