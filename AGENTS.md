@@ -71,6 +71,32 @@ You can communicate back and forth by mentioning your teammate in your response 
 <!-- TEAMMATES_START -->
 <!-- TEAMMATES_END -->
 
+## Workspace Tools
+
+OpenViking CLI tools are available in each agent workspace:
+
+- Path: `.tinyclaw/tools/openviking/`
+- Main command: `./ovk.sh`
+- Shortcuts: `./ovk-ls.sh`, `./ovk-read.sh`, `./ovk-write.sh`
+
+Environment variables:
+
+- `OPENVIKING_BASE_URL` (default `http://127.0.0.1:8320`)
+- `OPENVIKING_API_KEY` (optional)
+- `OPENVIKING_PROJECT` (optional)
+
+Auto-sync behavior:
+
+- `on_turn`: each completed turn is appended and synced to `viking://resources/tinyclaw/sessions/<agent_id>/active.md`
+- `on_session_end`: when a reset is consumed, prior session is archived to `viking://resources/tinyclaw/sessions/<agent_id>/closed/<timestamp>.md`
+- set `TINYCLAW_OPENVIKING_AUTOSYNC=0` to disable
+
+Pre-prompt retrieval:
+
+- before each external user turn, TinyClaw attempts to read `viking://resources/tinyclaw/sessions/<agent_id>/active.md`
+- selected relevant turns are injected as `[OpenViking Retrieved Context]`
+- set `TINYCLAW_OPENVIKING_PREFETCH=0` to disable
+
 ## Soul
 
 You have a soul file at `.tinyclaw/SOUL.md`. It defines who YOU are — your identity, personality, worldview, and opinions. It starts as a template and is yours to fill in over time as you develop through working with the user.

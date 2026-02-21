@@ -80,6 +80,35 @@ export function ensureAgentDirectory(agentDir: string): void {
     if (fs.existsSync(sourceSoul)) {
         fs.copyFileSync(sourceSoul, path.join(targetTinyclaw, 'SOUL.md'));
     }
+
+    // Copy OpenViking tool templates for CLI-driven workspace integrations.
+    const sourceToolsDir = path.join(SCRIPT_DIR, 'lib', 'templates', 'agent-tools', 'openviking');
+    const targetToolsDir = path.join(targetTinyclaw, 'tools', 'openviking');
+    if (fs.existsSync(sourceToolsDir)) {
+        copyDirSync(sourceToolsDir, targetToolsDir);
+    }
+
+    // Prefer the compiled runtime JS from dist so tools work without TS runtime deps.
+    const sourceToolRuntime = path.join(SCRIPT_DIR, 'dist', 'tools', 'openviking-tool.js');
+    if (fs.existsSync(sourceToolRuntime)) {
+        fs.mkdirSync(targetToolsDir, { recursive: true });
+        fs.copyFileSync(sourceToolRuntime, path.join(targetToolsDir, 'openviking-tool.js'));
+    }
+
+    // Keep source TS alongside runtime JS for easy customization by agents.
+    const sourceToolTs = path.join(SCRIPT_DIR, 'src', 'tools', 'openviking-tool.ts');
+    if (fs.existsSync(sourceToolTs)) {
+        fs.mkdirSync(targetToolsDir, { recursive: true });
+        fs.copyFileSync(sourceToolTs, path.join(targetToolsDir, 'openviking-tool.ts'));
+    }
+
+    const toolShellScripts = ['ovk.sh', 'ovk-ls.sh', 'ovk-read.sh', 'ovk-write.sh'];
+    for (const script of toolShellScripts) {
+        const scriptPath = path.join(targetToolsDir, script);
+        if (fs.existsSync(scriptPath)) {
+            fs.chmodSync(scriptPath, 0o755);
+        }
+    }
 }
 
 /**

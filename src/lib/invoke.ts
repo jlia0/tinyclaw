@@ -6,7 +6,7 @@ import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent';
 
-export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
+export async function runCommand(command: string, args: string[], cwd?: string, timeoutMs?: number): Promise<string> {
     return new Promise((resolve, reject) => {
         const env = { ...process.env };
         delete env.CLAUDECODE;
@@ -31,11 +31,26 @@ export async function runCommand(command: string, args: string[], cwd?: string):
             stderr += chunk;
         });
 
+        let timedOut = false;
+        let timer: NodeJS.Timeout | null = null;
+        if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+            timer = setTimeout(() => {
+                timedOut = true;
+                child.kill('SIGKILL');
+            }, timeoutMs);
+        }
+
         child.on('error', (error) => {
+            if (timer) clearTimeout(timer);
             reject(error);
         });
 
         child.on('close', (code) => {
+            if (timer) clearTimeout(timer);
+            if (timedOut) {
+                reject(new Error(`Command timed out after ${timeoutMs}ms`));
+                return;
+            }
             if (code === 0) {
                 resolve(stdout);
                 return;

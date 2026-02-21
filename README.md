@@ -201,6 +201,12 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 | `team remove <id>`    | Remove a team                      | `tinyclaw team remove dev`    |
 | `team visualize [id]` | Live TUI dashboard for team chains | `tinyclaw team visualize dev` |
 
+### Tool Commands
+
+| Command                  | Description                                      | Example                    |
+| ------------------------ | ------------------------------------------------ | -------------------------- |
+| `tools sync [agent_id]`  | Sync OpenViking CLI tools into agent workspace(s) | `tinyclaw tools sync coder` |
+
 ### Configuration Commands
 
 | Command                           | Description                  | Example                                          |
@@ -276,6 +282,63 @@ export TINYCLAW_SKIP_UPDATE_CHECK=1
 | ---------------- | --------------------------- | -------------------------------- |
 | `send <message>` | Send message to AI manually | `tinyclaw send "Hello!"`         |
 | `send <message>` | Route to specific agent     | `tinyclaw send "@coder fix bug"` |
+
+## 🧰 OpenViking Workspace Tools
+
+TinyClaw can provision lightweight OpenViking tools into each agent workspace:
+
+```bash
+tinyclaw tools sync
+```
+
+Tools are installed at:
+
+```bash
+<workspace>/<agent_id>/.tinyclaw/tools/openviking/
+```
+
+Common usage from an agent directory:
+
+```bash
+cd .tinyclaw/tools/openviking
+./ovk-ls.sh /
+./ovk-read.sh /context/spec.md
+./ovk-write.sh /context/spec.md "updated content"
+./ovk.sh res-get viking://workspace/resource
+```
+
+Environment variables:
+
+- `OPENVIKING_BASE_URL` (default: `http://127.0.0.1:8320`)
+- `OPENVIKING_API_KEY` (optional)
+- `OPENVIKING_PROJECT` (optional)
+
+### Auto Sync Triggers (Minimal)
+
+TinyClaw now supports minimal OpenViking auto-sync triggers per agent:
+
+- `on_turn`: after each agent response, append `user+assistant` turn to a local session file and sync to `viking://resources/tinyclaw/sessions/<agent_id>/active.md`
+- `on_session_end`: when `agent reset` is consumed, archive the previous session to `viking://resources/tinyclaw/sessions/<agent_id>/closed/<timestamp>.md`
+
+Notes:
+
+- This is best-effort and non-blocking (response delivery is not blocked by sync retries).
+- Disable auto-sync by setting `TINYCLAW_OPENVIKING_AUTOSYNC=0`.
+
+### Pre-Prompt Retrieval (OpenViking)
+
+Before invoking the model for an external user turn, TinyClaw can prefetch related context from:
+
+- `viking://resources/tinyclaw/sessions/<agent_id>/active.md`
+
+It then injects a compact `[OpenViking Retrieved Context]` block into the prompt.
+
+Environment flags:
+
+- `TINYCLAW_OPENVIKING_PREFETCH=0` disable pre-prompt retrieval
+- `TINYCLAW_OPENVIKING_PREFETCH_TIMEOUT_MS` command timeout (default: `5000`)
+- `TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS` max injected chars (default: `2800`)
+- `TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS` max selected turns (default: `4`)
 
 ### In-Chat Commands
 

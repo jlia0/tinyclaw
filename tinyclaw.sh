@@ -375,6 +375,24 @@ case "${1:-}" in
                 ;;
         esac
         ;;
+    tools)
+        case "${2:-}" in
+            sync)
+                agent_tools_sync_command "$3"
+                ;;
+            *)
+                echo "Usage: $0 tools sync [agent_id]"
+                echo ""
+                echo "Tools Commands:"
+                echo "  sync [agent_id]         Sync OpenViking tools into agent workspace(s)"
+                echo ""
+                echo "Examples:"
+                echo "  $0 tools sync"
+                echo "  $0 tools sync coder"
+                exit 1
+                ;;
+        esac
+        ;;
     pairing)
         pairing_command "${2:-}" "${3:-}"
         ;;
@@ -391,7 +409,7 @@ case "${1:-}" in
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
         echo -e "${BLUE}TinyClaw - Claude Code + Messaging Channels${NC}"
         echo ""
-        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channels|provider|model|agent|team|pairing|update|attach}"
+        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channels|provider|model|agent|team|tools|pairing|update|attach}"
         echo ""
         echo "Commands:"
         echo "  start                    Start TinyClaw"
@@ -407,6 +425,7 @@ case "${1:-}" in
         echo "  model [name]             Show or switch AI model"
         echo "  agent {list|add|remove|show|reset|provider}  Manage agents"
         echo "  team {list|add|remove|show|visualize}  Manage teams"
+        echo "  tools sync [agent_id]    Sync OpenViking tools into agent workspace(s)"
         echo "  pairing {pending|approved|list|approve <code>|unpair <channel> <sender_id>}  Manage sender approvals"
         echo "  update                   Update TinyClaw to latest version"
         echo "  attach                   Attach to tmux session"
@@ -422,6 +441,8 @@ case "${1:-}" in
         echo "  $0 agent add"
         echo "  $0 team list"
         echo "  $0 team visualize dev"
+        echo "  $0 tools sync"
+        echo "  $0 tools sync coder"
         echo "  $0 pairing pending"
         echo "  $0 pairing approve ABCD1234"
         echo "  $0 pairing unpair telegram 123456789"

@@ -23,13 +23,14 @@ start_daemon() {
     if [ ! -d "$SCRIPT_DIR/dist" ]; then
         needs_build=true
     else
-        for ts_file in "$SCRIPT_DIR"/src/*.ts; do
-            local js_file="$SCRIPT_DIR/dist/$(basename "${ts_file%.ts}.js")"
+        while IFS= read -r -d '' ts_file; do
+            local rel_path="${ts_file#"$SCRIPT_DIR/src/"}"
+            local js_file="$SCRIPT_DIR/dist/${rel_path%.ts}.js"
             if [ ! -f "$js_file" ] || [ "$ts_file" -nt "$js_file" ]; then
                 needs_build=true
                 break
             fi
-        done
+        done < <(find "$SCRIPT_DIR/src" -type f -name '*.ts' ! -path '*/visualizer/*' -print0)
     fi
     if [ "$needs_build" = true ]; then
         echo -e "${YELLOW}Building TypeScript...${NC}"
@@ -87,6 +88,7 @@ start_daemon() {
 
     # Ensure all agent workspaces have .agents/skills symlink
     ensure_agent_skills_links
+    sync_agent_tools
 
     # Validate tokens for channels that need them
     for ch in "${ACTIVE_CHANNELS[@]}"; do
