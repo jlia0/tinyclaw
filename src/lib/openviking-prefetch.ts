@@ -7,11 +7,18 @@ export type SessionTurn = {
 };
 
 export function tokenizeForMatch(text: string): string[] {
+    const stopwords = new Set([
+        'the', 'is', 'are', 'am', 'was', 'were', 'be', 'been', 'being',
+        'a', 'an', 'to', 'of', 'in', 'on', 'for', 'with', 'by', 'from',
+        'what', 'when', 'where', 'which', 'who', 'whom', 'why', 'how',
+        'please', 'reply', 'answer', 'only', 'just', 'tell', 'me', 'you', 'your',
+    ]);
     const normalized = text.toLowerCase();
     return normalized
         .split(/[^a-z0-9\u4e00-\u9fff]+/g)
         .map((s) => s.trim())
-        .filter((s) => s.length >= 2);
+        .filter((s) => s.length >= 2)
+        .filter((s) => !stopwords.has(s));
 }
 
 export function parseSessionTurns(markdown: string): SessionTurn[] {
@@ -41,6 +48,7 @@ export function parseSessionTurns(markdown: string): SessionTurn[] {
 
         let assistantSection = chunk.slice(assistantPos + assistantMarker.length).trim();
         assistantSection = assistantSection.replace(/\n- ended_at:[\s\S]*$/s, '').trim();
+        assistantSection = assistantSection.replace(/\n#\s*TinyClaw Session[\s\S]*$/s, '').trim();
 
         const user = userSection;
         const assistant = assistantSection;
@@ -60,26 +68,37 @@ export function parseSessionTurns(markdown: string): SessionTurn[] {
 export function selectRelevantTurns(turns: SessionTurn[], query: string, maxTurns: number): SessionTurn[] {
     if (!turns.length) return [];
     const cap = Math.max(1, maxTurns);
-    const qTokens = tokenizeForMatch(query);
+    const qTokens = Array.from(new Set(tokenizeForMatch(query)));
     if (!qTokens.length) {
         return turns.slice(-cap);
     }
 
     const scored = turns.map((turn) => {
-        const haystack = `${turn.user}\n${turn.assistant}`.toLowerCase();
+        const userTokens = new Set(tokenizeForMatch(turn.user));
+        const assistantTokens = new Set(tokenizeForMatch(turn.assistant));
+        const userIsQuestion = /[?？]/.test(turn.user) || /^(what|when|where|which|who|why|how)\b/i.test(turn.user.trim());
+        const assistantUncertain = /(don't have|do not have|don't know|do not know|don't see|do not see|no information|not in (the )?provided context|抱歉|没有.*信息)/i.test(turn.assistant);
         let hit = 0;
         for (const token of qTokens) {
-            if (haystack.includes(token)) hit += 1;
+            if (userTokens.has(token)) hit += 2;
+            if (assistantTokens.has(token)) hit += 1;
+        }
+        // De-prioritize turns where assistant explicitly says it has no info.
+        if (assistantUncertain) {
+            hit -= userIsQuestion ? 8 : 3;
         }
         // Prefer more recent turns when score ties.
-        return { turn, score: hit, recency: turn.index };
+        return { turn, score: hit, recency: turn.index, uncertain: assistantUncertain };
     });
 
-    const topHits = scored
-        .filter((s) => s.score > 0)
-        .sort((a, b) => (b.score - a.score) || (b.recency - a.recency))
-        .slice(0, cap)
-        .map((s) => s.turn);
+    const minScore = qTokens.length >= 3 ? 2 : 1;
+    const positive = scored
+        .filter((s) => s.score >= minScore)
+        .sort((a, b) => (b.score - a.score) || (b.recency - a.recency));
+
+    const informative = positive.filter((s) => !s.uncertain);
+    const candidates = informative.length > 0 ? informative : positive;
+    const topHits = candidates.slice(0, cap).map((s) => s.turn);
 
     if (topHits.length > 0) return topHits;
     return turns.slice(-cap);
