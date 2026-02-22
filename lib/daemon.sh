@@ -86,6 +86,39 @@ start_daemon() {
         return 1
     fi
 
+    local openviking_enabled=false
+    local openviking_autostart=false
+    local openviking_started_outside=false
+    local openviking_start_in_tmux=false
+    local openviking_bin=""
+    if [ "$OPENVIKING_ENABLED" = "true" ]; then
+        openviking_enabled=true
+    fi
+    if [ "$OPENVIKING_AUTO_START" = "true" ]; then
+        openviking_autostart=true
+    fi
+    if [ "$openviking_enabled" = true ] && [ "$openviking_autostart" = true ]; then
+        openviking_bin="$(command -v openviking || true)"
+        if [ -z "$openviking_bin" ] && [ -x "$HOME/.local/bin/openviking" ]; then
+            openviking_bin="$HOME/.local/bin/openviking"
+        fi
+        if [ -z "$openviking_bin" ]; then
+            echo -e "${RED}OpenViking is enabled but CLI is not installed${NC}"
+            echo "Run 'tinyclaw setup' again to install OpenViking, or disable OpenViking in settings."
+            return 1
+        fi
+        if [ ! -f "$OPENVIKING_CONFIG_PATH" ]; then
+            echo -e "${RED}OpenViking is enabled but config file is missing: $OPENVIKING_CONFIG_PATH${NC}"
+            echo "Run 'tinyclaw setup' again to regenerate OpenViking config."
+            return 1
+        fi
+        if curl -fsS --max-time 2 "$OPENVIKING_BASE_URL/health" >/dev/null 2>&1; then
+            openviking_started_outside=true
+        else
+            openviking_start_in_tmux=true
+        fi
+    fi
+
     # Ensure all agent workspaces have .agents/skills symlink
     ensure_agent_skills_links
     sync_agent_tools
@@ -109,6 +142,36 @@ start_daemon() {
             echo "${env_var}=${CHANNEL_TOKENS[$ch]}" >> "$env_file"
         fi
     done
+    if [ "$openviking_enabled" = true ]; then
+        echo "OPENVIKING_BASE_URL=${OPENVIKING_BASE_URL}" >> "$env_file"
+        if [ -n "$OPENVIKING_API_KEY" ]; then
+            echo "OPENVIKING_API_KEY=${OPENVIKING_API_KEY}" >> "$env_file"
+        fi
+        if [ -n "$OPENVIKING_PROJECT" ]; then
+            echo "OPENVIKING_PROJECT=${OPENVIKING_PROJECT}" >> "$env_file"
+        fi
+        if [ "$OPENVIKING_NATIVE_SESSION" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_SESSION_NATIVE=1" >> "$env_file"
+        fi
+        if [ "$OPENVIKING_NATIVE_SEARCH" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_SEARCH_NATIVE=1" >> "$env_file"
+        fi
+        if [ "$OPENVIKING_PREFETCH" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_PREFETCH=1" >> "$env_file"
+        else
+            echo "TINYCLAW_OPENVIKING_PREFETCH=0" >> "$env_file"
+        fi
+        if [ "$OPENVIKING_AUTOSYNC" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_AUTOSYNC=1" >> "$env_file"
+        else
+            echo "TINYCLAW_OPENVIKING_AUTOSYNC=0" >> "$env_file"
+        fi
+        echo "TINYCLAW_OPENVIKING_PREFETCH_TIMEOUT_MS=${OPENVIKING_PREFETCH_TIMEOUT_MS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS=${OPENVIKING_COMMIT_TIMEOUT_MS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS=${OPENVIKING_PREFETCH_MAX_CHARS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS=${OPENVIKING_PREFETCH_MAX_TURNS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_HITS=${OPENVIKING_PREFETCH_MAX_HITS}" >> "$env_file"
+    fi
 
     # Check for updates (non-blocking)
     local update_info
@@ -123,6 +186,13 @@ start_daemon() {
     for ch in "${ACTIVE_CHANNELS[@]}"; do
         echo -e "  ${GREEN}✓${NC} ${CHANNEL_DISPLAY[$ch]}"
     done
+    if [ "$openviking_enabled" = true ]; then
+        if [ "$openviking_started_outside" = true ]; then
+            echo -e "  ${GREEN}✓${NC} OpenViking (already running at ${OPENVIKING_BASE_URL})"
+        elif [ "$openviking_start_in_tmux" = true ]; then
+            echo -e "  ${GREEN}✓${NC} OpenViking (auto-start)"
+        fi
+    fi
     echo ""
 
     # Build log tail command
@@ -132,8 +202,12 @@ start_daemon() {
     done
 
     # --- Build tmux session dynamically ---
-    # Total panes = N channels + 3 (queue, heartbeat, logs)
-    local total_panes=$(( ${#ACTIVE_CHANNELS[@]} + 3 ))
+    # Total panes = N channels + optional OpenViking + 3 (queue, heartbeat, logs)
+    local extra_panes=3
+    if [ "$openviking_start_in_tmux" = true ]; then
+        extra_panes=$((extra_panes + 1))
+    fi
+    local total_panes=$(( ${#ACTIVE_CHANNELS[@]} + extra_panes ))
 
     tmux new-session -d -s "$TMUX_SESSION" -n "tinyclaw" -c "$SCRIPT_DIR"
 
@@ -152,6 +226,13 @@ start_daemon() {
         tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "${CHANNEL_DISPLAY[$ch]}"
         pane_idx=$((pane_idx + 1))
     done
+
+    # OpenViking pane (optional)
+    if [ "$openviking_start_in_tmux" = true ]; then
+        tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && '$openviking_bin' serve --host '$OPENVIKING_HOST' --port '$OPENVIKING_PORT' --config '$OPENVIKING_CONFIG_PATH' 2>&1 | tee -a '$LOG_DIR/openviking.log'" C-m
+        tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "OpenViking"
+        pane_idx=$((pane_idx + 1))
+    fi
 
     # Queue pane
     tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && node dist/queue-processor.js" C-m
@@ -254,6 +335,7 @@ start_daemon() {
 # Stop daemon
 stop_daemon() {
     log "Stopping TinyClaw..."
+    load_settings >/dev/null 2>&1 || true
 
     if session_exists; then
         tmux kill-session -t "$TMUX_SESSION"
@@ -265,6 +347,9 @@ stop_daemon() {
     done
     pkill -f "dist/queue-processor.js" || true
     pkill -f "heartbeat-cron.sh" || true
+    if [ -n "${OPENVIKING_PORT:-}" ]; then
+        pkill -f "openviking serve .*--port ${OPENVIKING_PORT}" || true
+    fi
 
     echo -e "${GREEN}✓ TinyClaw stopped${NC}"
     log "Daemon stopped"
@@ -292,6 +377,8 @@ restart_daemon() {
 
 # Status
 status_daemon() {
+    load_settings >/dev/null 2>&1 || true
+
     echo -e "${BLUE}TinyClaw Status${NC}"
     echo "==============="
     echo ""
@@ -340,6 +427,13 @@ status_daemon() {
         echo -e "Heartbeat:       ${GREEN}Running${NC}"
     else
         echo -e "Heartbeat:       ${RED}Not Running${NC}"
+    fi
+    if [ "$OPENVIKING_ENABLED" = "true" ]; then
+        if pgrep -f "openviking serve .*--port ${OPENVIKING_PORT}" > /dev/null; then
+            echo -e "OpenViking:      ${GREEN}Running${NC}"
+        else
+            echo -e "OpenViking:      ${RED}Not Running${NC}"
+        fi
     fi
 
     # Recent activity per channel (only show if log file exists)

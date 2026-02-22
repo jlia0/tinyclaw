@@ -228,6 +228,109 @@ DEFAULT_AGENT_NAME=$(echo "$DEFAULT_AGENT_NAME" | tr ' ' '-' | tr -cd 'a-zA-Z0-9
 echo -e "${GREEN}✓ Default agent: $DEFAULT_AGENT_NAME${NC}"
 echo ""
 
+# OpenViking setup (optional)
+OPENVIKING_ENABLED=false
+OPENVIKING_AUTO_START=false
+OPENVIKING_HOST="127.0.0.1"
+OPENVIKING_PORT="8320"
+OPENVIKING_BASE_URL="http://127.0.0.1:8320"
+OPENVIKING_PROJECT=""
+OPENVIKING_API_KEY=""
+OPENVIKING_CONFIG_PATH="$HOME/.openviking/ov.conf"
+OPENVIKING_PREFETCH_TIMEOUT_MS=5000
+OPENVIKING_COMMIT_TIMEOUT_MS=15000
+OPENVIKING_PREFETCH_MAX_CHARS=2800
+OPENVIKING_PREFETCH_MAX_TURNS=4
+OPENVIKING_PREFETCH_MAX_HITS=8
+
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  OpenViking Memory (Optional)${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo "Enable OpenViking native memory (Session + Search + Memory extraction)?"
+read -rp "Enable OpenViking? [y/N]: " ENABLE_OPENVIKING
+if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
+    OPENVIKING_ENABLED=true
+    OPENVIKING_AUTO_START=true
+    echo ""
+    echo -e "${GREEN}✓ OpenViking enabled${NC}"
+    echo -e "${BLUE}Using default OpenViking server endpoint: ${OPENVIKING_BASE_URL}${NC}"
+
+    echo ""
+    echo "Now configure values that will be written into ~/.openviking/ov.conf"
+    echo -e "${YELLOW}Note: currently TinyClaw setup only supports OpenAI for OpenViking (tested path).${NC}"
+    read -rp "OpenAI API key (required for VLM + embedding): " OV_LLM_API_KEY
+    if [ -z "$OV_LLM_API_KEY" ]; then
+        echo -e "${RED}API key is required when OpenViking is enabled${NC}"
+        exit 1
+    fi
+    OV_LLM_API_BASE="https://api.openai.com/v1"
+    OV_LLM_MODEL="gpt-4o-mini"
+    OV_EMBED_MODEL="text-embedding-3-large"
+
+    OPENVIKING_CONF_DIR="$(dirname "$OPENVIKING_CONFIG_PATH")"
+    OPENVIKING_DATA_PATH="$HOME/.tinyclaw/openviking-data"
+    mkdir -p "$OPENVIKING_CONF_DIR"
+    mkdir -p "$OPENVIKING_DATA_PATH"
+
+    if ! command -v openviking &> /dev/null; then
+        echo -e "${YELLOW}OpenViking CLI not found. Installing with pip...${NC}"
+        if ! command -v python3 &> /dev/null; then
+            echo -e "${RED}python3 is required to install OpenViking${NC}"
+            exit 1
+        fi
+        if ! python3 -m pip install --user --upgrade openviking; then
+            echo -e "${RED}Failed to install openviking package${NC}"
+            exit 1
+        fi
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        echo -e "${RED}jq is required for OpenViking config generation${NC}"
+        exit 1
+    fi
+
+    jq -n \
+      --arg agfs_path "$OPENVIKING_DATA_PATH/agfs" \
+      --arg vectordb_path "$OPENVIKING_DATA_PATH/vectordb" \
+      --arg api_key "$OV_LLM_API_KEY" \
+      --arg api_base "$OV_LLM_API_BASE" \
+      --arg vlm_model "$OV_LLM_MODEL" \
+      --arg embed_model "$OV_EMBED_MODEL" \
+      '{
+        storage: {
+          agfs: {
+            backend: "local",
+            path: $agfs_path
+          },
+          vectordb: {
+            backend: "local",
+            path: $vectordb_path
+          }
+        },
+        embedding: {
+          dense: {
+            provider: "openai",
+            model: $embed_model,
+            api_key: $api_key,
+            api_base: (if $api_base == "" then null else $api_base end)
+          }
+        },
+        vlm: {
+          provider: "openai",
+          model: $vlm_model,
+          api_key: $api_key,
+          api_base: (if $api_base == "" then null else $api_base end),
+          temperature: 0.0
+        },
+        log_level: "WARNING"
+      }' > "$OPENVIKING_CONFIG_PATH"
+
+    echo -e "${GREEN}✓ OpenViking config written: $OPENVIKING_CONFIG_PATH${NC}"
+    echo -e "${GREEN}✓ TinyClaw will auto-start OpenViking server on tinyclaw start${NC}"
+    echo ""
+fi
+
 # --- Additional Agents (optional) ---
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  Additional Agents (Optional)${NC}"
@@ -343,6 +446,40 @@ else
     MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
 fi
 
+OPENVIKING_JSON=$(jq -n \
+  --argjson enabled "$OPENVIKING_ENABLED" \
+  --argjson auto_start "$OPENVIKING_AUTO_START" \
+  --arg host "$OPENVIKING_HOST" \
+  --argjson port "$OPENVIKING_PORT" \
+  --arg base_url "$OPENVIKING_BASE_URL" \
+  --arg config_path "$OPENVIKING_CONFIG_PATH" \
+  --arg project "$OPENVIKING_PROJECT" \
+  --arg api_key "$OPENVIKING_API_KEY" \
+  --argjson prefetch_timeout_ms "$OPENVIKING_PREFETCH_TIMEOUT_MS" \
+  --argjson commit_timeout_ms "$OPENVIKING_COMMIT_TIMEOUT_MS" \
+  --argjson prefetch_max_chars "$OPENVIKING_PREFETCH_MAX_CHARS" \
+  --argjson prefetch_max_turns "$OPENVIKING_PREFETCH_MAX_TURNS" \
+  --argjson prefetch_max_hits "$OPENVIKING_PREFETCH_MAX_HITS" \
+  '{
+    enabled: $enabled,
+    auto_start: $auto_start,
+    host: $host,
+    port: $port,
+    base_url: $base_url,
+    config_path: $config_path,
+    project: (if $project == "" then null else $project end),
+    api_key: (if $api_key == "" then null else $api_key end),
+    native_session: $enabled,
+    native_search: $enabled,
+    prefetch: $enabled,
+    autosync: true,
+    prefetch_timeout_ms: $prefetch_timeout_ms,
+    commit_timeout_ms: $commit_timeout_ms,
+    prefetch_max_chars: $prefetch_max_chars,
+    prefetch_max_turns: $prefetch_max_turns,
+    prefetch_max_hits: $prefetch_max_hits
+  }')
+
 cat > "$SETTINGS_FILE" <<EOF
 {
   "workspace": {
@@ -361,6 +498,7 @@ cat > "$SETTINGS_FILE" <<EOF
   },
   ${AGENTS_JSON}
   ${MODELS_SECTION},
+  "openviking": ${OPENVIKING_JSON},
   "monitoring": {
     "heartbeat_interval": ${HEARTBEAT_INTERVAL}
   }

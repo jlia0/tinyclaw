@@ -4,7 +4,18 @@ import path from 'path';
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-type Command = 'ls' | 'read' | 'write' | 'write-file' | 'res-get' | 'res-put' | 'find-uris';
+type Command =
+    | 'ls'
+    | 'read'
+    | 'write'
+    | 'write-file'
+    | 'res-get'
+    | 'res-put'
+    | 'find-uris'
+    | 'search'
+    | 'session-create'
+    | 'session-message'
+    | 'session-commit';
 
 const HELP = `OpenViking workspace tool
 
@@ -16,6 +27,10 @@ Usage:
   node openviking-tool.js res-get <uri> [--json]
   node openviking-tool.js res-put <uri> <content> [--mime <mime_type>] [--json]
   node openviking-tool.js find-uris <query> <target_path> [--limit <n>] [--score-threshold <n>] [--json]
+  node openviking-tool.js search <query> [--session-id <id>] [--limit <n>] [--score-threshold <n>] [--json]
+  node openviking-tool.js session-create [--agent-id <id>] [--channel <name>] [--sender-id <id>] [--json]
+  node openviking-tool.js session-message <session_id> <role> <content> [--json]
+  node openviking-tool.js session-commit <session_id> [--json]
 
 Environment:
   OPENVIKING_BASE_URL  API base URL (default: http://127.0.0.1:8320)
@@ -45,11 +60,15 @@ function positionalArguments(): string[] {
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg === '--json') continue;
-        if (arg === '--mime') {
-            i += 1;
-            continue;
-        }
-        if (arg === '--limit' || arg === '--score-threshold') {
+        if (
+            arg === '--mime'
+            || arg === '--limit'
+            || arg === '--score-threshold'
+            || arg === '--session-id'
+            || arg === '--agent-id'
+            || arg === '--channel'
+            || arg === '--sender-id'
+        ) {
             i += 1;
             continue;
         }
@@ -75,6 +94,13 @@ type ListItem = {
     isDir: boolean;
     modTime: string;
     index: number;
+};
+
+type SearchMatch = {
+    type: 'memory' | 'resource' | 'skill';
+    uri: string;
+    score: number;
+    abstract: string;
 };
 
 const DIRECTORY_READ_MAX_FILES = 8;
@@ -162,17 +188,80 @@ function printRead(data: JsonValue): void {
     printJson(data);
 }
 
-type FindMatch = {
-    uri: string;
-    score: number;
-    isLeaf: boolean;
-};
+function normalizeAbstract(value: string): string {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (!normalized) return '(no abstract provided)';
+    const MAX_ABSTRACT_CHARS = 220;
+    if (normalized.length <= MAX_ABSTRACT_CHARS) return normalized;
+    return `${normalized.slice(0, MAX_ABSTRACT_CHARS - 3)}...`;
+}
 
-function extractFindMatches(data: JsonValue): FindMatch[] {
+function pickAbstract(node: Record<string, unknown>): string {
+    const candidates = [
+        node.abstract,
+        node.summary,
+        node.snippet,
+        node.text,
+        node.content,
+        node.description,
+        node.title,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string') {
+            return normalizeAbstract(candidate);
+        }
+    }
+    const metadata = asObject(node.metadata);
+    for (const candidate of [metadata.abstract, metadata.summary, metadata.snippet, metadata.description]) {
+        if (typeof candidate === 'string') {
+            return normalizeAbstract(candidate);
+        }
+    }
+    return '(no abstract provided)';
+}
+
+function extractSearchMatches(data: JsonValue): SearchMatch[] {
+    const root = asObject(data);
+    const resultNode = asObject(root.result ?? root.data ?? root);
+    const groups: Array<{ key: string; type: SearchMatch['type'] }> = [
+        { key: 'memories', type: 'memory' },
+        { key: 'resources', type: 'resource' },
+        { key: 'skills', type: 'skill' },
+    ];
+
+    const out: SearchMatch[] = [];
+    for (const group of groups) {
+        const items = asArray(resultNode[group.key]);
+        for (const item of items) {
+            const node = asObject(item);
+            const uri = String(node.uri ?? node.path ?? '').trim();
+            if (!uri) continue;
+            out.push({
+                type: group.type,
+                uri,
+                score: Number(node.score ?? 0),
+                abstract: pickAbstract(node),
+            });
+        }
+    }
+
+    out.sort((a, b) => b.score - a.score);
+    return out;
+}
+
+function printSearchMatches(data: JsonValue): void {
+    const matches = extractSearchMatches(data);
+    if (!matches.length) return;
+    for (const m of matches) {
+        console.log(`${m.type}\t${m.score}\t${m.uri}\t${m.abstract}`);
+    }
+}
+
+function extractFindMatches(data: JsonValue): Array<{ uri: string; score: number; isLeaf: boolean }> {
     const root = asObject(data);
     const resultNode = asObject(root.result);
     const groups = ['memories', 'resources', 'skills'];
-    const out: FindMatch[] = [];
+    const out: Array<{ uri: string; score: number; isLeaf: boolean }> = [];
     for (const g of groups) {
         const items = asArray(resultNode[g]);
         for (const item of items) {
@@ -196,14 +285,6 @@ function printFindUris(data: JsonValue): void {
     for (const m of matches) {
         console.log(`${m.score}\t${m.uri}`);
     }
-}
-
-function extractUris(data: JsonValue): string[] {
-    const root = asObject(data);
-    const items = asArray(root.result ?? asObject(root.data).items ?? root.items);
-    return items
-        .map((item) => String(asObject(item).uri ?? asObject(item).path ?? ''))
-        .filter((uri) => uri.length > 0);
 }
 
 function extractListItems(data: JsonValue): ListItem[] {
@@ -324,6 +405,90 @@ async function readWithDirectoryFallback(uri: string, rawPath: string): Promise<
         } catch {
             throw primaryError;
         }
+    }
+}
+
+function extractSessionId(response: JsonValue): string {
+    const root = asObject(response);
+    const resultNode = asObject(root.result);
+    const dataNode = asObject(root.data);
+    const candidates = [
+        root.id,
+        root.session_id,
+        root.sessionId,
+        resultNode.id,
+        resultNode.session_id,
+        resultNode.sessionId,
+        dataNode.id,
+        dataNode.session_id,
+        dataNode.sessionId,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate.trim();
+        }
+    }
+    return '';
+}
+
+async function createSession(agentId?: string, channel?: string, senderId?: string): Promise<JsonValue> {
+    const metadata = {
+        source: 'tinyclaw',
+        agent_id: agentId || 'unknown',
+        channel: channel || 'unknown',
+        sender_id: senderId || 'unknown',
+        created_at: new Date().toISOString(),
+    };
+
+    const fallbackName = `tinyclaw:${agentId || 'agent'}:${channel || 'channel'}:${senderId || 'sender'}`;
+    const payloads: Array<Record<string, unknown>> = [
+        { metadata },
+        { name: fallbackName, metadata },
+        { agent_id: agentId, channel, sender_id: senderId, metadata },
+        {},
+    ];
+
+    let lastError: Error | null = null;
+    for (const payload of payloads) {
+        try {
+            return await request('/api/v1/sessions', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+        } catch (error) {
+            lastError = error as Error;
+        }
+    }
+
+    throw lastError || new Error('Failed to create session');
+}
+
+async function writeSessionMessage(sessionId: string, role: string, content: string): Promise<JsonValue> {
+    const endpoint = `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`;
+    try {
+        return await request(endpoint, {
+            method: 'POST',
+            body: JSON.stringify({ role, content }),
+        });
+    } catch {
+        return await request(endpoint, {
+            method: 'POST',
+            body: JSON.stringify({ message: { role, content } }),
+        });
+    }
+}
+
+async function commitSession(sessionId: string): Promise<JsonValue> {
+    const endpoint = `/api/v1/sessions/${encodeURIComponent(sessionId)}/commit`;
+    try {
+        return await request(endpoint, {
+            method: 'POST',
+            body: JSON.stringify({}),
+        });
+    } catch {
+        return await request(endpoint, {
+            method: 'POST',
+        });
     }
 }
 
@@ -463,6 +628,69 @@ async function run(): Promise<void> {
             });
             if (jsonOutput) printJson(response);
             else printFindUris(response);
+            return;
+        }
+        case 'search': {
+            if (!positional[1]) fail('Usage: search <query> [--session-id <id>] [--limit <n>] [--score-threshold <n>]');
+            const query = positional[1];
+            const sessionId = getFlagValue('--session-id');
+            const limitRaw = getFlagValue('--limit');
+            const scoreThresholdRaw = getFlagValue('--score-threshold');
+            const limit = limitRaw ? Number(limitRaw) : 12;
+            if (!Number.isFinite(limit) || limit <= 0) fail('Invalid --limit value');
+            let scoreThreshold: number | undefined;
+            if (scoreThresholdRaw !== undefined) {
+                const parsed = Number(scoreThresholdRaw);
+                if (!Number.isFinite(parsed)) fail('Invalid --score-threshold value');
+                scoreThreshold = parsed;
+            }
+            response = await request('/api/v1/search/search', {
+                method: 'POST',
+                body: JSON.stringify({
+                    query,
+                    session_id: sessionId,
+                    limit,
+                    score_threshold: scoreThreshold,
+                }),
+            });
+            if (jsonOutput) printJson(response);
+            else printSearchMatches(response);
+            return;
+        }
+        case 'session-create': {
+            const agentId = getFlagValue('--agent-id');
+            const channel = getFlagValue('--channel');
+            const senderId = getFlagValue('--sender-id');
+            response = await createSession(agentId, channel, senderId);
+            const sessionId = extractSessionId(response);
+            if (!sessionId) {
+                fail('Session create succeeded but no session id found in response');
+            }
+            if (jsonOutput) printJson(response);
+            else console.log(sessionId);
+            return;
+        }
+        case 'session-message': {
+            if (!positional[1] || !positional[2] || positional[3] === undefined) {
+                fail('Usage: session-message <session_id> <role> <content>');
+            }
+            const sessionId = positional[1];
+            const role = positional[2];
+            const content = positional[3];
+            if (!['user', 'assistant', 'system'].includes(role)) {
+                fail('Role must be one of: user, assistant, system');
+            }
+            response = await writeSessionMessage(sessionId, role, content);
+            if (jsonOutput) printJson(response);
+            else console.log(`Session message stored: ${sessionId} (${role})`);
+            return;
+        }
+        case 'session-commit': {
+            if (!positional[1]) fail('Usage: session-commit <session_id>');
+            const sessionId = positional[1];
+            response = await commitSession(sessionId);
+            if (jsonOutput) printJson(response);
+            else console.log(`Session committed: ${sessionId}`);
             return;
         }
         default:
