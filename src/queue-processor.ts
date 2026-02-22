@@ -26,7 +26,7 @@ import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
 import { invokeAgent, runCommand } from './lib/invoke';
 import { jsonrepair } from 'jsonrepair';
-import { SessionTurn, parseSessionTurns, selectRelevantTurns, buildPrefetchBlock } from './lib/openviking-prefetch';
+import { SessionTurn, parseSessionTurns, buildPrefetchBlock } from './lib/openviking-prefetch';
 
 /** Parse JSON with automatic repair for malformed content (e.g. bad escapes). */
 function safeParseJSON<T = unknown>(raw: string, label?: string): T {
@@ -60,6 +60,16 @@ const OPENVIKING_PREFETCH_MAX_CHARS = Number(process.env.TINYCLAW_OPENVIKING_PRE
 const OPENVIKING_PREFETCH_MAX_TURNS = Number(process.env.TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS || 4);
 const OPENVIKING_SESSION_ROOT = '/tinyclaw/sessions';
 const openVikingSyncChains = new Map<string, Promise<void>>();
+
+function stripInjectedOpenVikingContext(text: string): string {
+    const withEndMarker = /\n*------\n*\n*\[OpenViking Retrieved Context\][\s\S]*?\[End OpenViking Context\]\s*/g;
+    const withoutEndMarker = /\n*------\n*\n*\[OpenViking Retrieved Context\][\s\S]*$/g;
+    return text
+        .replace(withEndMarker, '\n')
+        .replace(withoutEndMarker, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
 
 function getOpenVikingToolPath(workspacePath: string, agentId: string): string | null {
     const toolPath = path.join(workspacePath, agentId, '.tinyclaw', 'tools', 'openviking', 'openviking-tool.js');
@@ -152,6 +162,15 @@ async function appendTurnAndSyncOpenViking(
 ): Promise<void> {
     const sessionFile = ensureActiveSessionFile(workspacePath, agentId);
     const turnTime = new Date().toISOString();
+    const injectedMarker = '[OpenViking Retrieved Context]';
+    if (userMessage.includes(injectedMarker) || assistantResponse.includes(injectedMarker)) {
+        log(
+            'WARN',
+            `OpenViking writeback guard hit for @${agentId} message_id=${messageId}: injected context marker detected before sync`
+        );
+    }
+    const cleanUserMessage = stripInjectedOpenVikingContext(userMessage);
+    const cleanAssistantResponse = stripInjectedOpenVikingContext(assistantResponse);
     const turnBlock = [
         '------',
         '',
@@ -162,11 +181,11 @@ async function appendTurnAndSyncOpenViking(
         '',
         '### User',
         '',
-        userMessage.trim(),
+        cleanUserMessage,
         '',
         '### Assistant',
         '',
-        assistantResponse.trim(),
+        cleanAssistantResponse,
         ''
     ].join('\n');
     fs.appendFileSync(sessionFile, turnBlock);
@@ -191,31 +210,98 @@ async function fetchOpenVikingPrefetchContext(workspacePath: string, agentId: st
 
     const allTurns: SessionTurn[] = [];
     const diagnostics: string[] = [];
+    const workdir = path.join(workspacePath, agentId);
+    const searchLimit = Math.max(OPENVIKING_PREFETCH_MAX_TURNS * 6, 12);
+    const candidateUris: Array<{ uri: string; score: number }> = [];
+
+    // Prefer OpenViking semantic retrieval chain.
     for (const target of readTargets) {
+        try {
+            const found = await runCommand(
+                'node',
+                [toolPath, 'find-uris', query, target, '--limit', String(searchLimit)],
+                workdir,
+                OPENVIKING_PREFETCH_TIMEOUT_MS
+            );
+            const lines = found
+                .trim()
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line && !line.startsWith('[openviking-tool]'));
+            let matched = 0;
+            for (const line of lines) {
+                const tabIdx = line.indexOf('\t');
+                if (tabIdx <= 0) continue;
+                const score = Number(line.slice(0, tabIdx));
+                const uri = line.slice(tabIdx + 1).trim();
+                if (!uri) continue;
+                matched += 1;
+                candidateUris.push({ uri, score: Number.isFinite(score) ? score : 0 });
+            }
+            diagnostics.push(`${target}:find=${matched}`);
+        } catch {
+            diagnostics.push(`${target}:find_error`);
+        }
+    }
+
+    const rankedUris: string[] = [];
+    const seenUris = new Set<string>();
+    for (const candidate of candidateUris) {
+        if (seenUris.has(candidate.uri)) continue;
+        seenUris.add(candidate.uri);
+        rankedUris.push(candidate.uri);
+        if (rankedUris.length >= searchLimit) break;
+    }
+    diagnostics.push(`find_total=${rankedUris.length}`);
+
+    for (const uri of rankedUris) {
         try {
             const output = await runCommand(
                 'node',
-                [toolPath, 'read', target],
-                path.join(workspacePath, agentId),
+                [toolPath, 'read', uri],
+                workdir,
                 OPENVIKING_PREFETCH_TIMEOUT_MS
             );
             const content = output.trim();
-            if (!content || content.startsWith('[openviking-tool]')) {
-                diagnostics.push(`${target}:empty`);
-                continue;
-            }
+            if (!content || content.startsWith('[openviking-tool]')) continue;
             const parsed = parseSessionTurns(content);
-            diagnostics.push(`${target}:chars=${content.length},turns=${parsed.length}`);
-            allTurns.push(...parsed);
+            if (parsed.length > 0) {
+                allTurns.push(...parsed);
+            }
         } catch {
-            diagnostics.push(`${target}:error`);
-            // Best-effort: ignore missing/unreadable targets.
+            // Best-effort: ignore individual read failures.
+        }
+    }
+
+    // Fallback to legacy full-read path if semantic retrieval returns nothing.
+    if (!allTurns.length) {
+        for (const target of readTargets) {
+            try {
+                const output = await runCommand(
+                    'node',
+                    [toolPath, 'read', target],
+                    workdir,
+                    OPENVIKING_PREFETCH_TIMEOUT_MS
+                );
+                const content = output.trim();
+                if (!content || content.startsWith('[openviking-tool]')) {
+                    diagnostics.push(`${target}:fallback_empty`);
+                    continue;
+                }
+                const parsed = parseSessionTurns(content);
+                diagnostics.push(`${target}:fallback_chars=${content.length},turns=${parsed.length}`);
+                allTurns.push(...parsed);
+            } catch {
+                diagnostics.push(`${target}:fallback_error`);
+            }
         }
     }
 
     const dedup = new Map<string, SessionTurn>();
     for (const turn of allTurns) {
-        const key = `${turn.messageId}|${turn.timestamp}|${turn.user}|${turn.assistant}`;
+        const key = turn.messageId
+            ? `${turn.messageId}|${turn.timestamp}`
+            : `${turn.timestamp}|${turn.user}|${turn.assistant}`;
         dedup.set(key, turn);
     }
     const turns = Array.from(dedup.values());
@@ -224,7 +310,7 @@ async function fetchOpenVikingPrefetchContext(workspacePath: string, agentId: st
         return '';
     }
 
-    const selected = selectRelevantTurns(turns, query, OPENVIKING_PREFETCH_MAX_TURNS);
+    const selected = turns.slice(0, OPENVIKING_PREFETCH_MAX_TURNS);
     return buildPrefetchBlock(selected, OPENVIKING_PREFETCH_MAX_CHARS);
 }
 

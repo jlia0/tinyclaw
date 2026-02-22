@@ -4,7 +4,7 @@ import path from 'path';
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-type Command = 'ls' | 'read' | 'write' | 'write-file' | 'res-get' | 'res-put';
+type Command = 'ls' | 'read' | 'write' | 'write-file' | 'res-get' | 'res-put' | 'find-uris';
 
 const HELP = `OpenViking workspace tool
 
@@ -15,6 +15,7 @@ Usage:
   node openviking-tool.js write-file <path> <local_file> [--json]
   node openviking-tool.js res-get <uri> [--json]
   node openviking-tool.js res-put <uri> <content> [--mime <mime_type>] [--json]
+  node openviking-tool.js find-uris <query> <target_path> [--limit <n>] [--score-threshold <n>] [--json]
 
 Environment:
   OPENVIKING_BASE_URL  API base URL (default: http://127.0.0.1:8320)
@@ -48,6 +49,10 @@ function positionalArguments(): string[] {
             i += 1;
             continue;
         }
+        if (arg === '--limit' || arg === '--score-threshold') {
+            i += 1;
+            continue;
+        }
         output.push(arg);
     }
     return output;
@@ -71,6 +76,8 @@ type ListItem = {
     modTime: string;
     index: number;
 };
+
+const DIRECTORY_READ_MAX_FILES = 8;
 
 function toUri(input: string): string {
     if (input.startsWith('viking://')) return input;
@@ -155,6 +162,42 @@ function printRead(data: JsonValue): void {
     printJson(data);
 }
 
+type FindMatch = {
+    uri: string;
+    score: number;
+    isLeaf: boolean;
+};
+
+function extractFindMatches(data: JsonValue): FindMatch[] {
+    const root = asObject(data);
+    const resultNode = asObject(root.result);
+    const groups = ['memories', 'resources', 'skills'];
+    const out: FindMatch[] = [];
+    for (const g of groups) {
+        const items = asArray(resultNode[g]);
+        for (const item of items) {
+            const node = asObject(item);
+            const uri = String(node.uri ?? '');
+            if (!uri) continue;
+            out.push({
+                uri,
+                score: Number(node.score ?? 0),
+                isLeaf: Boolean(node.is_leaf),
+            });
+        }
+    }
+    out.sort((a, b) => b.score - a.score);
+    return out;
+}
+
+function printFindUris(data: JsonValue): void {
+    const matches = extractFindMatches(data);
+    if (!matches.length) return;
+    for (const m of matches) {
+        console.log(`${m.score}\t${m.uri}`);
+    }
+}
+
 function extractUris(data: JsonValue): string[] {
     const root = asObject(data);
     const items = asArray(root.result ?? asObject(root.data).items ?? root.items);
@@ -182,6 +225,9 @@ function extractListItems(data: JsonValue): ListItem[] {
 }
 
 function modTimeScore(modTime: string): number {
+    const parsed = Date.parse(modTime);
+    if (!Number.isNaN(parsed)) return parsed;
+
     const m = modTime.match(/^(\d{2}):(\d{2}):(\d{2})$/);
     if (!m) return -1;
     const hh = Number(m[1]);
@@ -190,18 +236,55 @@ function modTimeScore(modTime: string): number {
     return hh * 3600 + mm * 60 + ss;
 }
 
-function pickNewestReadableFileUri(listData: JsonValue): string | null {
+function uriTimestampScore(uri: string): number {
+    const openVikingLeaf = uri.match(/openviking-(\d{10,})-/);
+    if (openVikingLeaf) {
+        return Number(openVikingLeaf[1]);
+    }
+
+    const compactTurn = uri.match(/Turn_(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})(\d{1,6})?Z/);
+    if (compactTurn) {
+        const [, date, hh, mm, ss, fracRaw = ''] = compactTurn;
+        const ms = fracRaw.slice(0, 3).padEnd(3, '0');
+        const iso = `${date}T${hh}:${mm}:${ss}.${ms}Z`;
+        const parsed = Date.parse(iso);
+        if (!Number.isNaN(parsed)) return parsed;
+    }
+
+    const archivedSession = uri.match(/\/(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3,6})Z\.md\//);
+    if (archivedSession) {
+        const [, date, hh, mm, ss, fracRaw] = archivedSession;
+        const ms = fracRaw.slice(0, 3).padEnd(3, '0');
+        const iso = `${date}T${hh}:${mm}:${ss}.${ms}Z`;
+        const parsed = Date.parse(iso);
+        if (!Number.isNaN(parsed)) return parsed;
+    }
+
+    return -1;
+}
+
+function isReadableCandidateUri(uri: string): boolean {
+    const base = uri.split('/').pop() || '';
+    if (!base) return false;
+    if (base.startsWith('.')) return false; // Exclude .overview/.abstract summaries.
+    if (!(uri.endsWith('.md') || uri.endsWith('.txt'))) return false;
+    return true;
+}
+
+function pickNewestReadableFileUris(listData: JsonValue, limit: number): string[] {
     const candidates = extractListItems(listData)
         .filter((item) => !item.isDir)
-        .filter((item) => item.uri.endsWith('.md') || item.uri.endsWith('.txt'));
-    if (!candidates.length) return null;
+        .filter((item) => isReadableCandidateUri(item.uri));
+    if (!candidates.length) return [];
 
     candidates.sort((a, b) => {
+        const ts = uriTimestampScore(b.uri) - uriTimestampScore(a.uri);
+        if (ts !== 0) return ts;
         const dt = modTimeScore(b.modTime) - modTimeScore(a.modTime);
         if (dt !== 0) return dt;
         return b.index - a.index;
     });
-    return candidates[0].uri;
+    return candidates.slice(0, Math.max(1, limit)).map((item) => item.uri);
 }
 
 async function readWithDirectoryFallback(uri: string, rawPath: string): Promise<JsonValue> {
@@ -212,11 +295,29 @@ async function readWithDirectoryFallback(uri: string, rawPath: string): Promise<
             return await request(`/api/v1/content/read?uri=${encodeURIComponent(uri)}`);
         }
         const listed = await request(`/api/v1/fs/ls?uri=${encodeURIComponent(uri)}&recursive=true&output=agent`);
-        const fileUri = pickNewestReadableFileUri(listed);
-        if (!fileUri) {
+        const fileUris = pickNewestReadableFileUris(listed, DIRECTORY_READ_MAX_FILES);
+        if (!fileUris.length) {
             return await request(`/api/v1/content/read?uri=${encodeURIComponent(uri)}`);
         }
-        return await request(`/api/v1/content/read?uri=${encodeURIComponent(fileUri)}`);
+        const chunks: string[] = [];
+        for (const fileUri of fileUris) {
+            try {
+                const data = await request(`/api/v1/content/read?uri=${encodeURIComponent(fileUri)}`);
+                const root = asObject(data);
+                const dataNode = asObject(root.data);
+                const resultNode = root.result;
+                const content = dataNode.content ?? root.content ?? resultNode;
+                if (typeof content === 'string' && content.trim()) {
+                    chunks.push(content.trim());
+                }
+            } catch {
+                // Best effort: skip unreadable leaf.
+            }
+        }
+        if (!chunks.length) {
+            return await request(`/api/v1/content/read?uri=${encodeURIComponent(fileUris[0])}`);
+        }
+        return { content: chunks.join('\n\n------\n\n') };
     } catch (primaryError) {
         try {
             return await request(`/api/v1/content/read?path=${encodeURIComponent(rawPath)}`);
@@ -335,6 +436,33 @@ async function run(): Promise<void> {
             }
             if (jsonOutput) printJson(response);
             else console.log(`Wrote resource ${uri}`);
+            return;
+        }
+        case 'find-uris': {
+            if (!positional[1] || !positional[2]) fail('Usage: find-uris <query> <target_path> [--limit <n>] [--score-threshold <n>]');
+            const query = positional[1];
+            const targetUri = toUri(positional[2]);
+            const limitRaw = getFlagValue('--limit');
+            const scoreThresholdRaw = getFlagValue('--score-threshold');
+            const limit = limitRaw ? Number(limitRaw) : 12;
+            if (!Number.isFinite(limit) || limit <= 0) fail('Invalid --limit value');
+            let scoreThreshold: number | undefined;
+            if (scoreThresholdRaw !== undefined) {
+                const parsed = Number(scoreThresholdRaw);
+                if (!Number.isFinite(parsed)) fail('Invalid --score-threshold value');
+                scoreThreshold = parsed;
+            }
+            response = await request('/api/v1/search/find', {
+                method: 'POST',
+                body: JSON.stringify({
+                    query,
+                    target_uri: targetUri,
+                    limit,
+                    score_threshold: scoreThreshold,
+                }),
+            });
+            if (jsonOutput) printJson(response);
+            else printFindUris(response);
             return;
         }
         default:
