@@ -24,7 +24,7 @@ import {
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
-import { startApiServer } from './lib/api-server';
+import { startApiServer } from './server';
 import {
     initQueueDb, enqueueMessage, claimNextMessage, completeMessage as dbCompleteMessage,
     failMessage, enqueueResponse, getPendingAgents, recoverStaleMessages,
@@ -322,6 +322,8 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
             response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
         }
+
+        log('INFO', `Agent response: ${response}`);
 
         emitEvent('chain_step_done', { agentId, agentName: agent.name, responseLength: response.length, responseText: response });
 
