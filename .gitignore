@@ -4,19 +4,42 @@ node_modules/
 # TypeScript build output
 dist/
 
-# TinyClaw runtime files
-.tinyclaw
-
-.wwebjs_cache
-*.log
-
-# Environment variables
+# Environment variables / secrets
 .env
+.env.*
+
+# Sensitive runtime data
+/settings.json
+/pairing.json
+
+# Runtime directories (queue, logs, downloaded files, events)
+/queue/
+/logs/
+/files/
+/events/
+
+# Plugins (user-installed, not part of source)
+/plugins/
+
+# Agent state
+/.agents/
+
+# WhatsApp session data
+.wwebjs_cache/
+/whatsapp-session/
+/channels/
+
+# Temp / misc runtime
+*.log
+.update_check
+/heartbeat.md
 
 # OS files
 .DS_Store
+Thumbs.db
 
 # Editor
 .vscode/
 .idea/
 *.swp
+*~

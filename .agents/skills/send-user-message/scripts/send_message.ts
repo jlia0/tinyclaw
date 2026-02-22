@@ -167,9 +167,7 @@ function sendMessage(argv: string[]): void {
         channel,
         sender,
         senderId,
-        message: message.length > 4000
-            ? message.substring(0, 3900) + '\n\n[Message truncated...]'
-            : message,
+        message,
         originalMessage: '',
         timestamp,
         messageId,

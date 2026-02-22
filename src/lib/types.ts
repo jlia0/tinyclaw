@@ -86,6 +86,7 @@ export interface ResponseData {
     messageId: string;
     agent?: string; // which agent handled this
     files?: string[];
+    metadata?: Record<string, unknown>;
 }
 
 export interface QueueFile {

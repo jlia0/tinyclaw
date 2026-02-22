@@ -25,6 +25,7 @@ import {
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
+import { loadPlugins, runIncomingHooks, runOutgoingHooks, HookMetadata } from './lib/plugins';
 import { jsonrepair } from 'jsonrepair';
 
 /** Parse JSON with automatic repair for malformed content (e.g. bad escapes). */
@@ -51,40 +52,15 @@ const queuedFiles = new Set<string>();
 const conversations = new Map<string, Conversation>();
 
 const MAX_CONVERSATION_MESSAGES = 50;
-const LONG_RESPONSE_THRESHOLD = 4000;
 
-/**
- * If a response exceeds the threshold, save full text as a .md file
- * and return a truncated preview with the file attached.
- */
-function handleLongResponse(
-    response: string,
-    existingFiles: string[]
-): { message: string; files: string[] } {
-    if (response.length <= LONG_RESPONSE_THRESHOLD) {
-        return { message: response, files: existingFiles };
-    }
-
-    // Save full response as a .md file
-    const filename = `response_${Date.now()}.md`;
-    const filePath = path.join(FILES_DIR, filename);
-    fs.writeFileSync(filePath, response);
-    log('INFO', `Long response (${response.length} chars) saved to ${filename}`);
-
-    // Truncate to preview
-    const preview = response.substring(0, LONG_RESPONSE_THRESHOLD) + '\n\n_(Full response attached as file)_';
-
-    return { message: preview, files: [...existingFiles, filePath] };
-}
-
-// Recover orphaned files from processing/ on startup (crash recovery)
+// Clean up orphaned files from processing/ on startup
 function recoverOrphanedFiles() {
     for (const f of fs.readdirSync(QUEUE_PROCESSING).filter(f => f.endsWith('.json'))) {
         try {
-            fs.renameSync(path.join(QUEUE_PROCESSING, f), path.join(QUEUE_INCOMING, f));
-            log('INFO', `Recovered orphaned file: ${f}`);
+            fs.unlinkSync(path.join(QUEUE_PROCESSING, f));
+            log('INFO', `Cleared orphaned file: ${f}`);
         } catch (error) {
-            log('ERROR', `Failed to recover orphaned file ${f}: ${(error as Error).message}`);
+            log('ERROR', `Failed to clear orphaned file ${f}: ${(error as Error).message}`);
         }
     }
 }
@@ -131,7 +107,7 @@ function collectFiles(response: string, fileSet: Set<string>): void {
 /**
  * Complete a conversation: aggregate responses, write to outgoing queue, save chat history.
  */
-function completeConversation(conv: Conversation): void {
+async function completeConversation(conv: Conversation): Promise<void> {
     const settings = getSettings();
     const agents = getAgents(settings);
 
@@ -203,18 +179,19 @@ function completeConversation(conv: Conversation): void {
     // Remove [@agent: ...] tags from final response
     finalResponse = finalResponse.replace(/\[@\S+?:\s*[\s\S]*?\]/g, '').trim();
 
-    // Handle long responses — send as file attachment
-    const { message: responseMessage, files: allFiles } = handleLongResponse(finalResponse, outboundFiles);
+    // Run outgoing hooks
+    const { text: hookedResponse, metadata } = await runOutgoingHooks(finalResponse, { channel: conv.channel, sender: conv.sender, messageId: conv.messageId, originalMessage: conv.originalMessage });
 
     // Write to outgoing queue
     const responseData: ResponseData = {
         channel: conv.channel,
         sender: conv.sender,
-        message: responseMessage,
+        message: hookedResponse,
         originalMessage: conv.originalMessage,
         timestamp: Date.now(),
         messageId: conv.messageId,
-        files: allFiles.length > 0 ? allFiles : undefined,
+        files: outboundFiles.length > 0 ? outboundFiles : undefined,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     };
 
     const responseFile = conv.channel === 'heartbeat'
@@ -351,6 +328,9 @@ async function processMessage(messageFile: string): Promise<void> {
             }
         }
 
+        // Run incoming hooks
+        ({ text: message } = await runIncomingHooks(message, { channel, sender, messageId, originalMessage: rawMessage }));
+
         // Invoke agent
         emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: messageData.fromAgent || null });
         let response: string;
@@ -377,18 +357,19 @@ async function processMessage(messageFile: string): Promise<void> {
                 finalResponse = finalResponse.replace(/\[send_file:\s*[^\]]+\]/g, '').trim();
             }
 
-            // Handle long responses — send as file attachment
-            const { message: responseMessage, files: allFiles } = handleLongResponse(finalResponse, outboundFiles);
+            // Run outgoing hooks
+            const { text: hookedResponse, metadata } = await runOutgoingHooks(finalResponse, { channel, sender, messageId, originalMessage: rawMessage });
 
             const responseData: ResponseData = {
                 channel,
                 sender,
-                message: responseMessage,
+                message: hookedResponse,
                 originalMessage: rawMessage,
                 timestamp: Date.now(),
                 messageId,
                 agent: agentId,
-                files: allFiles.length > 0 ? allFiles : undefined,
+                files: outboundFiles.length > 0 ? outboundFiles : undefined,
+                metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
             };
 
             const responseFile = channel === 'heartbeat'
@@ -462,7 +443,7 @@ async function processMessage(messageFile: string): Promise<void> {
         conv.pending--;
 
         if (conv.pending === 0) {
-            completeConversation(conv);
+            await completeConversation(conv);
         } else {
             log('INFO', `Conversation ${conv.id}: ${conv.pending} branch(es) still pending`);
         }
@@ -592,14 +573,17 @@ if (!fs.existsSync(EVENTS_DIR)) {
 }
 
 // Main loop
-log('INFO', 'Queue processor started');
-recoverOrphanedFiles();
-log('INFO', `Watching: ${QUEUE_INCOMING}`);
-logAgentConfig();
-emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), teams: Object.keys(getTeams(getSettings())) });
+(async () => {
+    log('INFO', 'Queue processor started');
+    recoverOrphanedFiles();
+    await loadPlugins();
+    log('INFO', `Watching: ${QUEUE_INCOMING}`);
+    logAgentConfig();
+    emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), teams: Object.keys(getTeams(getSettings())) });
 
-// Process queue every 1 second
-setInterval(processQueue, 1000);
+    // Process queue every 1 second
+    setInterval(processQueue, 1000);
+})();
 
 // Graceful shutdown
 process.on('SIGINT', () => {
