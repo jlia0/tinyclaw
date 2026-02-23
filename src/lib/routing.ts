@@ -189,7 +189,9 @@ export function parseAgentRouting(
     agents: Record<string, AgentConfig>,
     teams: Record<string, TeamConfig> = {}
 ): { agentId: string; message: string; isTeam?: boolean } {
-    const match = rawMessage.match(/^@(\S+)\s+([\s\S]*)$/);
+    // Strip [channel/sender]: prefix added by the messages API route
+    const stripped = rawMessage.replace(/^\[[^\]]*\]:\s*/, '');
+    const match = stripped.match(/^@(\S+)\s+([\s\S]*)$/);
     if (match) {
         const candidateId = match[1].toLowerCase();
 
