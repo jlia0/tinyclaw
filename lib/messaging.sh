@@ -1,19 +1,34 @@
 #!/usr/bin/env bash
 # Messaging and logging functions for TinyClaw
 
-# Send message to Claude and get response
+# Send message via the API server queue
 send_message() {
     local message="$1"
     local source="${2:-manual}"
+    local api_port="${TINYCLAW_API_PORT:-3777}"
+    local api_url="http://localhost:${api_port}"
 
     log "[$source] Sending: ${message:0:50}..."
 
-    cd "$SCRIPT_DIR"
-    RESPONSE=$(claude --dangerously-skip-permissions -c -p "$message" 2>&1)
+    local result
+    result=$(curl -s -X POST "${api_url}/api/message" \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n \
+            --arg message "$message" \
+            --arg channel "cli" \
+            --arg sender "$source" \
+            '{message: $message, channel: $channel, sender: $sender}'
+        )" 2>&1)
 
-    echo "$RESPONSE"
-
-    log "[$source] Response length: ${#RESPONSE} chars"
+    if echo "$result" | jq -e '.ok' &>/dev/null; then
+        local message_id
+        message_id=$(echo "$result" | jq -r '.messageId')
+        echo "Message enqueued: $message_id"
+        log "[$source] Enqueued: $message_id"
+    else
+        echo "Failed to enqueue message: $result" >&2
+        log "[$source] ERROR: $result"
+    fi
 }
 
 # View logs

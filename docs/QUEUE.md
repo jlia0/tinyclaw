@@ -1,6 +1,6 @@
 # Queue System
 
-TinyClaw uses a file-based queue system to coordinate message processing across multiple channels and agents. This document explains how it works.
+TinyClaw uses a SQLite-backed queue (`tinyclaw.db`) to coordinate message processing across multiple channels and agents. Messages are stored in a `messages` table (incoming) and `responses` table (outgoing), with atomic transactions replacing the previous file-based approach.
 
 ## Overview
 
@@ -15,15 +15,14 @@ The queue system acts as a central coordinator between:
 │                     Message Channels                         │
 │         (Discord, Telegram, WhatsApp, Heartbeat)            │
 └────────────────────┬────────────────────────────────────────┘
-                     │ Write message.json
+                     │ enqueueMessage()
                      ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                   ~/.tinyclaw/queue/                         │
+│                   ~/.tinyclaw/tinyclaw.db                     │
 │                                                              │
-│  incoming/          processing/         outgoing/           │
-│  ├─ msg1.json  →   ├─ msg1.json   →   ├─ msg1.json        │
-│  ├─ msg2.json       └─ msg2.json       └─ msg2.json        │
-│  └─ msg3.json                                                │
+│  messages table                    responses table           │
+│  status: pending → processing →   status: pending → acked   │
+│          completed / dead                                    │
 │                                                              │
 └────────────────────┬────────────────────────────────────────┘
                      │ Queue Processor
@@ -44,64 +43,87 @@ The queue system acts as a central coordinator between:
   (workspace/coder)  (workspace/writer)  (workspace/assistant)
 ```
 
-## Directory Structure
+## Database Schema
 
-```
-~/.tinyclaw/
-├── queue/
-│   ├── incoming/          # New messages from channels
-│   │   ├── msg_123456.json
-│   │   └── msg_789012.json
-│   ├── processing/        # Currently being processed
-│   │   └── msg_123456.json
-│   └── outgoing/          # Responses ready to send
-│       └── msg_123456.json
-├── logs/
-│   ├── queue.log         # Queue processor logs
-│   ├── discord.log       # Channel-specific logs
-│   └── telegram.log
-└── files/                # Uploaded files from channels
-    └── image_123.png
-```
+The queue lives in `~/.tinyclaw/tinyclaw.db` (SQLite, WAL mode):
+
+### Messages Table (incoming queue)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Auto-incrementing primary key |
+| `message_id` | TEXT | Unique message identifier |
+| `channel` | TEXT | Source channel (discord, telegram, web, etc.) |
+| `sender` | TEXT | Sender display name |
+| `sender_id` | TEXT | Sender platform ID |
+| `message` | TEXT | Message content |
+| `agent` | TEXT | Target agent (null = default) |
+| `files` | TEXT | JSON array of file paths |
+| `conversation_id` | TEXT | Team conversation ID (internal messages) |
+| `from_agent` | TEXT | Source agent (internal messages) |
+| `status` | TEXT | `pending` → `processing` → `completed` / `dead` |
+| `retry_count` | INTEGER | Number of failed attempts |
+| `last_error` | TEXT | Last error message |
+| `claimed_by` | TEXT | Agent that claimed this message |
+| `created_at` | INTEGER | Timestamp (ms) |
+| `updated_at` | INTEGER | Timestamp (ms) |
+
+### Responses Table (outgoing queue)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Auto-incrementing primary key |
+| `message_id` | TEXT | Original message ID |
+| `channel` | TEXT | Target channel for delivery |
+| `sender` | TEXT | Original sender |
+| `message` | TEXT | Response content |
+| `original_message` | TEXT | Original user message |
+| `agent` | TEXT | Agent that generated the response |
+| `files` | TEXT | JSON array of file paths |
+| `status` | TEXT | `pending` → `acked` |
+| `created_at` | INTEGER | Timestamp (ms) |
+| `acked_at` | INTEGER | Timestamp when channel client acknowledged |
 
 ## Message Flow
 
 ### 1. Incoming Message
 
-A channel client receives a message and writes it to `incoming/`:
+A channel client receives a message and enqueues it:
 
-```json
-{
-  "channel": "discord",
-  "sender": "Alice",
-  "senderId": "user_12345",
-  "message": "@coder fix the authentication bug",
-  "timestamp": 1707739200000,
-  "messageId": "discord_msg_123",
-  "files": ["/path/to/screenshot.png"]
-}
+```typescript
+enqueueMessage({
+    channel: 'discord',
+    sender: 'Alice',
+    senderId: 'user_12345',
+    message: '@coder fix the authentication bug',
+    messageId: 'discord_msg_123',
+    files: ['/path/to/screenshot.png'],
+});
 ```
 
-**Optional fields:**
-- `agent` - Pre-route to specific agent (bypasses @agent_id parsing)
-- `files` - Array of file paths uploaded with message
+This inserts a row into `messages` with `status = 'pending'` and emits a
+`message:enqueued` event for instant pickup.
 
 ### 2. Processing
 
-The queue processor (runs every 1 second):
+The queue processor picks up messages via two mechanisms:
 
-1. **Scans `incoming/`** for new messages
-2. **Sorts by timestamp** (oldest first)
-3. **Determines target agent**:
-   - Checks `agent` field (if pre-routed)
-   - Parses `@agent_id` prefix from message
-   - Falls back to `default` agent
-4. **Moves to `processing/`** (atomic operation)
-5. **Routes to agent's promise chain** (parallel processing)
+- **Event-driven**: `queueEvents.on('message:enqueued')` — instant for in-process messages
+- **Polling fallback**: Every 500ms — catches cross-process messages from channel clients
+
+For each pending agent, the processor calls `claimNextMessage(agentId)`:
+
+```typescript
+// Atomic claim using BEGIN IMMEDIATE transaction
+const msg = claimNextMessage('coder');
+// Sets status = 'processing', claimed_by = 'coder'
+```
+
+This prevents race conditions — only one processor can claim a message.
 
 ### 3. Agent Processing
 
-Each agent has its own promise chain:
+Each agent has its own promise chain for sequential processing:
 
 ```typescript
 // Messages to same agent = sequential (preserve conversation order)
@@ -113,57 +135,69 @@ agentChain: msg1 → msg2 → msg3
 @assistant: msg1 ──┘
 ```
 
-**Per-agent isolation:**
-- Each agent runs in its own `working_directory`
-- Separate conversation history (managed by CLI)
-- Independent reset flags
-- Own configuration files (.claude/, AGENTS.md)
+### 4. Response
 
-### 4. AI Provider Execution
+After the AI responds, the processor writes to the responses table:
 
-**Claude (Anthropic):**
-```bash
-cd ~/workspace/coder/
-claude --dangerously-skip-permissions \
-  --model claude-sonnet-4-5 \
-  -c \  # Continue conversation
-  -p "fix the authentication bug"
+```typescript
+enqueueResponse({
+    channel: 'discord',
+    sender: 'Alice',
+    message: "I've identified the issue in auth.ts:42...",
+    originalMessage: '@coder fix the authentication bug',
+    messageId: 'discord_msg_123',
+    agent: 'coder',
+    files: ['/path/to/fix.patch'],
+});
 ```
 
-**Codex (OpenAI):**
-```bash
-cd ~/workspace/coder/
-codex exec resume --last \
-  --model gpt-5.3-codex \
-  --skip-git-repo-check \
-  --dangerously-bypass-approvals-and-sandbox \
-  --json "fix the authentication bug"
-```
+The original message is marked `status = 'completed'`.
 
-### 5. Response
+### 5. Channel Delivery
 
-After AI responds, queue processor writes to `outgoing/`:
+Channel clients poll for responses:
 
-```json
-{
-  "channel": "discord",
-  "sender": "Alice",
-  "message": "I've identified the issue in auth.ts:42...",
-  "originalMessage": "@coder fix the authentication bug",
-  "timestamp": 1707739205000,
-  "messageId": "discord_msg_123",
-  "agent": "coder",
-  "files": ["/path/to/fix.patch"]
+```typescript
+const responses = getResponsesForChannel('discord');
+for (const response of responses) {
+    await sendToUser(response);
+    ackResponse(response.id);  // marks status = 'acked'
 }
 ```
 
-### 6. Channel Delivery
+## Error Handling & Retry
 
-Channel clients poll `outgoing/` and:
-1. Read response for their channel
-2. Send message to user
-3. Delete the JSON file
-4. Handle any file attachments
+### Retry Logic
+
+When processing fails, `failMessage()` increments `retry_count`:
+
+```
+Attempt 1: fails → retry_count = 1, status = 'pending'
+Attempt 2: fails → retry_count = 2, status = 'pending'
+...
+Attempt 5: fails → retry_count = 5, status = 'dead'
+```
+
+Messages that exhaust retries (default: 5) are marked `status = 'dead'`.
+
+### Dead-Letter Management
+
+Dead messages can be inspected and managed via the API:
+
+```
+GET    /api/queue/dead           → list dead messages
+POST   /api/queue/dead/:id/retry → reset retry count, re-queue
+DELETE /api/queue/dead/:id       → permanently delete
+```
+
+### Stale Message Recovery
+
+Messages stuck in `processing` (e.g., from a crash) are automatically
+recovered every 5 minutes:
+
+```typescript
+recoverStaleMessages(10 * 60 * 1000);  // anything processing > 10 min
+```
 
 ## Parallel Processing
 
@@ -173,34 +207,16 @@ Each agent has its own **promise chain** that processes messages sequentially:
 
 ```typescript
 const agentProcessingChains = new Map<string, Promise<void>>();
-
-// When message arrives for @coder:
-const chain = agentProcessingChains.get('coder') || Promise.resolve();
-const newChain = chain.then(() => processMessage(msg));
-agentProcessingChains.set('coder', newChain);
 ```
-
-### Benefits
 
 **Example: 3 messages sent simultaneously**
 
-Sequential (old):
-```
-@coder fix bug 1     [████████████████] 30s
-@writer docs         [██████████] 20s
-@assistant help      [████████] 15s
-Total: 65 seconds
-```
-
-Parallel (new):
 ```
 @coder fix bug 1     [████████████████] 30s
 @writer docs         [██████████] 20s ← concurrent!
 @assistant help      [████████] 15s   ← concurrent!
-Total: 30 seconds (2.2x faster!)
+Total: 30 seconds (2.2x faster vs 65s sequential)
 ```
-
-### Conversation Order Preserved
 
 Messages to the **same agent** remain sequential:
 
@@ -210,294 +226,74 @@ Messages to the **same agent** remain sequential:
 @writer docs         [██████] 15s        ← parallel with both
 ```
 
-This ensures:
-- ✅ Conversation context is maintained
-- ✅ `-c` (continue) flag works correctly
-- ✅ No race conditions within an agent
-- ✅ Agents don't block each other
+## Real-Time Events
 
-## Agent Routing
+The queue processor emits events via an in-memory listener system. The API
+server broadcasts these over SSE at `GET /api/events/stream`.
 
-### Explicit Routing
+| Event | Description |
+|-------|-------------|
+| `message_received` | New message picked up |
+| `agent_routed` | Message routed to agent |
+| `chain_step_start` | Agent begins processing |
+| `chain_step_done` | Agent finished (includes response) |
+| `response_ready` | Response enqueued for delivery |
+| `processor_start` | Queue processor started |
 
-Use `@agent_id` prefix:
+The TUI visualizer and web dashboard both consume SSE for live updates.
 
-```
-User: @coder fix the login bug
-→ Routes to agent "coder"
-→ Message becomes: "fix the login bug"
-```
+## API Endpoints
 
-### Pre-routing
+The API server runs on port 3777 (configurable via `TINYCLAW_API_PORT`):
 
-Channel clients can pre-route:
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/message` | Enqueue a message |
+| `GET /api/queue/status` | Queue depth (pending, processing, dead) |
+| `GET /api/responses` | Recent responses |
+| `GET /api/queue/dead` | Dead messages |
+| `POST /api/queue/dead/:id/retry` | Retry a dead message |
+| `DELETE /api/queue/dead/:id` | Delete a dead message |
+| `GET /api/events/stream` | SSE event stream |
 
-```typescript
-const queueData = {
-  channel: 'discord',
-  message: 'help me',
-  agent: 'assistant'  // Pre-routed, no @prefix needed
-};
-```
+## Maintenance
 
-### Fallback Logic
+Periodic cleanup tasks run automatically:
 
-```
-1. Check message.agent field (if pre-routed)
-2. Parse @agent_id from message text
-3. Look up agent in settings.agents
-4. Fall back to 'default' agent
-5. If no default, use first available agent
-```
-
-### Routing Examples
-
-```
-"@coder fix bug"           → agent: coder
-"help me"                  → agent: default
-"@unknown test"            → agent: default (unknown agent)
-"@assistant help"          → agent: assistant
-pre-routed with agent=X    → agent: X
-```
-
-### Easter Egg: Multiple Agents 🥚
-
-If you mention multiple agents in one message:
-
-```
-User: "@coder @writer fix this bug and document it"
-
-Result:
-  → Returns friendly message about upcoming agent-to-agent collaboration
-  → No AI processing (saves tokens!)
-  → Suggests sending separate messages to each agent
-```
-
-**The easter egg message:**
-> 🚀 **Agent-to-Agent Collaboration - Coming Soon!**
->
-> You mentioned multiple agents: @coder, @writer
->
-> Right now, I can only route to one agent at a time. But we're working on something cool:
->
-> ✨ **Multi-Agent Coordination** - Agents will be able to collaborate on complex tasks!
-> ✨ **Smart Routing** - Send instructions to multiple agents at once!
-> ✨ **Agent Handoffs** - One agent can delegate to another!
->
-> For now, please send separate messages to each agent:
-> • `@coder [your message]`
-> • `@writer [your message]`
->
-> _Stay tuned for updates! 🎉_
-
-This prevents confusion and teases the upcoming feature!
-
-## Reset System
-
-### Per-Agent Reset
-
-Creates `<workspace>/<agent_id>/reset_flag`:
-
-```bash
-tinyclaw reset coder
-tinyclaw reset coder researcher    # reset multiple agents
-tinyclaw agent reset coder
-# Or in chat:
-/reset @coder
-/reset @coder @researcher
-```
-
-Next message to **that agent** starts fresh.
-
-### How Resets Work
-
-Queue processor checks before each message:
-
-```typescript
-const agentReset = fs.existsSync(`${agentDir}/reset_flag`);
-
-if (agentReset) {
-  // Don't pass -c flag to CLI
-  // Delete flag file
-}
-```
-
-## File Handling
-
-### Uploading Files
-
-Channels download files to `~/.tinyclaw/files/`:
-
-```
-User uploads: image.png
-→ Saved as: ~/.tinyclaw/files/telegram_123_image.png
-→ Message includes: [file: /absolute/path/to/image.png]
-```
-
-### Sending Files
-
-AI can send files back:
-
-```
-AI response: "Here's the diagram [send_file: /path/to/diagram.png]"
-→ Queue processor extracts file path
-→ Adds to response.files array
-→ Channel client sends as attachment
-→ Tag is stripped from message text
-```
-
-## Error Handling
-
-### Missing Agents
-
-If agent not found:
-```
-User: @unknown help
-→ Routes to: default agent
-→ Logs: WARNING - Agent 'unknown' not found, using 'default'
-```
-
-### Processing Errors
-
-Errors are caught per-agent:
-
-```typescript
-newChain.catch(error => {
-  log('ERROR', `Error processing message for agent ${agentId}: ${error.message}`);
-});
-```
-
-Failed messages:
-- Don't block other agents
-- Are logged to `queue.log`
-- Response file not created
-- Channel client times out gracefully
-
-### Stale Messages
-
-Old messages in `processing/` (crashed mid-process):
-- Automatically picked up on restart
-- Re-processed from scratch
-- Original in `incoming/` is moved again
-
-## Performance
-
-### Throughput
-
-- **Sequential**: 1 message per AI response time (~10-30s)
-- **Parallel**: N agents × 1 message per response time
-- **3 agents**: ~3x throughput improvement
-
-### Latency
-
-- Queue check: Every 1 second
-- Agent routing: <1ms (file peek)
-- Max latency: 1s + AI response time
-
-### Scaling
-
-**Good for:**
-- ✅ Multiple independent agents
-- ✅ High message volume
-- ✅ Long AI response times
-
-**Limitations:**
-- ⚠️ File-based (not database)
-- ⚠️ Single queue processor instance
-- ⚠️ All agents on same machine
+- **Stale message recovery**: Every 5 minutes (messages stuck in `processing` > 10 min)
+- **Acked response pruning**: Every hour (responses acked > 24h ago)
+- **Conversation TTL**: Every 30 minutes (team conversations older than 30 min)
 
 ## Debugging
 
 ### Check Queue Status
 
 ```bash
-# See pending messages
-ls ~/.tinyclaw/queue/incoming/
+# Via API
+curl http://localhost:3777/api/queue/status | jq
 
-# See processing
-ls ~/.tinyclaw/queue/processing/
-
-# See responses waiting
-ls ~/.tinyclaw/queue/outgoing/
-
-# Watch queue logs
-tail -f ~/.tinyclaw/logs/queue.log
+# View queue logs
+tinyclaw logs queue
 ```
 
 ### Common Issues
 
-**Messages stuck in incoming:**
-- Queue processor not running
-- Check: `tinyclaw status`
+**Messages not processing:**
+- Queue processor not running → `tinyclaw status`
+- Check logs → `tinyclaw logs queue`
 
 **Messages stuck in processing:**
-- AI CLI crashed or hung
-- Manual cleanup: `rm ~/.tinyclaw/queue/processing/*`
-- Restart: `tinyclaw restart`
+- Will auto-recover after 10 minutes
+- Or restart: `tinyclaw restart`
 
-**No responses generated:**
-- Check agent routing (wrong @agent_id?)
-- Check AI CLI is installed (claude/codex)
-- Check logs: `tail -f ~/.tinyclaw/logs/queue.log`
-
-**Agents not processing in parallel:**
-- Check TypeScript build: `npm run build`
-- Check queue processor version in logs
-
-## Advanced Topics
-
-### Custom Queue Implementations
-
-Replace file-based queue with:
-- Redis (for multi-instance)
-- Database (for persistence)
-- Message broker (RabbitMQ, Kafka)
-
-Key interface to maintain:
-```typescript
-interface QueueMessage {
-  channel: string;
-  sender: string;
-  message: string;
-  timestamp: number;
-  messageId: string;
-  agent?: string;
-  files?: string[];
-}
-```
-
-### Load Balancing
-
-Currently: All agents run on same machine
-
-Future: Route agents to different machines:
-```json
-{
-  "agents": {
-    "coder": {
-      "host": "worker1.local",
-      "working_directory": "/agents/coder"
-    },
-    "writer": {
-      "host": "worker2.local",
-      "working_directory": "/agents/writer"
-    }
-  }
-}
-```
-
-### Monitoring
-
-Add metrics:
-```typescript
-- messages_processed_total (by agent)
-- processing_duration_seconds (by agent)
-- queue_depth (incoming/processing/outgoing)
-- agent_active_processing (concurrent count)
-```
+**Dead messages accumulating:**
+- Check via API: `curl http://localhost:3777/api/queue/dead | jq`
+- Retry: `curl -X POST http://localhost:3777/api/queue/dead/123/retry`
 
 ## See Also
 
 - [AGENTS.md](AGENTS.md) - Agent configuration and management
+- [TEAMS.md](TEAMS.md) - Team collaboration and message passing
 - [README.md](../README.md) - Main project documentation
-- [src/queue-processor.ts](../src/queue-processor.ts) - Implementation
+- [src/lib/queue-db.ts](../src/lib/queue-db.ts) - Queue implementation
+- [src/queue-processor.ts](../src/queue-processor.ts) - Processing logic

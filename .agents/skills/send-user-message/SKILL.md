@@ -5,7 +5,7 @@ description: "Send a proactive message to a paired user via their channel (Disco
 
 # Send User Message
 
-Send a message to a paired user by writing to the TinyClaw outgoing queue. The message is delivered by the channel client (Discord, Telegram, or WhatsApp) that polls the queue.
+Send a message to a paired user via the TinyClaw API server (`POST /api/responses`). The message is delivered by the channel client (Discord, Telegram, or WhatsApp) that polls the API for pending responses.
 
 ## When to use
 
@@ -56,7 +56,7 @@ Parameters:
 - `--agent`: (Optional) Agent ID to attribute the message to
 - `--files`: (Optional) Comma-separated absolute file paths to attach (files must exist on disk)
 
-The script writes a JSON file to the outgoing queue directory with the correct `{channel}_` prefix so the channel client picks it up.
+The script POSTs to `POST /api/responses` which enqueues the message in the SQLite responses table for the channel client to pick up.
 
 ### 3. Choosing a target when multiple pairings exist
 
@@ -68,6 +68,6 @@ When there are multiple approved pairings and you need to decide who to message:
 
 ## Notes
 
-- The outgoing queue path is resolved automatically (checks local `.tinyclaw/` first, then `~/.tinyclaw/`)
+- The script POSTs to the API server (default `http://localhost:3777`), configurable via `TINYCLAW_API_PORT` env var
 - Messages include a `senderId` field so channel clients can route agent-initiated messages to the correct user
 - For heartbeat-context messages, set `--agent` to identify which agent is sending

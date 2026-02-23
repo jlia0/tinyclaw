@@ -34,8 +34,8 @@ if [ -z "$TINYCLAW_HOME" ]; then
     fi
 fi
 
-QUEUE_INCOMING="$TINYCLAW_HOME/queue/incoming"
-mkdir -p "$QUEUE_INCOMING"
+API_PORT="${TINYCLAW_API_PORT:-3777}"
+API_BASE="http://localhost:${API_PORT}"
 
 TAG_PREFIX="tinyclaw-schedule"
 
@@ -84,8 +84,7 @@ generate_label() {
     echo "sched-$(date +%s)-$$"
 }
 
-# Build the queue-writer command that cron will execute.
-# It writes a JSON message to the incoming queue directory.
+# Build the cron helper script that POSTs to the API.
 build_cron_command() {
     local agent="$1" message="$2" channel="$3" sender="$4" label="$5"
 
@@ -101,12 +100,13 @@ build_cron_command() {
 
     cat > "$helper" <<HELPER
 #!/bin/bash
-QUEUE_INCOMING="$QUEUE_INCOMING"
+API_BASE="$API_BASE"
 TS=\$(date +%s)
 MSG_ID="${label}_\${TS}_\$\$"
-printf '{"channel":"%s","sender":"%s","senderId":"%s","message":"%s","timestamp":%s000,"messageId":"%s"}\n' \
-    "$channel" "$sender" "${TAG_PREFIX}:${label}" "@${agent} ${escaped_message}" "\$TS" "\$MSG_ID" \
-    > "\$QUEUE_INCOMING/\${MSG_ID}.json"
+curl -s -X POST "\${API_BASE}/api/message" \
+    -H "Content-Type: application/json" \
+    -d "{\"channel\":\"$channel\",\"sender\":\"$sender\",\"senderId\":\"${TAG_PREFIX}:${label}\",\"message\":\"@${agent} ${escaped_message}\",\"messageId\":\"\${MSG_ID}\"}" \
+    > /dev/null 2>&1
 HELPER
     chmod +x "$helper"
 

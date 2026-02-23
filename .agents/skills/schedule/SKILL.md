@@ -5,7 +5,7 @@ description: "Create, list, and delete scheduled (cron) tasks that send messages
 
 # Schedule Skill
 
-Manage cron-based scheduled tasks that deliver messages to the tinyclaw incoming queue. Each schedule fires at a cron interval and writes a routed message (`@agent_id <task>`) to `queue/incoming/`, where the queue processor picks it up and invokes the target agent.
+Manage cron-based scheduled tasks that deliver messages to the tinyclaw queue via the API server. Each schedule fires at a cron interval and POSTs a routed message (`@agent_id <task>`) to `POST /api/message`, where the queue processor picks it up and invokes the target agent.
 
 ## Commands
 
@@ -128,8 +128,8 @@ scripts/schedule.sh delete --all
 ## How it works
 
 - Schedules are stored as system cron entries tagged with `# tinyclaw-schedule:<label>`.
-- When a cron job fires, it writes a JSON message to `queue/incoming/` with the `@agent_id` routing prefix.
+- When a cron job fires, it POSTs a message to the API server (`POST /api/message`) with the `@agent_id` routing prefix.
 - The queue processor picks up the message and invokes the target agent, exactly like a message from any channel.
-- Responses appear in `queue/outgoing/` and can be consumed by channel clients.
+- Responses are stored in the SQLite queue and delivered by channel clients.
 
 For queue message format details, see `references/queue-format.md`.

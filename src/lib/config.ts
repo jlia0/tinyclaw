@@ -9,12 +9,8 @@ export const TINYCLAW_HOME = process.env.TINYCLAW_HOME
     || (fs.existsSync(path.join(_localTinyclaw, 'settings.json'))
         ? _localTinyclaw
         : path.join(require('os').homedir(), '.tinyclaw'));
-export const QUEUE_INCOMING = path.join(TINYCLAW_HOME, 'queue/incoming');
-export const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
-export const QUEUE_PROCESSING = path.join(TINYCLAW_HOME, 'queue/processing');
 export const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/queue.log');
 export const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
-export const EVENTS_DIR = path.join(TINYCLAW_HOME, 'events');
 export const CHATS_DIR = path.join(TINYCLAW_HOME, 'chats');
 export const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
 

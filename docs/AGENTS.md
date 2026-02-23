@@ -52,7 +52,7 @@ The agent management feature enables you to:
 │  │ AGENTS.md    │  │ AGENTS.md    │  │ AGENTS.md    │     │
 │  └──────────────┘  └──────────────┘  └──────────────┘     │
 │                                                              │
-│  Shared: ~/.tinyclaw/ (channels, files, logs, queue)       │
+│  Shared: ~/.tinyclaw/ (channels, files, logs, tinyclaw.db) │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -152,7 +152,7 @@ Templates and shared resources are stored in `~/.tinyclaw/`:
 ├── channels/          # SHARED: Channel state (QR codes, ready flags)
 ├── files/             # SHARED: Uploaded files from all channels
 ├── logs/              # SHARED: Log files for all agents and channels
-└── queue/             # SHARED: Message queue (incoming/outgoing/processing)
+└── tinyclaw.db        # SHARED: SQLite message queue
 ```
 
 **How it works:**
@@ -163,7 +163,7 @@ Templates and shared resources are stored in `~/.tinyclaw/`:
 - Reset flags allow resetting individual agent conversations
 - File operations happen in the agent's directory
 - Templates stored in `~/.tinyclaw/` are copied when creating new agents
-- Uploaded files, message queues, and logs are shared (common dependencies)
+- Uploaded files, the SQLite queue, and logs are shared (common dependencies)
 
 ### 4. Provider Execution
 

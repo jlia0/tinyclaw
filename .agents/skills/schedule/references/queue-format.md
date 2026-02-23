@@ -1,8 +1,15 @@
 # Tinyclaw Queue Message Format
 
-Scheduled tasks deliver messages by writing JSON files to the incoming queue directory (`~/.tinyclaw/queue/incoming/` or `<project>/.tinyclaw/queue/incoming/`).
+Scheduled tasks deliver messages by POSTing to the TinyClaw API server (`POST /api/message`).
 
-## Message JSON schema
+## API endpoint
+
+```
+POST http://localhost:{TINYCLAW_API_PORT}/api/message
+Content-Type: application/json
+```
+
+## Request body
 
 ```json
 {
@@ -10,7 +17,6 @@ Scheduled tasks deliver messages by writing JSON files to the incoming queue dir
   "sender": "Scheduler",
   "senderId": "tinyclaw-schedule:<label>",
   "message": "@<agent_id> <task context>",
-  "timestamp": 1707739200000,
   "messageId": "<label>_<unix_ts>_<pid>"
 }
 ```
@@ -23,7 +29,6 @@ Scheduled tasks deliver messages by writing JSON files to the incoming queue dir
 | `sender`    | string | Display name. Default `"Scheduler"`. |
 | `senderId`  | string | Unique sender ID. Format: `tinyclaw-schedule:<label>`. |
 | `message`   | string | Must start with `@agent_id` for routing, followed by the task context. |
-| `timestamp` | number | Unix epoch in milliseconds. |
 | `messageId` | string | Unique message ID for deduplication and response matching. |
 
 ## Routing
@@ -32,4 +37,4 @@ The queue processor routes messages by parsing the `@agent_id` prefix from the `
 
 ## Response handling
 
-Responses from scheduled tasks appear in the outgoing queue (`queue/outgoing/`) like any other message. The channel clients can filter by `channel: "schedule"` to handle them differently (e.g., log-only vs. relay to Discord).
+Responses from scheduled tasks are stored in the SQLite responses table and can be retrieved via `GET /api/responses`. Channel clients can filter by `channel: "schedule"` to handle them differently (e.g., log-only vs. relay to Discord).

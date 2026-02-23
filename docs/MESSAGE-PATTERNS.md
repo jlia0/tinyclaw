@@ -1,6 +1,6 @@
 # Message Patterns
 
-Team communication in TinyClaw uses an actor model: each agent has its own mailbox (per-agent promise chain), communicates only by sending messages (queue files), and processes one message at a time. There is no central orchestrator.
+Team communication in TinyClaw uses an actor model: each agent has its own mailbox (per-agent promise chain), communicates only by sending messages (queue entries), and processes one message at a time. There is no central orchestrator.
 
 ## How it works
 
@@ -17,14 +17,14 @@ User: "@dev host an all hands meeting"
      │   └─────── [@reviewer: share your review status]
      └─────────── [@coder: share what you're working on]
                         │
-              3 messages enqueued in QUEUE_INCOMING
+              3 messages enqueued in the queue
               each processed by its own agent
 ```
 
 1. User sends a message to a team (or an agent in a team)
 2. The leader agent is invoked and responds
-3. Any `[@teammate: message]` tags in the response become new messages in `QUEUE_INCOMING`
-4. The queue processor picks them up naturally on the next poll cycle
+3. Any `[@teammate: message]` tags in the response become new messages in the queue
+4. The queue processor picks them up instantly via in-process events (or on the next poll cycle for cross-process messages)
 5. Each agent processes its message via its own per-agent promise chain (parallel across agents)
 6. If an agent's response mentions more teammates, those become new messages too
 7. When no more messages are pending (`conv.pending === 0`), all responses are aggregated and sent to the user
@@ -156,7 +156,7 @@ A conversation completes when `pending === 0` — all branches have resolved and
 On completion:
 1. All responses are aggregated (single response: as-is, multiple: joined with `@agent: response` format)
 2. Chat history is saved to `~/.tinyclaw/chats/{team_id}/{timestamp}.md`
-3. The aggregated response is written to `QUEUE_OUTGOING` for the user's channel
+3. The aggregated response is enqueued in the responses table for the user's channel
 4. The conversation is cleaned up from memory
 
 ### Loop protection

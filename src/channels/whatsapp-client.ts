@@ -11,14 +11,15 @@ import fs from 'fs';
 import path from 'path';
 import { ensureSenderPaired } from '../lib/pairing';
 
+const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
+const API_BASE = `http://localhost:${API_PORT}`;
+
 const SCRIPT_DIR = path.resolve(__dirname, '..', '..');
 const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
 const TINYCLAW_HOME = process.env.TINYCLAW_HOME
     || (fs.existsSync(path.join(_localTinyclaw, 'settings.json'))
         ? _localTinyclaw
         : path.join(require('os').homedir(), '.tinyclaw'));
-const QUEUE_INCOMING = path.join(TINYCLAW_HOME, 'queue/incoming');
-const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
 const LOG_FILE = path.join(TINYCLAW_HOME, 'logs/whatsapp.log');
 const SESSION_DIR = path.join(SCRIPT_DIR, '.tinyclaw/whatsapp-session');
 const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
@@ -26,7 +27,7 @@ const FILES_DIR = path.join(TINYCLAW_HOME, 'files');
 const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
 
 // Ensure directories exist
-[QUEUE_INCOMING, QUEUE_OUTGOING, path.dirname(LOG_FILE), SESSION_DIR, FILES_DIR].forEach(dir => {
+[path.dirname(LOG_FILE), SESSION_DIR, FILES_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -36,27 +37,6 @@ interface PendingMessage {
     message: Message;
     chat: Chat;
     timestamp: number;
-}
-
-interface QueueData {
-    channel: string;
-    sender: string;
-    senderId: string;
-    message: string;
-    timestamp: number;
-    messageId: string;
-    files?: string[];
-}
-
-interface ResponseData {
-    channel: string;
-    sender: string;
-    senderId?: string;
-    message: string;
-    originalMessage: string;
-    timestamp: number;
-    messageId: string;
-    files?: string[];
 }
 
 // Media message types that we can download
@@ -350,19 +330,19 @@ client.on('message_create', async (message: Message) => {
             fullMessage = fullMessage ? `${fullMessage}\n\n${fileRefs}` : fileRefs;
         }
 
-        // Write to incoming queue
-        const queueData: QueueData = {
-            channel: 'whatsapp',
-            sender: sender,
-            senderId: message.from,
-            message: fullMessage,
-            timestamp: Date.now(),
-            messageId: messageId,
-            files: downloadedFiles.length > 0 ? downloadedFiles : undefined,
-        };
-
-        const queueFile = path.join(QUEUE_INCOMING, `whatsapp_${messageId}.json`);
-        fs.writeFileSync(queueFile, JSON.stringify(queueData, null, 2));
+        // Write to queue via API
+        await fetch(`${API_BASE}/api/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                channel: 'whatsapp',
+                sender,
+                senderId: message.from,
+                message: fullMessage,
+                messageId,
+                files: downloadedFiles.length > 0 ? downloadedFiles : undefined,
+            }),
+        });
 
         log('INFO', `✓ Queued message ${messageId}`);
 
@@ -386,7 +366,7 @@ client.on('message_create', async (message: Message) => {
     }
 });
 
-// Watch for responses in outgoing queue
+// Watch for responses via API
 async function checkOutgoingQueue(): Promise<void> {
     if (processingOutgoingQueue) {
         return;
@@ -395,15 +375,17 @@ async function checkOutgoingQueue(): Promise<void> {
     processingOutgoingQueue = true;
 
     try {
-        const files = fs.readdirSync(QUEUE_OUTGOING)
-            .filter(f => f.startsWith('whatsapp_') && f.endsWith('.json'));
+        const res = await fetch(`${API_BASE}/api/responses/pending?channel=whatsapp`);
+        if (!res.ok) return;
+        const responses = await res.json() as any[];
 
-        for (const file of files) {
-            const filePath = path.join(QUEUE_OUTGOING, file);
-
+        for (const resp of responses) {
             try {
-                const responseData: ResponseData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                const { messageId, message: responseText, sender, senderId } = responseData;
+                const responseText = resp.message;
+                const messageId = resp.messageId;
+                const sender = resp.sender;
+                const senderId = resp.senderId;
+                const files: string[] = resp.files || [];
 
                 // Find pending message, or fall back to senderId for proactive messages
                 const pending = pendingMessages.get(messageId);
@@ -420,8 +402,8 @@ async function checkOutgoingQueue(): Promise<void> {
 
                 if (targetChat) {
                     // Send any attached files first
-                    if (responseData.files && responseData.files.length > 0) {
-                        for (const file of responseData.files) {
+                    if (files.length > 0) {
+                        for (const file of files) {
                             try {
                                 if (!fs.existsSync(file)) continue;
                                 const media = MessageMedia.fromFilePath(file);
@@ -442,17 +424,17 @@ async function checkOutgoingQueue(): Promise<void> {
                         }
                     }
 
-                    log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${responseData.files ? `, ${responseData.files.length} file(s)` : ''})`);
+                    log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${files.length > 0 ? `, ${files.length} file(s)` : ''})`);
 
                     if (pending) pendingMessages.delete(messageId);
-                    fs.unlinkSync(filePath);
+                    await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST' });
                 } else {
-                    log('WARN', `No pending message for ${messageId} and no senderId, cleaning up`);
-                    fs.unlinkSync(filePath);
+                    log('WARN', `No pending message for ${messageId} and no senderId, acking`);
+                    await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST' });
                 }
             } catch (error) {
-                log('ERROR', `Error processing response file ${file}: ${(error as Error).message}`);
-                // Don't delete file on error, might retry
+                log('ERROR', `Error processing response ${resp.id}: ${(error as Error).message}`);
+                // Don't ack on error, will retry next poll
             }
         }
     } catch (error) {

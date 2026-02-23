@@ -10,7 +10,9 @@
 
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
+
+const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
+const API_BASE = `http://localhost:${API_PORT}`;
 
 // ---------------------------------------------------------------------------
 // Resolve TINYCLAW_HOME (same logic as src/lib/config.ts)
@@ -21,7 +23,6 @@ const TINYCLAW_HOME = fs.existsSync(path.join(localTinyclaw, 'settings.json'))
     ? localTinyclaw
     : path.join(require('os').homedir(), '.tinyclaw');
 
-const QUEUE_OUTGOING = path.join(TINYCLAW_HOME, 'queue/outgoing');
 const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
 
 // ---------------------------------------------------------------------------
@@ -38,18 +39,6 @@ interface PairingApprovedEntry {
 interface PairingState {
     pending: unknown[];
     approved: PairingApprovedEntry[];
-}
-
-interface OutgoingMessage {
-    channel: string;
-    sender: string;
-    senderId: string;
-    message: string;
-    originalMessage: string;
-    timestamp: number;
-    messageId: string;
-    agent?: string;
-    files?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -75,18 +64,6 @@ function loadPairingState(): PairingState {
         };
     } catch {
         return { pending: [], approved: [] };
-    }
-}
-
-function generateMessageId(): string {
-    const ts = Date.now();
-    const rand = crypto.randomBytes(4).toString('hex');
-    return `agent_${ts}_${rand}`;
-}
-
-function ensureDir(dir: string): void {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
     }
 }
 
@@ -125,7 +102,7 @@ function parseArgs(argv: string[]): Record<string, string> {
     return args;
 }
 
-function sendMessage(argv: string[]): void {
+async function sendMessage(argv: string[]): Promise<void> {
     const args = parseArgs(argv);
 
     const channel = args['channel'];
@@ -159,45 +136,45 @@ function sendMessage(argv: string[]): void {
         ? filesRaw.split(',').map(f => f.trim()).filter(Boolean)
         : undefined;
 
-    // Build the outgoing message
-    const messageId = generateMessageId();
-    const timestamp = Date.now();
+    const truncatedMessage = message.length > 4000
+        ? message.substring(0, 3900) + '\n\n[Message truncated...]'
+        : message;
 
-    const outgoing: OutgoingMessage = {
+    // POST to API
+    const body: Record<string, unknown> = {
         channel,
         sender,
         senderId,
-        message: message.length > 4000
-            ? message.substring(0, 3900) + '\n\n[Message truncated...]'
-            : message,
-        originalMessage: '',
-        timestamp,
-        messageId,
+        message: truncatedMessage,
         ...(agent ? { agent } : {}),
         ...(files && files.length > 0 ? { files } : {}),
     };
 
-    // Write to outgoing queue
-    ensureDir(QUEUE_OUTGOING);
+    const res = await fetch(`${API_BASE}/api/responses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
 
-    const filename = `${channel}_${messageId}_${timestamp}.json`;
-    const filePath = path.join(QUEUE_OUTGOING, filename);
-    const tmpPath = `${filePath}.tmp`;
+    if (!res.ok) {
+        const err = await res.text();
+        console.error(`API error (${res.status}): ${err}`);
+        process.exit(1);
+    }
 
-    fs.writeFileSync(tmpPath, JSON.stringify(outgoing, null, 2));
-    fs.renameSync(tmpPath, filePath);
+    const result = await res.json() as { ok: boolean; messageId: string };
 
-    console.log(`Message queued: ${filename}`);
+    console.log(`Message queued: ${result.messageId}`);
     console.log(`  channel:  ${channel}`);
     console.log(`  senderId: ${senderId}`);
     console.log(`  sender:   ${sender}`);
-    console.log(`  length:   ${outgoing.message.length} chars`);
+    console.log(`  length:   ${truncatedMessage.length} chars`);
 }
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-function main(): void {
+async function main(): Promise<void> {
     const args = process.argv.slice(2);
     const command = args[0];
 
@@ -206,7 +183,7 @@ function main(): void {
             listTargets();
             break;
         case 'send':
-            sendMessage(args.slice(1));
+            await sendMessage(args.slice(1));
             break;
         default:
             console.error('Usage:');

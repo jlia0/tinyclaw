@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Heartbeat - Periodically prompts all agents via queue system
+# Heartbeat - Periodically prompts all agents via the API server
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -11,9 +11,9 @@ if [ -z "$TINYCLAW_HOME" ]; then
     fi
 fi
 LOG_FILE="$TINYCLAW_HOME/logs/heartbeat.log"
-QUEUE_INCOMING="$TINYCLAW_HOME/queue/incoming"
-QUEUE_OUTGOING="$TINYCLAW_HOME/queue/outgoing"
 SETTINGS_FILE="$TINYCLAW_HOME/settings.json"
+API_PORT="${TINYCLAW_API_PORT:-3777}"
+API_URL="http://localhost:${API_PORT}"
 
 # Read interval from settings.json, default to 3600
 if [ -f "$SETTINGS_FILE" ]; then
@@ -23,13 +23,13 @@ if [ -f "$SETTINGS_FILE" ]; then
 fi
 INTERVAL=${INTERVAL:-3600}
 
-mkdir -p "$(dirname "$LOG_FILE")" "$QUEUE_INCOMING" "$QUEUE_OUTGOING"
+mkdir -p "$(dirname "$LOG_FILE")"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
 
-log "Heartbeat started (interval: ${INTERVAL}s)"
+log "Heartbeat started (interval: ${INTERVAL}s, API: ${API_URL})"
 
 while true; do
     sleep "$INTERVAL"
@@ -78,26 +78,23 @@ while true; do
             log "  → Agent @$AGENT_ID: using default prompt"
         fi
 
-        # Generate unique message ID
-        MESSAGE_ID="heartbeat_${AGENT_ID}_$(date +%s)_$$"
+        # Enqueue via API server
+        RESPONSE=$(curl -s -X POST "${API_URL}/api/message" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+                --arg message "$PROMPT" \
+                --arg agent "$AGENT_ID" \
+                --arg channel "heartbeat" \
+                --arg sender "System" \
+                '{message: $message, agent: $agent, channel: $channel, sender: $sender}'
+            )" 2>&1)
 
-        # Write to queue with @agent_id routing prefix
-        TIMESTAMP="$(date +%s)000"
-        jq -n \
-            --arg message "@${AGENT_ID} ${PROMPT}" \
-            --arg senderId "heartbeat_${AGENT_ID}" \
-            --argjson timestamp "$TIMESTAMP" \
-            --arg messageId "$MESSAGE_ID" \
-            '{
-                channel: "heartbeat",
-                sender: "System",
-                senderId: $senderId,
-                message: $message,
-                timestamp: $timestamp,
-                messageId: $messageId
-            }' > "$QUEUE_INCOMING/${MESSAGE_ID}.json"
-
-        log "  ✓ Queued for @$AGENT_ID: $MESSAGE_ID"
+        if echo "$RESPONSE" | jq -e '.ok' &>/dev/null; then
+            MESSAGE_ID=$(echo "$RESPONSE" | jq -r '.messageId')
+            log "  ✓ Queued for @$AGENT_ID: $MESSAGE_ID"
+        else
+            log "  ✗ Failed to queue for @$AGENT_ID: $RESPONSE"
+        fi
     done
 
     log "Heartbeat sent to $AGENT_COUNT agent(s)"
@@ -105,20 +102,16 @@ while true; do
     # Optional: wait and log responses
     sleep 10
 
-    # Check for responses and log brief summaries
-    for AGENT_ID in $AGENT_IDS; do
-        MESSAGE_ID="heartbeat_${AGENT_ID}_"
-
-        # Find response files for this agent's heartbeat
-        for RESPONSE_FILE in "$QUEUE_OUTGOING"/${MESSAGE_ID}*.json; do
-            if [ -f "$RESPONSE_FILE" ]; then
-                RESPONSE=$(cat "$RESPONSE_FILE" | jq -r '.message' 2>/dev/null || echo "")
-                if [ -n "$RESPONSE" ]; then
-                    log "  ← @$AGENT_ID: ${RESPONSE:0:80}..."
-                    # Clean up response file
-                    rm "$RESPONSE_FILE"
-                fi
+    # Check recent responses for heartbeat messages
+    RESPONSES=$(curl -s "${API_URL}/api/responses?limit=20" 2>&1)
+    if echo "$RESPONSES" | jq -e '.' &>/dev/null; then
+        for AGENT_ID in $AGENT_IDS; do
+            RESP=$(echo "$RESPONSES" | jq -r \
+                --arg ch "heartbeat" \
+                '.[] | select(.channel == $ch) | .message' 2>/dev/null | head -1)
+            if [ -n "$RESP" ]; then
+                log "  ← @$AGENT_ID: ${RESP:0:80}..."
             fi
         done
-    done
+    fi
 done

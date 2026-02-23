@@ -2,19 +2,21 @@
 /**
  * Team Visualizer — Real-time TUI for watching team conversations.
  *
- * Watches ~/.tinyclaw/events/ for structured JSON events emitted by the
- * queue processor and renders a live dashboard with Ink (React for CLI).
+ * Connects to the API server's SSE endpoint for live events and
+ * polls SQLite for queue depth stats.  Renders a live dashboard with
+ * Ink (React for CLI).
  *
- * Usage:  node dist/team-visualizer.js [--team <id>]
+ * Usage:  node dist/team-visualizer.js [--team <id>] [--port <num>]
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { render, Box, Text, useApp, useInput, Newline } from 'ink';
+import { render, Box, Text, useApp, useInput } from 'ink';
+import http from 'http';
+import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
 
 // ─── Paths ──────────────────────────────────────────────────────────────────
 const __filename_ = fileURLToPath(import.meta.url);
@@ -23,8 +25,21 @@ const _localTinyclaw = path.join(__dirname_, '..', '..', '.tinyclaw');
 const TINYCLAW_HOME = fs.existsSync(path.join(_localTinyclaw, 'settings.json'))
     ? _localTinyclaw
     : path.join(os.homedir(), '.tinyclaw');
-const EVENTS_DIR = path.join(TINYCLAW_HOME, 'events');
+const QUEUE_DB_PATH = path.join(TINYCLAW_HOME, 'tinyclaw.db');
 const SETTINGS_FILE = path.join(TINYCLAW_HOME, 'settings.json');
+
+// ─── SQLite helper ──────────────────────────────────────────────────────────
+
+function openDb(): Database.Database | null {
+    try {
+        if (!fs.existsSync(QUEUE_DB_PATH)) return null;
+        const db = new Database(QUEUE_DB_PATH, { readonly: true });
+        db.pragma('journal_mode = WAL');
+        return db;
+    } catch {
+        return null;
+    }
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -186,7 +201,7 @@ function dots(): string {
     return '.'.repeat(n);
 }
 
-function ChainFlow({ arrows, agents }: { arrows: ChainArrow[]; agents: Record<string, AgentState> }) {
+function ChainFlow({ arrows }: { arrows: ChainArrow[] }) {
     if (arrows.length === 0) return null;
     return (
         <Box flexDirection="column" marginY={1}>
@@ -226,7 +241,7 @@ function ActivityLog({ entries }: { entries: LogEntry[] }) {
     );
 }
 
-function StatusBar({ queueDepth, totalProcessed, processorAlive }: { queueDepth: number; totalProcessed: number; processorAlive: boolean }) {
+function StatusBar({ queueDepth, totalProcessed, processorAlive, deadCount }: { queueDepth: number; totalProcessed: number; processorAlive: boolean; deadCount: number }) {
     const sep = '\u2502';
     return (
         <Box flexDirection="column" marginTop={1}>
@@ -241,6 +256,12 @@ function StatusBar({ queueDepth, totalProcessed, processorAlive }: { queueDepth:
                 <Text color="white">Queue: <Text color={queueDepth > 0 ? 'yellow' : 'green'}>{queueDepth}</Text></Text>
                 <Text color="gray">{sep}</Text>
                 <Text color="white">Processed: <Text color="cyan">{totalProcessed}</Text></Text>
+                {deadCount > 0 && (
+                    <>
+                        <Text color="gray">{sep}</Text>
+                        <Text color="red">Dead: {deadCount}</Text>
+                    </>
+                )}
                 <Text color="gray">{sep}</Text>
                 <Text dimColor>q to quit</Text>
             </Box>
@@ -250,7 +271,7 @@ function StatusBar({ queueDepth, totalProcessed, processorAlive }: { queueDepth:
 
 // ─── Main App ───────────────────────────────────────────────────────────────
 
-function App({ filterTeamId }: { filterTeamId: string | null }) {
+function App({ filterTeamId, apiPort }: { filterTeamId: string | null; apiPort: number }) {
     const { exit } = useApp();
     const [settings, setSettings] = useState(() => loadSettings());
     const [agentStates, setAgentStates] = useState<Record<string, AgentState>>({});
@@ -258,6 +279,7 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
     const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
     const [totalProcessed, setTotalProcessed] = useState(0);
     const [queueDepth, setQueueDepth] = useState(0);
+    const [deadCount, setDeadCount] = useState(0);
     const [processorAlive, setProcessorAlive] = useState(false);
     const [startTime] = useState(Date.now());
     const [, setTick] = useState(0);
@@ -419,82 +441,99 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
         }
     }, [addLog]);
 
-    // Watch events directory
+    // Connect to API server SSE for real-time events
     useEffect(() => {
-        if (!fs.existsSync(EVENTS_DIR)) {
-            fs.mkdirSync(EVENTS_DIR, { recursive: true });
+        let req: http.ClientRequest | null = null;
+        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+        let destroyed = false;
+
+        function connect() {
+            if (destroyed) return;
+            req = http.get(`http://localhost:${apiPort}/api/events/stream`, (res) => {
+                if (res.statusCode !== 200) {
+                    res.resume();
+                    // Retry after a delay
+                    reconnectTimer = setTimeout(connect, 3000);
+                    return;
+                }
+
+                setProcessorAlive(true);
+                res.setEncoding('utf8');
+                let buffer = '';
+
+                res.on('data', (chunk: string) => {
+                    buffer += chunk;
+                    // Parse SSE frames: "event: <type>\ndata: <json>\n\n"
+                    const frames = buffer.split('\n\n');
+                    buffer = frames.pop() || '';
+                    for (const frame of frames) {
+                        if (!frame.trim()) continue;
+                        const lines = frame.split('\n');
+                        let data: string | null = null;
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                data = line.slice(6);
+                            }
+                        }
+                        if (data) {
+                            try {
+                                const event: TinyClawEvent = JSON.parse(data);
+                                handleEvent(event);
+                            } catch { /* skip malformed */ }
+                        }
+                    }
+                });
+
+                res.on('end', () => {
+                    setProcessorAlive(false);
+                    if (!destroyed) {
+                        reconnectTimer = setTimeout(connect, 3000);
+                    }
+                });
+            });
+
+            req.on('error', () => {
+                setProcessorAlive(false);
+                if (!destroyed) {
+                    reconnectTimer = setTimeout(connect, 3000);
+                }
+            });
         }
 
-        // Track processed files to avoid duplicates
-        const processed = new Set<string>();
+        connect();
 
-        // Process existing events from the last 30 seconds (catch recent activity)
-        const cutoff = Date.now() - 30_000;
-        try {
-            const existing = fs.readdirSync(EVENTS_DIR)
-                .filter(f => f.endsWith('.json'))
-                .sort();
-            for (const file of existing) {
-                try {
-                    const content = fs.readFileSync(path.join(EVENTS_DIR, file), 'utf8');
-                    const event: TinyClawEvent = JSON.parse(content.trim());
-                    if (event.timestamp >= cutoff) {
-                        handleEvent(event);
-                    }
-                    processed.add(file);
-                } catch { /* skip malformed */ }
-            }
-        } catch { /* dir might not exist yet */ }
+        return () => {
+            destroyed = true;
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            if (req) { req.destroy(); }
+        };
+    }, [handleEvent, apiPort]);
 
-        // Watch for new events
-        let watcher: fs.FSWatcher | null = null;
-        try {
-            watcher = fs.watch(EVENTS_DIR, (eventType, filename) => {
-                if (!filename || !filename.endsWith('.json') || processed.has(filename)) return;
-                processed.add(filename);
-                const filePath = path.join(EVENTS_DIR, filename);
-                // Small delay to ensure file is fully written
-                setTimeout(() => {
-                    try {
-                        const content = fs.readFileSync(filePath, 'utf8');
-                        const event: TinyClawEvent = JSON.parse(content.trim());
-                        handleEvent(event);
-                    } catch { /* skip */ }
-                    // Clean up old event files (older than 60s)
-                    try { fs.unlinkSync(filePath); } catch { /* already gone */ }
-                }, 50);
-            });
-        } catch { /* watch failed */ }
-
-        return () => { watcher?.close(); };
-    }, [handleEvent]);
-
-    // Poll queue depth
+    // Poll queue depth + dead count from SQLite
     useEffect(() => {
-        const queueIncoming = path.join(TINYCLAW_HOME, 'queue/incoming');
-        const interval = setInterval(() => {
+        const pollTimer = setInterval(() => {
+            const db = openDb();
+            if (!db) return;
             try {
-                const files = fs.existsSync(queueIncoming) ? fs.readdirSync(queueIncoming).filter(f => f.endsWith('.json')) : [];
-                setQueueDepth(files.length);
+                const pending = db.prepare(
+                    "SELECT COUNT(*) as cnt FROM messages WHERE status = 'pending'"
+                ).get() as { cnt: number };
+                setQueueDepth(pending.cnt);
+
+                const dead = db.prepare(
+                    "SELECT COUNT(*) as cnt FROM messages WHERE status = 'dead'"
+                ).get() as { cnt: number };
+                setDeadCount(dead.cnt);
             } catch {
                 setQueueDepth(0);
+                setDeadCount(0);
+            } finally {
+                try { db.close(); } catch { /* ignore */ }
             }
         }, 1000);
-        return () => clearInterval(interval);
+        return () => clearInterval(pollTimer);
     }, []);
 
-    // Detect if processor is alive (check if process is running)
-    useEffect(() => {
-        const interval = setInterval(() => {
-            try {
-                execSync('pgrep -f "queue-processor"', { stdio: 'ignore' });
-                setProcessorAlive(true);
-            } catch {
-                setProcessorAlive(false);
-            }
-        }, 5000);
-        return () => clearInterval(interval);
-    }, []);
 
     // Determine current team info
     const teamId = filterTeamId;
@@ -528,7 +567,7 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
                     </Box>
 
                     {/* Chain flow arrows */}
-                    <ChainFlow arrows={arrows} agents={agentStates} />
+                    <ChainFlow arrows={arrows} />
 
                     {/* Team legend when viewing all teams */}
                     {!filterTeamId && Object.keys(settings.teams).length > 0 && (
@@ -551,7 +590,7 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
             <ActivityLog entries={logEntries} />
 
             {/* Status bar */}
-            <StatusBar queueDepth={queueDepth} totalProcessed={totalProcessed} processorAlive={processorAlive} />
+            <StatusBar queueDepth={queueDepth} totalProcessed={totalProcessed} processorAlive={processorAlive} deadCount={deadCount} />
         </Box>
     );
 }
@@ -560,12 +599,17 @@ function App({ filterTeamId }: { filterTeamId: string | null }) {
 
 const args = process.argv.slice(2);
 let filterTeamId: string | null = null;
+let apiPort = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
 
 for (let i = 0; i < args.length; i++) {
     if ((args[i] === '--team' || args[i] === '-t') && args[i + 1]) {
         filterTeamId = args[i + 1];
         i++;
     }
+    if ((args[i] === '--port' || args[i] === '-p') && args[i + 1]) {
+        apiPort = parseInt(args[i + 1], 10);
+        i++;
+    }
 }
 
-render(<App filterTeamId={filterTeamId} />);
+render(<App filterTeamId={filterTeamId} apiPort={apiPort} />);

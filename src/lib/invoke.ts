@@ -4,7 +4,7 @@ import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
 import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel } from './config';
 import { log } from './logging';
-import { ensureAgentDirectory, updateAgentTeammates } from './agent-setup';
+import { ensureAgentDirectory, updateAgentTeammates } from './agent';
 
 export async function runCommand(command: string, args: string[], cwd?: string, timeoutMs?: number): Promise<string> {
     return new Promise((resolve, reject) => {

@@ -26,15 +26,16 @@
 - ✅ **Multi-agent** - Run multiple isolated AI agents with specialized roles
 - ✅ **Multi-team collaboration** - Agents hand off work to teammates via chain execution and fan-out
 - ✅ **Multi-channel** - Discord, WhatsApp, and Telegram
+- ✅ **Web portal (TinyOffice)** - Browser-based dashboard for chat, agents, teams, tasks, logs, and settings
 - ✅ **Team Observation** - You can observe agent teams conversations via `tinyclaw team visualize`
 - ✅ **Multiple AI providers** - Anthropic Claude and OpenAI Codex using existing subscriptions without breaking ToS
 - ✅ **Parallel processing** - Agents process messages concurrently
 - ✅ **Live TUI dashboard** - Real-time team visualizer for monitoring agent chains
 - ✅ **Persistent sessions** - Conversation context maintained across restarts
-- ✅ **File-based queue** - No race conditions, reliable message handling
+- ✅ **SQLite queue** - Atomic transactions, retry logic, dead-letter management
 - ✅ **24/7 operation** - Runs in tmux for always-on availability
 
-## Community 
+## Community
 
 [Discord](https://discord.com/invite/jH6AcEChuD)
 
@@ -122,6 +123,45 @@ After starting TinyClaw, scan the QR code:
 ```
 
 </details>
+
+---
+
+## 🌐 TinyOffice Web Portal
+
+TinyClaw includes `tinyoffice/`, a Next.js web portal for operating TinyClaw from the browser.
+
+<div align="center">
+  <img src="./docs/images/tinyoffice.png" alt="TinyOffice Office View" width="700" />
+</div>
+
+### TinyOffice Features
+
+- **Dashboard** - Real-time queue/system overview and live event feed
+- **Chat Console** - Send messages to default agent, `@agent`, or `@team`
+- **Agents & Teams** - Create, edit, and remove agents/teams
+- **Tasks (Kanban)** - Create tasks, drag across stages, assign to agent/team
+- **Logs & Events** - Inspect queue logs and streaming events
+- **Settings** - Edit TinyClaw configuration (`settings.json`) via UI
+- **Office View** - Visual simulation of agent interactions
+
+### Run TinyOffice
+
+Start TinyClaw first (API default: `http://localhost:3777`), then:
+
+```bash
+cd tinyoffice
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`.
+
+If TinyClaw API is on a different host/port, set:
+
+```bash
+cd tinyoffice
+echo 'NEXT_PUBLIC_API_URL=http://localhost:3777' > .env.local
+```
 
 ## 📋 Commands
 
@@ -395,17 +435,15 @@ See [docs/AGENTS.md](docs/AGENTS.md) for:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Message Channels                         │
-│         (Discord, Telegram, WhatsApp, Heartbeat)            │
+│         (Discord, Telegram, WhatsApp, Web, API)             │
 └────────────────────┬────────────────────────────────────────┘
-                     │ Write message.json
+                     │ enqueueMessage()
                      ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                   ~/.tinyclaw/queue/                         │
+│               ~/.tinyclaw/tinyclaw.db (SQLite)               │
 │                                                              │
-│  incoming/          processing/         outgoing/           │
-│  ├─ msg1.json  →   ├─ msg1.json   →   ├─ msg1.json        │
-│  ├─ msg2.json       └─ msg2.json       └─ msg2.json        │
-│  └─ msg3.json                                                │
+│  messages: pending → processing → completed / dead          │
+│  responses: pending → acked                                  │
 │                                                              │
 └────────────────────┬────────────────────────────────────────┘
                      │ Queue Processor
@@ -428,9 +466,10 @@ See [docs/AGENTS.md](docs/AGENTS.md) for:
 
 **Key features:**
 
-- **File-based queue** - Atomic operations, no race conditions
+- **SQLite queue** - Atomic transactions via WAL mode, no race conditions
 - **Parallel agents** - Different agents process messages concurrently
 - **Sequential per agent** - Preserves conversation order within each agent
+- **Retry & dead-letter** - Failed messages retry up to 5 times, then enter dead-letter queue
 - **Isolated workspaces** - Each agent has its own directory and context
 
 <details>
@@ -476,6 +515,7 @@ tinyclaw/
 ├── dist/                 # Compiled output
 ├── lib/                  # Runtime scripts
 ├── scripts/              # Installation scripts
+├── tinyoffice/           # TinyOffice web portal (Next.js)
 └── tinyclaw.sh           # Main script
 ```
 
@@ -584,6 +624,7 @@ All channels share agent conversations!
 - [AGENTS.md](docs/AGENTS.md) - Agent management and routing
 - [TEAMS.md](docs/TEAMS.md) - Team collaboration, chain execution, and visualizer
 - [QUEUE.md](docs/QUEUE.md) - Queue system and message flow
+- [tinyoffice/README.md](tinyoffice/README.md) - TinyOffice web portal
 - [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ## 🐛 Troubleshooting
