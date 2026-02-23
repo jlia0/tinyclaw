@@ -123,57 +123,6 @@ export function extractTeammateMentions(
 }
 
 /**
- * Validates that an agent response is properly formatted.
- * Returns validation result with any errors found.
- */
-export function validateAgentResponse(
-    response: string,
-    agentId: string,
-    teamId: string,
-    teams: Record<string, TeamConfig>,
-    agents: Record<string, AgentConfig>
-): { valid: boolean; errors: string[]; mentions: string[] } {
-    const errors: string[] = [];
-    const mentions: string[] = [];
-
-    // Check for potentially malformed mention tags
-    const openBrackets = (response.match(/\[@/g) || []).length;
-    const closeBrackets = (response.match(/\]/g) || []).length;
-
-    if (openBrackets !== closeBrackets) {
-        errors.push(`Mismatched brackets: ${openBrackets} opening, ${closeBrackets} closing`);
-    }
-
-    // Build case-insensitive agent lookup
-    const agentIdMap = new Map<string, string>();
-    for (const id of Object.keys(agents)) {
-        agentIdMap.set(id.toLowerCase(), id);
-    }
-
-    // Extract and validate mentions
-    const tagRegex = /\[@([^\]]+?):/g;
-    let match: RegExpExecArray | null;
-
-    while ((match = tagRegex.exec(response)) !== null) {
-        const rawList = match[1];
-        const ids = rawList.split(',').map(id => id.trim()).filter(Boolean);
-
-        for (const rawId of ids) {
-            const normalizedId = rawId.toLowerCase();
-            const actualId = agentIdMap.get(normalizedId);
-
-            if (!actualId) {
-                errors.push(`Unknown agent: @${rawId}`);
-            } else {
-                mentions.push(actualId);
-            }
-        }
-    }
-
-    return { valid: errors.length === 0, errors, mentions };
-}
-
-/**
  * Get the reset flag path for a specific agent.
  */
 export function getAgentResetFlag(agentId: string, workspacePath: string): string {

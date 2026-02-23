@@ -29,12 +29,11 @@ import {
     initQueueDb, claimNextMessage, completeMessage as dbCompleteMessage,
     failMessage, enqueueResponse, getPendingAgents, recoverStaleMessages,
     pruneAckedResponses, pruneCompletedMessages, closeQueueDb, queueEvents, DbMessage,
-    recoverStuckDeliveringResponses,
 } from './lib/db';
 import { handleLongResponse, collectFiles } from './lib/response';
 import {
     conversations, MAX_CONVERSATION_MESSAGES, enqueueInternalMessage, completeConversation,
-    withConversationLock, incrementPending, decrementPending, recoverConversation,
+    withConversationLock, incrementPending, decrementPending,
 } from './lib/conversation';
 
 // Ensure directories exist
@@ -273,12 +272,6 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             }
         });
 
-        // Validate conversation state after processing
-        const convAfter = conversations.get(conv.id);
-        if (convAfter) {
-            recoverConversation(convAfter);
-        }
-
         // Mark message as completed in DB
         dbCompleteMessage(dbMsg.id);
 
@@ -397,12 +390,6 @@ setInterval(() => {
     const pruned = pruneCompletedMessages();
     if (pruned > 0) log('INFO', `Pruned ${pruned} completed message(s)`);
 }, 60 * 60 * 1000); // every 1 hr
-
-// Periodic recovery for stuck delivering responses
-setInterval(() => {
-    const count = recoverStuckDeliveringResponses();
-    if (count > 0) log('INFO', `Recovered ${count} stuck delivering response(s)`);
-}, 5 * 60 * 1000); // every 5 min
 
 // Graceful shutdown
 process.on('SIGINT', () => {

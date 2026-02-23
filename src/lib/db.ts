@@ -41,9 +41,8 @@ export interface DbResponse {
     original_message: string;
     agent: string | null;
     files: string | null;         // JSON array
-    status: 'pending' | 'delivering' | 'acked';
+    status: 'pending' | 'acked';
     created_at: number;
-    delivering_at: number | null;
     acked_at: number | null;
 }
 
@@ -118,9 +117,8 @@ export function initQueueDb(): void {
             original_message TEXT NOT NULL,
             agent TEXT,
             files TEXT,
-            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'delivering', 'acked')),
+            status TEXT NOT NULL DEFAULT 'pending',
             created_at INTEGER NOT NULL,
-            delivering_at INTEGER,
             acked_at INTEGER
         );
 
@@ -245,46 +243,6 @@ export function ackResponse(responseId: number): void {
     getDb().prepare(`
         UPDATE responses SET status = 'acked', acked_at = ? WHERE id = ?
     `).run(Date.now(), responseId);
-}
-
-/**
- * Atomically claim a response for delivery.
- * Returns true if successfully claimed, false if already claimed or not pending.
- */
-export function claimResponseForDelivery(responseId: number): boolean {
-    const d = getDb();
-    const result = d.prepare(`
-        UPDATE responses
-        SET status = 'delivering', delivering_at = ?
-        WHERE id = ? AND status = 'pending'
-    `).run(Date.now(), responseId);
-    return result.changes > 0;
-}
-
-/**
- * Unclaim a response (if delivery failed) to allow retry.
- */
-export function unclaimResponse(responseId: number): boolean {
-    const d = getDb();
-    const result = d.prepare(`
-        UPDATE responses
-        SET status = 'pending', delivering_at = NULL
-        WHERE id = ? AND status = 'delivering'
-    `).run(responseId);
-    return result.changes > 0;
-}
-
-/**
- * Recover responses stuck in 'delivering' for longer than thresholdMs (default 5 min).
- */
-export function recoverStuckDeliveringResponses(thresholdMs = 5 * 60 * 1000): number {
-    const cutoff = Date.now() - thresholdMs;
-    const result = getDb().prepare(`
-        UPDATE responses
-        SET status = 'pending', delivering_at = NULL
-        WHERE status = 'delivering' AND delivering_at < ?
-    `).run(cutoff);
-    return result.changes;
 }
 
 export function getRecentResponses(limit: number): DbResponse[] {

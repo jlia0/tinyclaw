@@ -4,7 +4,6 @@ import { log } from '../../lib/logging';
 import {
     getQueueStatus, getRecentResponses, getResponsesForChannel, ackResponse,
     enqueueResponse, getDeadMessages, retryDeadMessage, deleteDeadMessage,
-    claimResponseForDelivery, unclaimResponse,
 } from '../../lib/db';
 
 export function createQueueRoutes(conversations: Map<string, Conversation>) {
@@ -90,22 +89,6 @@ export function createQueueRoutes(conversations: Map<string, Conversation>) {
         const id = parseInt(c.req.param('id'), 10);
         ackResponse(id);
         return c.json({ ok: true });
-    });
-
-    // POST /api/responses/:id/claim — atomically claim for delivery
-    app.post('/api/responses/:id/claim', (c) => {
-        const id = parseInt(c.req.param('id'), 10);
-        if (isNaN(id)) return c.json({ error: 'Invalid response ID' }, 400);
-        const success = claimResponseForDelivery(id);
-        return c.json({ success });
-    });
-
-    // POST /api/responses/:id/unclaim — unclaim if delivery failed
-    app.post('/api/responses/:id/unclaim', (c) => {
-        const id = parseInt(c.req.param('id'), 10);
-        if (isNaN(id)) return c.json({ error: 'Invalid response ID' }, 400);
-        const success = unclaimResponse(id);
-        return c.json({ success });
     });
 
     // GET /api/queue/dead
