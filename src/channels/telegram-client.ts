@@ -78,6 +78,28 @@ function buildUniqueFilePath(dir: string, preferredName: string): string {
 const pendingMessages = new Map<string, PendingMessage>();
 let processingOutgoingQueue = false;
 
+// Track in-flight responses to prevent duplicate processing
+const inFlightResponses = new Set<number>();
+
+// Track responses being delivered for retry logic
+const deliveringResponses = new Map<number, { retryCount: number; lastAttempt: number }>();
+
+// Maximum retry attempts for a failed delivery
+const MAX_DELIVERY_RETRIES = 3;
+
+// Helper to track delivery attempt
+function trackDeliveryAttempt(responseId: number): boolean {
+    const existing = deliveringResponses.get(responseId);
+    if (existing && existing.retryCount >= MAX_DELIVERY_RETRIES) {
+        return false; // Max retries exceeded
+    }
+    deliveringResponses.set(responseId, {
+        retryCount: (existing?.retryCount || 0) + 1,
+        lastAttempt: Date.now(),
+    });
+    return true;
+}
+
 // Logger
 function log(level: string, message: string): void {
     const timestamp = new Date().toISOString();
@@ -465,6 +487,27 @@ async function checkOutgoingQueue(): Promise<void> {
         const responses = await res.json() as any[];
 
         for (const resp of responses) {
+            // Skip if already being processed
+            if (inFlightResponses.has(resp.id)) continue;
+
+            // Check retry count
+            const deliveryInfo = deliveringResponses.get(resp.id);
+            if (deliveryInfo && deliveryInfo.retryCount >= MAX_DELIVERY_RETRIES) {
+                log('ERROR', `Response ${resp.id} exceeded max retries, acking to prevent infinite loop`);
+                await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST' });
+                deliveringResponses.delete(resp.id);
+                continue;
+            }
+
+            // Claim the response for delivery (atomic operation)
+            const claimRes = await fetch(`${API_BASE}/api/responses/${resp.id}/claim`, { method: 'POST' });
+            if (!claimRes.ok || !(await claimRes.json() as { success: boolean }).success) {
+                log('INFO', `Response ${resp.id} already being processed by another instance`);
+                continue;
+            }
+
+            inFlightResponses.add(resp.id);
+
             try {
                 const responseText = resp.message;
                 const messageId = resp.messageId;
@@ -477,54 +520,78 @@ async function checkOutgoingQueue(): Promise<void> {
                 const targetChatId = pending?.chatId ?? (senderId ? Number(senderId) : null);
 
                 if (targetChatId && !Number.isNaN(targetChatId)) {
-                    // Send any attached files first
-                    if (files.length > 0) {
-                        for (const file of files) {
-                            try {
-                                if (!fs.existsSync(file)) continue;
-                                const ext = path.extname(file).toLowerCase();
-                                if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-                                    await bot.sendPhoto(targetChatId, file);
-                                } else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) {
-                                    await bot.sendAudio(targetChatId, file);
-                                } else if (['.mp4', '.avi', '.mov', '.webm'].includes(ext)) {
-                                    await bot.sendVideo(targetChatId, file);
-                                } else {
-                                    await bot.sendDocument(targetChatId, file);
+                    try {
+                        // Send any attached files first
+                        if (files.length > 0) {
+                            for (const file of files) {
+                                try {
+                                    if (!fs.existsSync(file)) continue;
+                                    const ext = path.extname(file).toLowerCase();
+                                    if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+                                        await bot.sendPhoto(targetChatId, file);
+                                    } else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) {
+                                        await bot.sendAudio(targetChatId, file);
+                                    } else if (['.mp4', '.avi', '.mov', '.webm'].includes(ext)) {
+                                        await bot.sendVideo(targetChatId, file);
+                                    } else {
+                                        await bot.sendDocument(targetChatId, file);
+                                    }
+                                    log('INFO', `Sent file to Telegram: ${path.basename(file)}`);
+                                } catch (fileErr) {
+                                    log('ERROR', `Failed to send file ${file}: ${(fileErr as Error).message}`);
                                 }
-                                log('INFO', `Sent file to Telegram: ${path.basename(file)}`);
-                            } catch (fileErr) {
-                                log('ERROR', `Failed to send file ${file}: ${(fileErr as Error).message}`);
                             }
                         }
-                    }
 
-                    // Split message if needed (Telegram 4096 char limit)
-                    if (responseText) {
-                        const chunks = splitMessage(responseText);
+                        // Split message if needed (Telegram 4096 char limit)
+                        if (responseText) {
+                            const chunks = splitMessage(responseText);
 
-                        if (chunks.length > 0) {
-                            await bot.sendMessage(targetChatId, chunks[0]!, pending
-                                ? { reply_to_message_id: pending.messageId }
-                                : {},
-                            );
+                            if (chunks.length > 0) {
+                                await bot.sendMessage(targetChatId, chunks[0]!, pending
+                                    ? { reply_to_message_id: pending.messageId }
+                                    : {},
+                                );
+                            }
+                            for (let i = 1; i < chunks.length; i++) {
+                                await bot.sendMessage(targetChatId, chunks[i]!);
+                            }
                         }
-                        for (let i = 1; i < chunks.length; i++) {
-                            await bot.sendMessage(targetChatId, chunks[i]!);
+
+                        log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${files.length > 0 ? `, ${files.length} file(s)` : ''})`);
+
+                        if (pending) pendingMessages.delete(messageId);
+
+                        // Delivery successful - cleanup tracking
+                        deliveringResponses.delete(resp.id);
+
+                        // Final ack
+                        await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST' });
+                    } catch (sendError) {
+                        // Send failed - unclaim the response so it can be retried
+                        log('ERROR', `Failed to send response ${resp.id}: ${(sendError as Error).message}`);
+                        if (!trackDeliveryAttempt(resp.id)) {
+                            log('ERROR', `Response ${resp.id} max retries exceeded, acking to prevent loop`);
+                            await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST' });
+                        } else {
+                            await fetch(`${API_BASE}/api/responses/${resp.id}/unclaim`, { method: 'POST' });
                         }
                     }
-
-                    log('INFO', `Sent ${pending ? 'response' : 'proactive message'} to ${sender} (${responseText.length} chars${files.length > 0 ? `, ${files.length} file(s)` : ''})`);
-
-                    if (pending) pendingMessages.delete(messageId);
-                    await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST' });
                 } else {
                     log('WARN', `No pending message for ${messageId} and no valid senderId, acking`);
+                    deliveringResponses.delete(resp.id);
                     await fetch(`${API_BASE}/api/responses/${resp.id}/ack`, { method: 'POST' });
                 }
             } catch (error) {
                 log('ERROR', `Error processing response ${resp.id}: ${(error as Error).message}`);
-                // Don't ack on error, will retry next poll
+                // Try to unclaim on error
+                try {
+                    await fetch(`${API_BASE}/api/responses/${resp.id}/unclaim`, { method: 'POST' });
+                } catch {
+                    // Ignore unclaim errors
+                }
+            } finally {
+                inFlightResponses.delete(resp.id);
             }
         }
     } catch (error) {
@@ -533,6 +600,16 @@ async function checkOutgoingQueue(): Promise<void> {
         processingOutgoingQueue = false;
     }
 }
+
+// Periodic cleanup of stale delivery tracking
+setInterval(() => {
+    const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+    for (const [id, info] of deliveringResponses.entries()) {
+        if (info.lastAttempt < tenMinutesAgo) {
+            deliveringResponses.delete(id);
+        }
+    }
+}, 5 * 60 * 1000);
 
 // Check outgoing queue every second
 setInterval(checkOutgoingQueue, 1000);
