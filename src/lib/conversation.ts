@@ -11,6 +11,113 @@ export const conversations = new Map<string, Conversation>();
 
 export const MAX_CONVERSATION_MESSAGES = 50;
 
+// Per-conversation locks to prevent race conditions
+const conversationLocks = new Map<string, Promise<void>>();
+
+/**
+ * Execute a function with exclusive access to a conversation.
+ * This prevents race conditions when multiple agents complete simultaneously.
+ */
+export async function withConversationLock<T>(
+    convId: string,
+    fn: () => Promise<T>
+): Promise<T> {
+    const currentLock = conversationLocks.get(convId) || Promise.resolve();
+
+    let resolveLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+        resolveLock = resolve;
+    });
+
+    const newLock = currentLock.then(async () => {
+        try {
+            return await fn();
+        } finally {
+            resolveLock();
+        }
+    });
+
+    conversationLocks.set(convId, lockPromise);
+
+    newLock.finally(() => {
+        if (conversationLocks.get(convId) === lockPromise) {
+            conversationLocks.delete(convId);
+        }
+    });
+
+    return newLock;
+}
+
+/**
+ * Safely increment the pending counter for a conversation.
+ */
+export function incrementPending(conv: Conversation, count: number): void {
+    conv.pending += count;
+    log('DEBUG', `Conversation ${conv.id}: pending incremented to ${conv.pending} (+${count})`);
+}
+
+/**
+ * Safely decrement the pending counter and check if conversation should complete.
+ * Returns true if pending reached 0 and conversation should complete.
+ */
+export function decrementPending(conv: Conversation): boolean {
+    conv.pending--;
+    log('DEBUG', `Conversation ${conv.id}: pending decremented to ${conv.pending}`);
+
+    if (conv.pending < 0) {
+        log('WARN', `Conversation ${conv.id}: pending went negative (${conv.pending}), resetting to 0`);
+        conv.pending = 0;
+    }
+
+    return conv.pending === 0;
+}
+
+/**
+ * Validate conversation state and attempt recovery if needed.
+ */
+export function validateConversationState(conv: Conversation): { valid: boolean; issues: string[] } {
+    const issues: string[] = [];
+
+    if (conv.pending < 0) {
+        issues.push(`Negative pending count: ${conv.pending}`);
+    }
+
+    if (conv.totalMessages > conv.maxMessages) {
+        issues.push(`Exceeded max messages: ${conv.totalMessages}/${conv.maxMessages}`);
+    }
+
+    if (conv.responses.length === 0 && conv.pending === 0) {
+        issues.push(`Conversation has no responses and no pending work`);
+    }
+
+    return { valid: issues.length === 0, issues };
+}
+
+/**
+ * Attempt to recover a conversation from an inconsistent state.
+ */
+export function recoverConversation(conv: Conversation): boolean {
+    const validation = validateConversationState(conv);
+
+    if (validation.valid) {
+        return true;
+    }
+
+    log('WARN', `Attempting to recover conversation ${conv.id}: ${validation.issues.join(', ')}`);
+
+    if (conv.pending < 0) {
+        conv.pending = 0;
+    }
+
+    if (conv.pending === 0 && conv.responses.length > 0) {
+        log('INFO', `Auto-completing conversation ${conv.id} with ${conv.responses.length} response(s)`);
+        completeConversation(conv);
+        return true;
+    }
+
+    return false;
+}
+
 /**
  * Enqueue an internal (agent-to-agent) message into the SQLite queue.
  */

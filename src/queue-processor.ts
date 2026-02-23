@@ -29,9 +29,13 @@ import {
     initQueueDb, claimNextMessage, completeMessage as dbCompleteMessage,
     failMessage, enqueueResponse, getPendingAgents, recoverStaleMessages,
     pruneAckedResponses, pruneCompletedMessages, closeQueueDb, queueEvents, DbMessage,
+    recoverStuckDeliveringResponses,
 } from './lib/db';
 import { handleLongResponse, collectFiles } from './lib/response';
-import { conversations, MAX_CONVERSATION_MESSAGES, enqueueInternalMessage, completeConversation } from './lib/conversation';
+import {
+    conversations, MAX_CONVERSATION_MESSAGES, enqueueInternalMessage, completeConversation,
+    withConversationLock, incrementPending, decrementPending, recoverConversation,
+} from './lib/conversation';
 
 // Ensure directories exist
 [FILES_DIR, path.dirname(LOG_FILE), CHATS_DIR].forEach(dir => {
@@ -240,7 +244,7 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
 
         if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
             // Enqueue internal messages for each mention
-            conv.pending += teammateMentions.length;
+            incrementPending(conv, teammateMentions.length);
             conv.outgoingMentions.set(agentId, teammateMentions.length);
             for (const mention of teammateMentions) {
                 log('INFO', `@${agentId} → @${mention.teammateId}`);
@@ -258,13 +262,21 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing further mentions`);
         }
 
-        // This branch is done
-        conv.pending--;
+        // This branch is done - use atomic decrement with locking
+        await withConversationLock(conv.id, async () => {
+            const shouldComplete = decrementPending(conv);
 
-        if (conv.pending === 0) {
-            completeConversation(conv);
-        } else {
-            log('INFO', `Conversation ${conv.id}: ${conv.pending} branch(es) still pending`);
+            if (shouldComplete) {
+                completeConversation(conv);
+            } else {
+                log('INFO', `Conversation ${conv.id}: ${conv.pending} branch(es) still pending`);
+            }
+        });
+
+        // Validate conversation state after processing
+        const convAfter = conversations.get(conv.id);
+        if (convAfter) {
+            recoverConversation(convAfter);
         }
 
         // Mark message as completed in DB
@@ -385,6 +397,12 @@ setInterval(() => {
     const pruned = pruneCompletedMessages();
     if (pruned > 0) log('INFO', `Pruned ${pruned} completed message(s)`);
 }, 60 * 60 * 1000); // every 1 hr
+
+// Periodic recovery for stuck delivering responses
+setInterval(() => {
+    const count = recoverStuckDeliveringResponses();
+    if (count > 0) log('INFO', `Recovered ${count} stuck delivering response(s)`);
+}, 5 * 60 * 1000); // every 5 min
 
 // Graceful shutdown
 process.on('SIGINT', () => {

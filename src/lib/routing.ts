@@ -1,5 +1,6 @@
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
+import { log } from './logging';
 
 /**
  * Find the first team that contains the given agent.
@@ -24,12 +25,27 @@ export function isTeammate(
     agents: Record<string, AgentConfig>
 ): boolean {
     const team = teams[teamId];
-    if (!team) return false;
-    return (
-        mentionedId !== currentAgentId &&
-        team.agents.includes(mentionedId) &&
-        !!agents[mentionedId]
-    );
+    if (!team) {
+        log('WARN', `isTeammate check failed: Team '${teamId}' not found`);
+        return false;
+    }
+
+    if (mentionedId === currentAgentId) {
+        log('DEBUG', `isTeammate check failed: Self-mention (agent: ${mentionedId})`);
+        return false;
+    }
+
+    if (!team.agents.includes(mentionedId)) {
+        log('WARN', `isTeammate check failed: Agent '${mentionedId}' not in team '${teamId}' (members: ${team.agents.join(', ')})`);
+        return false;
+    }
+
+    if (!agents[mentionedId]) {
+        log('WARN', `isTeammate check failed: Agent '${mentionedId}' not found in agents config`);
+        return false;
+    }
+
+    return true;
 }
 
 /**
@@ -46,30 +62,115 @@ export function extractTeammateMentions(
     const results: { teammateId: string; message: string }[] = [];
     const seen = new Set<string>();
 
-    // TODO: Support cross-team communication — allow agents to mention agents
-    // on other teams or use [@team_id: message] to route to another team's leader.
+    // Build case-insensitive agent lookup map
+    const agentIdMap = new Map<string, string>();
+    for (const id of Object.keys(agents)) {
+        agentIdMap.set(id.toLowerCase(), id);
+    }
 
     // Tag format: [@agent_id: message] or [@agent1,agent2: message]
-    const tagRegex = /\[@(\S+?):\s*([\s\S]*?)\]/g;
+    // Improved regex: better handling of content with brackets
+    const tagRegex = /\[@([^\]]+?):\s*([\s\S]*?)\]/g;
+
     // Strip all [@teammate: ...] tags from the full response to get shared context
     const sharedContext = response.replace(tagRegex, '').trim();
+
     let tagMatch: RegExpExecArray | null;
+    let matchCount = 0;
+
     while ((tagMatch = tagRegex.exec(response)) !== null) {
+        matchCount++;
+        const rawAgentList = tagMatch[1];
         const directMessage = tagMatch[2].trim();
+
+        log('DEBUG', `Found mention tag #${matchCount}: "[@${rawAgentList}: ...]" from @${currentAgentId}`);
+
         const fullMessage = sharedContext
             ? `${sharedContext}\n\n------\n\nDirected to you:\n${directMessage}`
             : directMessage;
 
         // Support comma-separated agent IDs: [@coder,reviewer: message]
-        const candidateIds = tagMatch[1].toLowerCase().split(',').map(id => id.trim()).filter(Boolean);
-        for (const candidateId of candidateIds) {
-            if (!seen.has(candidateId) && isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
+        const rawCandidateIds = rawAgentList.split(',').map(id => id.trim()).filter(Boolean);
+
+        for (const rawCandidateId of rawCandidateIds) {
+            // Case-insensitive lookup
+            const candidateId = agentIdMap.get(rawCandidateId.toLowerCase()) || rawCandidateId;
+
+            if (seen.has(candidateId)) {
+                log('WARN', `Duplicate mention of @${candidateId} from @${currentAgentId} ignored`);
+                continue;
+            }
+
+            if (isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
                 results.push({ teammateId: candidateId, message: fullMessage });
                 seen.add(candidateId);
+                log('INFO', `Valid mention: @${currentAgentId} → @${candidateId}`);
             }
         }
     }
+
+    // Log summary
+    if (matchCount === 0) {
+        log('DEBUG', `No mention tags found in response from @${currentAgentId}`);
+    } else if (results.length === 0) {
+        log('WARN', `Found ${matchCount} mention tag(s) from @${currentAgentId} but none were valid`);
+        log('DEBUG', `Response snippet: "${response.substring(0, 200)}..."`);
+    } else {
+        log('DEBUG', `Extracted ${results.length} valid mention(s) from ${matchCount} tag(s) for @${currentAgentId}`);
+    }
+
     return results;
+}
+
+/**
+ * Validates that an agent response is properly formatted.
+ * Returns validation result with any errors found.
+ */
+export function validateAgentResponse(
+    response: string,
+    agentId: string,
+    teamId: string,
+    teams: Record<string, TeamConfig>,
+    agents: Record<string, AgentConfig>
+): { valid: boolean; errors: string[]; mentions: string[] } {
+    const errors: string[] = [];
+    const mentions: string[] = [];
+
+    // Check for potentially malformed mention tags
+    const openBrackets = (response.match(/\[@/g) || []).length;
+    const closeBrackets = (response.match(/\]/g) || []).length;
+
+    if (openBrackets !== closeBrackets) {
+        errors.push(`Mismatched brackets: ${openBrackets} opening, ${closeBrackets} closing`);
+    }
+
+    // Build case-insensitive agent lookup
+    const agentIdMap = new Map<string, string>();
+    for (const id of Object.keys(agents)) {
+        agentIdMap.set(id.toLowerCase(), id);
+    }
+
+    // Extract and validate mentions
+    const tagRegex = /\[@([^\]]+?):/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = tagRegex.exec(response)) !== null) {
+        const rawList = match[1];
+        const ids = rawList.split(',').map(id => id.trim()).filter(Boolean);
+
+        for (const rawId of ids) {
+            const normalizedId = rawId.toLowerCase();
+            const actualId = agentIdMap.get(normalizedId);
+
+            if (!actualId) {
+                errors.push(`Unknown agent: @${rawId}`);
+            } else {
+                mentions.push(actualId);
+            }
+        }
+    }
+
+    return { valid: errors.length === 0, errors, mentions };
 }
 
 /**
