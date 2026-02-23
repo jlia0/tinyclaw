@@ -62,63 +62,28 @@ export function extractTeammateMentions(
     const results: { teammateId: string; message: string }[] = [];
     const seen = new Set<string>();
 
-    // Build case-insensitive agent lookup map
-    const agentIdMap = new Map<string, string>();
-    for (const id of Object.keys(agents)) {
-        agentIdMap.set(id.toLowerCase(), id);
-    }
-
     // Tag format: [@agent_id: message] or [@agent1,agent2: message]
-    // Improved regex: better handling of content with brackets
     const tagRegex = /\[@([^\]]+?):\s*([\s\S]*?)\]/g;
 
     // Strip all [@teammate: ...] tags from the full response to get shared context
     const sharedContext = response.replace(tagRegex, '').trim();
 
     let tagMatch: RegExpExecArray | null;
-    let matchCount = 0;
-
     while ((tagMatch = tagRegex.exec(response)) !== null) {
-        matchCount++;
-        const rawAgentList = tagMatch[1];
         const directMessage = tagMatch[2].trim();
-
-        log('DEBUG', `Found mention tag #${matchCount}: "[@${rawAgentList}: ...]" from @${currentAgentId}`);
-
         const fullMessage = sharedContext
             ? `${sharedContext}\n\n------\n\nDirected to you:\n${directMessage}`
             : directMessage;
 
         // Support comma-separated agent IDs: [@coder,reviewer: message]
-        const rawCandidateIds = rawAgentList.split(',').map(id => id.trim()).filter(Boolean);
-
-        for (const rawCandidateId of rawCandidateIds) {
-            // Case-insensitive lookup
-            const candidateId = agentIdMap.get(rawCandidateId.toLowerCase()) || rawCandidateId;
-
-            if (seen.has(candidateId)) {
-                log('WARN', `Duplicate mention of @${candidateId} from @${currentAgentId} ignored`);
-                continue;
-            }
-
-            if (isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
+        const candidateIds = tagMatch[1].toLowerCase().split(',').map(id => id.trim()).filter(Boolean);
+        for (const candidateId of candidateIds) {
+            if (!seen.has(candidateId) && isTeammate(candidateId, currentAgentId, teamId, teams, agents)) {
                 results.push({ teammateId: candidateId, message: fullMessage });
                 seen.add(candidateId);
-                log('INFO', `Valid mention: @${currentAgentId} → @${candidateId}`);
             }
         }
     }
-
-    // Log summary
-    if (matchCount === 0) {
-        log('DEBUG', `No mention tags found in response from @${currentAgentId}`);
-    } else if (results.length === 0) {
-        log('WARN', `Found ${matchCount} mention tag(s) from @${currentAgentId} but none were valid`);
-        log('DEBUG', `Response snippet: "${response.substring(0, 200)}..."`);
-    } else {
-        log('DEBUG', `Extracted ${results.length} valid mention(s) from ${matchCount} tag(s) for @${currentAgentId}`);
-    }
-
     return results;
 }
 
@@ -138,33 +103,34 @@ export function parseAgentRouting(
     agents: Record<string, AgentConfig>,
     teams: Record<string, TeamConfig> = {}
 ): { agentId: string; message: string; isTeam?: boolean } {
-    // Strip [channel/sender]: prefix added by the messages API route
-    const stripped = rawMessage.replace(/^\[[^\]]*\]:\s*/, '');
-    const match = stripped.match(/^@(\S+)\s+([\s\S]*)$/);
+    // Match @agent_id, optionally preceded by [channel/sender]: prefix from messages API
+    const match = rawMessage.match(/^(\[[^\]]*\]:\s*)?@(\S+)\s+([\s\S]*)$/);
     if (match) {
-        const candidateId = match[1].toLowerCase();
+        const prefix = match[1] || '';
+        const candidateId = match[2].toLowerCase();
+        const message = prefix + match[3];
 
         // Check agent IDs
         if (agents[candidateId]) {
-            return { agentId: candidateId, message: match[2] };
+            return { agentId: candidateId, message };
         }
 
         // Check team IDs — resolve to leader agent
         if (teams[candidateId]) {
-            return { agentId: teams[candidateId].leader_agent, message: match[2], isTeam: true };
+            return { agentId: teams[candidateId].leader_agent, message, isTeam: true };
         }
 
         // Match by agent name (case-insensitive)
         for (const [id, config] of Object.entries(agents)) {
             if (config.name.toLowerCase() === candidateId) {
-                return { agentId: id, message: match[2] };
+                return { agentId: id, message };
             }
         }
 
         // Match by team name (case-insensitive)
         for (const [, config] of Object.entries(teams)) {
             if (config.name.toLowerCase() === candidateId) {
-                return { agentId: config.leader_agent, message: match[2], isTeam: true };
+                return { agentId: config.leader_agent, message, isTeam: true };
             }
         }
     }
