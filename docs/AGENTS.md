@@ -15,7 +15,7 @@ The agent management feature enables you to:
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    Message Channels                          │
 │              (Discord, Telegram, WhatsApp)                   │
@@ -69,6 +69,7 @@ const routing = parseAgentRouting(rawMessage, agents);
 ```
 
 **Routing Rules:**
+
 - Message starts with `@agent_id` → Routes to that agent
 - No prefix → Routes to default agent (user-named during setup)
 - Agent not found → Falls back to default agent
@@ -116,7 +117,8 @@ Each agent has its own configuration in `.tinyclaw/settings.json`:
 Each agent has its own isolated workspace directory with complete copies of configuration files:
 
 **Agent Workspaces:**
-```
+
+```text
 ~/tinyclaw-workspace/          # Or custom workspace name
 ├── coder/
 │   ├── .claude/               # Agent's own Claude config
@@ -144,7 +146,7 @@ Each agent has its own isolated workspace directory with complete copies of conf
 
 Templates and shared resources are stored in `~/.tinyclaw/`:
 
-```
+```text
 ~/.tinyclaw/
 ├── .claude/           # Template: Copied to each new agent
 ├── heartbeat.md       # Template: Copied to each new agent
@@ -156,6 +158,7 @@ Templates and shared resources are stored in `~/.tinyclaw/`:
 ```
 
 **How it works:**
+
 - Each agent runs CLI commands in its own workspace directory (`~/workspace/agent_id/`)
 - Each agent gets its own copy of `.claude/`, `heartbeat.md`, and `AGENTS.md` from templates
 - Agents can customize their settings, hooks, and documentation independently
@@ -170,6 +173,7 @@ Templates and shared resources are stored in `~/.tinyclaw/`:
 The queue processor calls the appropriate CLI based on provider:
 
 **Anthropic (Claude):**
+
 ```bash
 cd "$agent_working_directory"  # e.g., ~/tinyclaw-workspace/coder/
 claude --dangerously-skip-permissions \
@@ -180,6 +184,7 @@ claude --dangerously-skip-permissions \
 ```
 
 **OpenAI (Codex):**
+
 ```bash
 cd "$agent_working_directory"  # e.g., ~/tinyclaw-workspace/coder/
 codex exec resume --last \
@@ -207,11 +212,13 @@ During first-time setup (`tinyclaw setup`), you'll be prompted for:
 ### Adding Agents
 
 **Interactive CLI:**
+
 ```bash
 tinyclaw agent add
 ```
 
 This walks you through:
+
 1. Agent ID (e.g., `coder`)
 2. Display name (e.g., `Code Assistant`)
 3. Provider (Anthropic or OpenAI)
@@ -244,16 +251,17 @@ Edit `.tinyclaw/settings.json`:
 
 ### Agent Fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Human-readable display name |
-| `provider` | Yes | `anthropic` or `openai` |
-| `model` | Yes | Model identifier (e.g., `sonnet`, `opus`, `gpt-5.3-codex`) |
-| `working_directory` | Yes | Directory where agent operates (auto-set to `<workspace>/<agent_id>/`) |
-| `system_prompt` | No | Inline system prompt text |
-| `prompt_file` | No | Path to file containing system prompt |
+| Field               | Required | Description                                                            |
+| ------------------- | -------- | ---------------------------------------------------------------------- |
+| `name`              | Yes      | Human-readable display name                                            |
+| `provider`          | Yes      | `anthropic` or `openai`                                                |
+| `model`             | Yes      | Model identifier (e.g., `sonnet`, `opus`, `gpt-5.3-codex`)             |
+| `working_directory` | Yes      | Directory where agent operates (auto-set to `<workspace>/<agent_id>/`) |
+| `system_prompt`     | No       | Inline system prompt text                                              |
+| `prompt_file`       | No       | Path to file containing system prompt                                  |
 
 **Note:**
+
 - If both `prompt_file` and `system_prompt` are provided, `prompt_file` takes precedence
 - The `working_directory` is automatically set to `<workspace>/<agent_id>/` when creating agents
 - Each agent gets its own isolated directory with copies of templates from `~/.tinyclaw/`
@@ -264,7 +272,7 @@ Edit `.tinyclaw/settings.json`:
 
 **In any messaging channel** (Discord, Telegram, WhatsApp):
 
-```
+```text
 @coder fix the authentication bug in login.ts
 
 @writer document the new API endpoints
@@ -277,17 +285,20 @@ help me with this (goes to default agent - "assistant" by default)
 ### Listing Agents
 
 **From chat:**
-```
+
+```text
 /agents
 ```
 
 **From CLI:**
+
 ```bash
 tinyclaw agent list
 ```
 
 **Output:**
-```
+
+```text
 Configured Agents
 ==================
 
@@ -308,21 +319,25 @@ Configured Agents
 ### Managing Agents
 
 **Show agent details:**
+
 ```bash
 tinyclaw agent show coder
 ```
 
 **Reset agent conversation:**
+
 ```bash
 tinyclaw agent reset coder
 ```
 
 From chat:
-```
+
+```text
 @coder /reset
 ```
 
 **Remove agent:**
+
 ```bash
 tinyclaw agent remove coder
 ```
@@ -352,7 +367,8 @@ Have different agents for different projects:
 ```
 
 Usage:
-```
+
+```text
 @frontend add a loading spinner to the dashboard
 
 @backend optimize the database queries in user service
@@ -438,6 +454,23 @@ If no agents are configured, TinyClaw automatically creates a default agent usin
 
 This ensures backward compatibility with older configurations.
 
+### Global Model & Provider Commands
+
+The `tinyclaw model` and `tinyclaw provider --model` commands update both the global default **and** propagate to all matching agents:
+
+- `tinyclaw model sonnet` — updates `.models.anthropic.model` and sets `model = "sonnet"` on every agent with `provider == "anthropic"`.
+- `tinyclaw model gpt-5.3-codex` — updates `.models.openai.model` and sets `model = "gpt-5.3-codex"` on every agent with `provider == "openai"`.
+- `tinyclaw provider openai --model gpt-5.3-codex` — switches the global provider, and updates all agents that were on the **old** provider to the new provider and model.
+- `tinyclaw provider anthropic` (no `--model`) — only switches the global default; agents are **not** changed.
+
+To change a **single** agent's provider/model without affecting others, use:
+
+```bash
+tinyclaw agent provider <agent_id> <provider> --model <model>
+```
+
+Running `tinyclaw model` or `tinyclaw provider` with no arguments shows the global default followed by a per-agent breakdown.
+
 ### Reset Flags
 
 Per-agent reset: `<workspace>/<agent_id>/reset_flag` - resets a specific agent's conversation.
@@ -445,6 +478,7 @@ Per-agent reset: `<workspace>/<agent_id>/reset_flag` - resets a specific agent's
 Reset flags are automatically cleaned up after use.
 
 Reset one or more agents:
+
 ```bash
 tinyclaw reset coder
 tinyclaw reset coder researcher
@@ -464,6 +498,7 @@ You can create multiple workspaces for different purposes:
 ```
 
 Or even use cloud-synced directories:
+
 ```json
 {
   "workspace": {
@@ -477,7 +512,7 @@ Or even use cloud-synced directories:
 
 Files uploaded through messaging channels are automatically available to all agents:
 
-```
+```text
 User uploads image.png via Telegram
 → Saved to ~/.tinyclaw/files/telegram_123456_image.png
 → Message includes: [file: /path/to/image.png]
@@ -511,12 +546,14 @@ For detailed troubleshooting of agent-related issues, see [TROUBLESHOOTING.md](T
 ### Code Structure
 
 **Queue Processor** (`src/queue-processor.ts`):
+
 - `getSettings()` - Loads settings from JSON
 - `getAgents()` - Returns agent configurations (checks `.agents`)
 - `parseAgentRouting()` - Parses @agent_id prefix
 - `processMessage()` - Main routing and execution logic
 
 **Message Interfaces:**
+
 ```typescript
 interface MessageData {
   agent?: string;      // Pre-routed agent ID
@@ -534,7 +571,8 @@ interface ResponseData {
 ### Agent Directory Structure
 
 **Templates:**
-```
+
+```text
 ~/.tinyclaw/
 ├── .claude/           # Copied to new agents
 ├── heartbeat.md       # Copied to new agents
@@ -542,7 +580,8 @@ interface ResponseData {
 ```
 
 **Agent State:**
-```
+
+```text
 <workspace>/
 └── {agent_id}/
     ├── .claude/       # Agent's own config
@@ -585,10 +624,10 @@ Teams are stored in `~/.tinyclaw/settings.json`:
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `name` | Human-readable display name |
-| `agents` | Array of agent IDs (must exist in `.agents`) |
+| Field          | Description                                   |
+| -------------- | --------------------------------------------- |
+| `name`         | Human-readable display name                   |
+| `agents`       | Array of agent IDs (must exist in `.agents`)  |
 | `leader_agent` | Agent that receives `@team_id` messages first |
 
 Team IDs share the `@` routing namespace with agents, so no collisions are allowed.
@@ -596,6 +635,7 @@ Team IDs share the `@` routing namespace with agents, so no collisions are allow
 ### Managing Teams
 
 **CLI Commands:**
+
 ```bash
 tinyclaw team list                # List all teams
 tinyclaw team add                 # Add a new team (interactive)
@@ -604,7 +644,8 @@ tinyclaw team remove dev          # Remove a team
 ```
 
 **In-chat Commands:**
-```
+
+```text
 /team                             # List all teams
 @dev fix the auth bug             # Route to team leader
 @coder fix the auth bug           # Route directly to agent (team context still active)

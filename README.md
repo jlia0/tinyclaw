@@ -113,7 +113,7 @@ The setup wizard will guide you through:
 
 After starting TinyClaw, scan the QR code:
 
-```
+```text
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      WhatsApp QR Code
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -181,15 +181,15 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 
 ### Agent Commands
 
-| Command                              | Description                      | Example                                          |
-| ------------------------------------ | -------------------------------- | ------------------------------------------------ |
-| `agent list`                         | List all configured agents       | `tinyclaw agent list`                            |
-| `agent add`                          | Add new agent (interactive)      | `tinyclaw agent add`                             |
-| `agent show <id>`                    | Show agent configuration         | `tinyclaw agent show coder`                      |
-| `agent remove <id>`                  | Remove an agent                  | `tinyclaw agent remove coder`                    |
-| `agent reset <id>`                   | Reset agent conversation         | `tinyclaw agent reset coder`                     |
-| `agent provider <id> [provider]`     | Show or set agent's AI provider  | `tinyclaw agent provider coder anthropic`        |
-| `agent provider <id> <p> --model <m>`| Set agent's provider and model   | `tinyclaw agent provider coder openai --model gpt-5.3-codex` |
+| Command                               | Description                     | Example                                                      |
+| ------------------------------------- | ------------------------------- | ------------------------------------------------------------ |
+| `agent list`                          | List all configured agents      | `tinyclaw agent list`                                        |
+| `agent add`                           | Add new agent (interactive)     | `tinyclaw agent add`                                         |
+| `agent show <id>`                     | Show agent configuration        | `tinyclaw agent show coder`                                  |
+| `agent remove <id>`                   | Remove an agent                 | `tinyclaw agent remove coder`                                |
+| `agent reset <id>`                    | Reset agent conversation        | `tinyclaw agent reset coder`                                 |
+| `agent provider <id> [provider]`      | Show or set agent's AI provider | `tinyclaw agent provider coder anthropic`                    |
+| `agent provider <id> <p> --model <m>` | Set agent's provider and model  | `tinyclaw agent provider coder openai --model gpt-5.3-codex` |
 
 ### Team Commands
 
@@ -203,13 +203,13 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 
 ### Configuration Commands
 
-| Command                           | Description                  | Example                                          |
-| --------------------------------- | ---------------------------- | ------------------------------------------------ |
-| `provider [name]`                 | Show or switch AI provider   | `tinyclaw provider anthropic`                    |
-| `provider <name> --model <model>` | Switch provider and model    | `tinyclaw provider openai --model gpt-5.3-codex` |
-| `model [name]`                    | Show or switch AI model      | `tinyclaw model opus`                            |
-| `reset`                           | Reset all conversations      | `tinyclaw reset`                                 |
-| `channels reset <channel>`        | Reset channel authentication | `tinyclaw channels reset whatsapp`               |
+| Command                           | Description                                              | Example                                          |
+| --------------------------------- | -------------------------------------------------------- | ------------------------------------------------ |
+| `provider [name]`                 | Show or switch AI provider (global default only)         | `tinyclaw provider anthropic`                    |
+| `provider <name> --model <model>` | Switch provider and model; propagates to matching agents | `tinyclaw provider openai --model gpt-5.3-codex` |
+| `model [name]`                    | Show or switch AI model; propagates to matching agents   | `tinyclaw model opus`                            |
+| `reset`                           | Reset all conversations                                  | `tinyclaw reset`                                 |
+| `channels reset <channel>`        | Reset channel authentication                             | `tinyclaw channels reset whatsapp`               |
 
 ### Pairing Commands
 
@@ -301,7 +301,7 @@ These commands work in Discord, Telegram, and WhatsApp:
 
 Use `@agent_id` prefix to route messages to specific agents (see [In-Chat Commands](#in-chat-commands) table above):
 
-```
+```text
 @coder fix the authentication bug
 @writer document the API endpoints
 @researcher find papers on transformers
@@ -357,7 +357,7 @@ See [docs/AGENTS.md](docs/AGENTS.md) for:
 
 ## 📐 Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                     Message Channels                         │
 │         (Discord, Telegram, WhatsApp, Web, API)             │
@@ -411,7 +411,7 @@ See [docs/QUEUE.md](docs/QUEUE.md) for:
 
 ## 📁 Directory Structure
 
-```
+```text
 tinyclaw/
 ├── .tinyclaw/            # TinyClaw data
 │   ├── settings.json     # Configuration
@@ -508,7 +508,7 @@ Take action if needed.
 
 ### Personal AI Assistant
 
-```
+```text
 You: "Remind me to call mom"
 Claude: "I'll remind you!"
 [1 hour later via heartbeat]
@@ -517,7 +517,7 @@ Claude: "Don't forget to call mom!"
 
 ### Multi-Agent Workflow
 
-```
+```text
 @coder Review and fix bugs in auth.ts
 @writer Document the changes
 @reviewer Check the documentation quality
@@ -525,7 +525,7 @@ Claude: "Don't forget to call mom!"
 
 ### Team Collaboration
 
-```
+```text
 @dev fix the auth bug
 # → Routes to team leader (@coder)
 # → Coder fixes bug, mentions @reviewer in response
