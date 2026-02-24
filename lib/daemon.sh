@@ -135,35 +135,41 @@ start_daemon() {
 
     tmux new-session -d -s "$TMUX_SESSION" -n "tinyclaw" -c "$SCRIPT_DIR"
 
-    # Create remaining panes (pane 0 already exists)
+    # Detect tmux base indices (user may have base-index or pane-base-index set)
+    local win_base
+    win_base=$(tmux show-option -gv base-index 2>/dev/null || echo 0)
+    local pane_base
+    pane_base=$(tmux show-option -gv pane-base-index 2>/dev/null || echo 0)
+
+    # Create remaining panes (first pane already exists)
     for ((i=1; i<total_panes; i++)); do
         tmux split-window -t "$TMUX_SESSION" -c "$SCRIPT_DIR"
         tmux select-layout -t "$TMUX_SESSION" tiled  # rebalance after each split
     done
 
     # Assign channel panes
-    local pane_idx=0
+    local pane_idx=$pane_base
     local whatsapp_pane=-1
     for ch in "${ACTIVE_CHANNELS[@]}"; do
         [ "$ch" = "whatsapp" ] && whatsapp_pane=$pane_idx
-        tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && node ${CHANNEL_SCRIPT[$ch]}" C-m
-        tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "${CHANNEL_DISPLAY[$ch]}"
+        tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_idx" "cd '$SCRIPT_DIR' && node ${CHANNEL_SCRIPT[$ch]}" C-m
+        tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_idx" -T "${CHANNEL_DISPLAY[$ch]}"
         pane_idx=$((pane_idx + 1))
     done
 
     # Queue pane
-    tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && node dist/queue-processor.js" C-m
-    tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "Queue"
+    tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_idx" "cd '$SCRIPT_DIR' && node dist/queue-processor.js" C-m
+    tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_idx" -T "Queue"
     pane_idx=$((pane_idx + 1))
 
     # Heartbeat pane
-    tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && ./lib/heartbeat-cron.sh" C-m
-    tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "Heartbeat"
+    tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_idx" "cd '$SCRIPT_DIR' && ./lib/heartbeat-cron.sh" C-m
+    tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_idx" -T "Heartbeat"
     pane_idx=$((pane_idx + 1))
 
     # Logs pane
-    tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && $log_tail_cmd" C-m
-    tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "Logs"
+    tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_idx" "cd '$SCRIPT_DIR' && $log_tail_cmd" C-m
+    tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_idx" -T "Logs"
 
     echo ""
     echo -e "${GREEN}✓ TinyClaw started${NC}"
