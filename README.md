@@ -296,6 +296,20 @@ These commands work in Discord, Telegram, and WhatsApp:
 
 **Access control note:** before routing, channel clients apply sender pairing allowlist checks.
 
+## 🔌 Plugin Security
+
+TinyClaw can load local plugins from `~/.tinyclaw/plugins`, but plugins are **disabled by default**.
+
+- Enable plugins: `TINYCLAW_PLUGINS_ENABLED=1`
+- Hook timeout (ms): `TINYCLAW_PLUGIN_HOOK_TIMEOUT_MS` (default `1500`)
+- Activate timeout (ms): `TINYCLAW_PLUGIN_ACTIVATE_TIMEOUT_MS` (default `3000`)
+
+Security model:
+
+- Plugins are fully trusted local code.
+- Do not install plugins from untrusted sources.
+- Plugin code runs with the same permissions as the TinyClaw process.
+
 ## 🤖 Using Agents
 
 ### Routing Messages
