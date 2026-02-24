@@ -139,6 +139,8 @@ case "${1:-}" in
                     # Switch to Anthropic provider
                     tmp_file="$SETTINGS_FILE.tmp"
                     if [ -n "$MODEL_ARG" ]; then
+                        # Count agents to update before mutation
+                        UPDATED_COUNT=$(jq --arg old_provider "$OLD_PROVIDER" '[.agents // {} | to_entries[] | select(.value.provider == $old_provider)] | length' "$SETTINGS_FILE" 2>/dev/null)
                         # Set global default and propagate to agents matching old provider
                         jq --arg model "$MODEL_ARG" --arg old_provider "$OLD_PROVIDER" '
                             .models.provider = "anthropic" |
@@ -148,7 +150,6 @@ case "${1:-}" in
                                 if .value.provider == $old_provider then .value.provider = "anthropic" | .value.model = $model else . end
                             )
                         ' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
-                        UPDATED_COUNT=$(jq --arg old_provider "$OLD_PROVIDER" '[.agents // {} | to_entries[] | select(.value.provider == "anthropic")] | length' "$SETTINGS_FILE" 2>/dev/null)
                         echo -e "${GREEN}✓ Switched to Anthropic provider with model: $MODEL_ARG${NC}"
                         if [ "$UPDATED_COUNT" -gt 0 ] 2>/dev/null; then
                             echo -e "${BLUE}  Updated $UPDATED_COUNT agent(s) from $OLD_PROVIDER to anthropic/$MODEL_ARG${NC}"
@@ -170,6 +171,8 @@ case "${1:-}" in
                     # Switch to OpenAI provider (using Codex CLI)
                     tmp_file="$SETTINGS_FILE.tmp"
                     if [ -n "$MODEL_ARG" ]; then
+                        # Count agents to update before mutation
+                        UPDATED_COUNT=$(jq --arg old_provider "$OLD_PROVIDER" '[.agents // {} | to_entries[] | select(.value.provider == $old_provider)] | length' "$SETTINGS_FILE" 2>/dev/null)
                         # Set global default and propagate to agents matching old provider
                         jq --arg model "$MODEL_ARG" --arg old_provider "$OLD_PROVIDER" '
                             .models.provider = "openai" |
@@ -179,7 +182,6 @@ case "${1:-}" in
                                 if .value.provider == $old_provider then .value.provider = "openai" | .value.model = $model else . end
                             )
                         ' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
-                        UPDATED_COUNT=$(jq --arg old_provider "$OLD_PROVIDER" '[.agents // {} | to_entries[] | select(.value.provider == "openai")] | length' "$SETTINGS_FILE" 2>/dev/null)
                         echo -e "${GREEN}✓ Switched to OpenAI/Codex provider with model: $MODEL_ARG${NC}"
                         if [ "$UPDATED_COUNT" -gt 0 ] 2>/dev/null; then
                             echo -e "${BLUE}  Updated $UPDATED_COUNT agent(s) from $OLD_PROVIDER to openai/$MODEL_ARG${NC}"
