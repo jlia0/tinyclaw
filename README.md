@@ -332,6 +332,7 @@ Feature flags:
 
 - `TINYCLAW_OPENVIKING_SESSION_NATIVE=1` enable native session write path
 - `TINYCLAW_OPENVIKING_AUTOSYNC=0` disable legacy markdown sync fallback (`active.md`/`closed/*.md`)
+- `TINYCLAW_OPENVIKING_CONTEXT_PLUGIN=0` disable the built-in OpenViking context plugin entirely
 
 Legacy markdown sync remains as a compatibility fallback.
 
