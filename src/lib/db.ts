@@ -29,6 +29,7 @@ export interface DbMessage {
     created_at: number;
     updated_at: number;
     claimed_by: string | null;
+    handoff_depth: number;
 }
 
 export interface DbResponse {
@@ -56,6 +57,7 @@ export interface EnqueueMessageData {
     files?: string[];
     conversationId?: string;
     fromAgent?: string;
+    handoffDepth?: number;
 }
 
 export interface EnqueueResponseData {
@@ -127,6 +129,11 @@ export function initQueueDb(): void {
         CREATE INDEX IF NOT EXISTS idx_responses_channel_status ON responses(channel, status);
     `);
 
+    // Add handoff_depth column (idempotent)
+    try {
+        db.exec('ALTER TABLE messages ADD COLUMN handoff_depth INTEGER NOT NULL DEFAULT 0');
+    } catch { /* column already exists */ }
+
     // Drop legacy indexes/tables
     db.exec('DROP INDEX IF EXISTS idx_messages_status');
     db.exec('DROP INDEX IF EXISTS idx_messages_agent');
@@ -144,8 +151,8 @@ export function enqueueMessage(data: EnqueueMessageData): number {
     const d = getDb();
     const now = Date.now();
     const result = d.prepare(`
-        INSERT INTO messages (message_id, channel, sender, sender_id, message, agent, files, conversation_id, from_agent, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        INSERT INTO messages (message_id, channel, sender, sender_id, message, agent, files, conversation_id, from_agent, handoff_depth, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
     `).run(
         data.messageId,
         data.channel,
@@ -156,6 +163,7 @@ export function enqueueMessage(data: EnqueueMessageData): number {
         data.files ? JSON.stringify(data.files) : null,
         data.conversationId ?? null,
         data.fromAgent ?? null,
+        data.handoffDepth ?? 0,
         now,
         now,
     );

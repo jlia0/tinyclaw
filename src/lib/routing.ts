@@ -136,3 +136,39 @@ export function parseAgentRouting(
     }
     return { agentId: 'default', message: rawMessage };
 }
+
+/**
+ * Detect @agent_id prefix in an agent's response text (agent-to-agent handoff).
+ * Returns the target agent ID and remaining message, or null if no valid handoff.
+ */
+export function parseResponseHandoff(
+    response: string,
+    currentAgentId: string,
+    agents: Record<string, AgentConfig>
+): { targetAgentId: string; message: string } | null {
+    const trimmed = response.trim();
+    const match = trimmed.match(/^@(\S+)\s+([\s\S]*)$/);
+    if (!match) return null;
+
+    const candidateId = match[1].toLowerCase();
+    const message = match[2].trim();
+
+    if (!message) return null;
+
+    // Reject self-handoff
+    if (candidateId === currentAgentId) return null;
+
+    // Match by agent ID first
+    if (agents[candidateId]) {
+        return { targetAgentId: candidateId, message: trimmed };
+    }
+
+    // Match by agent name (case-insensitive)
+    for (const [id, config] of Object.entries(agents)) {
+        if (config.name.toLowerCase() === candidateId && id !== currentAgentId) {
+            return { targetAgentId: id, message: trimmed };
+        }
+    }
+
+    return null;
+}
