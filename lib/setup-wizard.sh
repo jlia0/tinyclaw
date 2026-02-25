@@ -267,6 +267,7 @@ if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
     OV_LLM_API_BASE="https://api.openai.com/v1"
     OV_LLM_MODEL="gpt-4o-mini"
     OV_EMBED_MODEL="text-embedding-3-large"
+    OV_EMBED_DIM="3072"
 
     OPENVIKING_CONF_DIR="$(dirname "$OPENVIKING_CONFIG_PATH")"
     OPENVIKING_DATA_PATH="$HOME/.tinyclaw/openviking-data"
@@ -280,8 +281,11 @@ if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
             exit 1
         fi
         if ! python3 -m pip install --user --upgrade openviking; then
-            echo -e "${RED}Failed to install openviking package${NC}"
-            exit 1
+            echo -e "${YELLOW}Default pip install failed. Retrying with PEP 668 override...${NC}"
+            if ! python3 -m pip install --user --upgrade --break-system-packages openviking; then
+                echo -e "${RED}Failed to install openviking package${NC}"
+                exit 1
+            fi
         fi
     fi
 
@@ -297,6 +301,7 @@ if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
       --arg api_base "$OV_LLM_API_BASE" \
       --arg vlm_model "$OV_LLM_MODEL" \
       --arg embed_model "$OV_EMBED_MODEL" \
+      --argjson embed_dim "$OV_EMBED_DIM" \
       '{
         storage: {
           agfs: {
@@ -305,13 +310,15 @@ if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
           },
           vectordb: {
             backend: "local",
-            path: $vectordb_path
+            path: $vectordb_path,
+            dimension: $embed_dim
           }
         },
         embedding: {
           dense: {
             provider: "openai",
             model: $embed_model,
+            dimension: $embed_dim,
             api_key: $api_key,
             api_base: (if $api_base == "" then null else $api_base end)
           }
@@ -322,8 +329,7 @@ if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
           api_key: $api_key,
           api_base: (if $api_base == "" then null else $api_base end),
           temperature: 0.0
-        },
-        log_level: "WARNING"
+        }
       }' > "$OPENVIKING_CONFIG_PATH"
 
     echo -e "${GREEN}✓ OpenViking config written: $OPENVIKING_CONFIG_PATH${NC}"
