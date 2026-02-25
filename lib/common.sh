@@ -61,6 +61,23 @@ declare -A CHANNEL_TOKEN_ENV=(
 ACTIVE_CHANNELS=()
 declare -A CHANNEL_TOKENS=()
 WORKSPACE_PATH=""
+OPENVIKING_ENABLED="false"
+OPENVIKING_AUTO_START="false"
+OPENVIKING_HOST="127.0.0.1"
+OPENVIKING_PORT="8320"
+OPENVIKING_BASE_URL="http://127.0.0.1:8320"
+OPENVIKING_CONFIG_PATH="$HOME/.openviking/ov.conf"
+OPENVIKING_PROJECT=""
+OPENVIKING_API_KEY=""
+OPENVIKING_NATIVE_SESSION="false"
+OPENVIKING_NATIVE_SEARCH="false"
+OPENVIKING_PREFETCH="false"
+OPENVIKING_AUTOSYNC="true"
+OPENVIKING_PREFETCH_TIMEOUT_MS="5000"
+OPENVIKING_COMMIT_TIMEOUT_MS="15000"
+OPENVIKING_PREFETCH_MAX_CHARS="2800"
+OPENVIKING_PREFETCH_MAX_TURNS="4"
+OPENVIKING_PREFETCH_MAX_HITS="8"
 
 # Logging function
 log() {
@@ -114,6 +131,28 @@ load_settings() {
             CHANNEL_TOKENS[$ch]=$(jq -r ".channels.${ch}.bot_token // empty" "$SETTINGS_FILE" 2>/dev/null)
         fi
     done
+
+    # Load OpenViking settings
+    OPENVIKING_ENABLED=$(jq -r '.openviking.enabled // false' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_AUTO_START=$(jq -r '.openviking.auto_start // false' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_HOST=$(jq -r '.openviking.host // "127.0.0.1"' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_PORT=$(jq -r '.openviking.port // 8320' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_BASE_URL=$(jq -r '.openviking.base_url // "http://127.0.0.1:8320"' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_CONFIG_PATH=$(jq -r '.openviking.config_path // empty' "$SETTINGS_FILE" 2>/dev/null)
+    if [ -z "$OPENVIKING_CONFIG_PATH" ]; then
+        OPENVIKING_CONFIG_PATH="$HOME/.openviking/ov.conf"
+    fi
+    OPENVIKING_PROJECT=$(jq -r '.openviking.project // empty' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_API_KEY=$(jq -r '.openviking.api_key // empty' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_NATIVE_SESSION=$(jq -r '.openviking.native_session // false' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_NATIVE_SEARCH=$(jq -r '.openviking.native_search // false' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_PREFETCH=$(jq -r '.openviking.prefetch // false' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_AUTOSYNC=$(jq -r '.openviking.autosync // true' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_PREFETCH_TIMEOUT_MS=$(jq -r '.openviking.prefetch_timeout_ms // 5000' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_COMMIT_TIMEOUT_MS=$(jq -r '.openviking.commit_timeout_ms // 15000' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_PREFETCH_MAX_CHARS=$(jq -r '.openviking.prefetch_max_chars // 2800' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_PREFETCH_MAX_TURNS=$(jq -r '.openviking.prefetch_max_turns // 4' "$SETTINGS_FILE" 2>/dev/null)
+    OPENVIKING_PREFETCH_MAX_HITS=$(jq -r '.openviking.prefetch_max_hits // 8' "$SETTINGS_FILE" 2>/dev/null)
 
     return 0
 }

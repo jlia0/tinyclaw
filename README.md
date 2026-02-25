@@ -201,6 +201,12 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 | `team remove <id>`    | Remove a team                      | `tinyclaw team remove dev`    |
 | `team visualize [id]` | Live TUI dashboard for team chains | `tinyclaw team visualize dev` |
 
+### Tool Commands
+
+| Command                  | Description                                      | Example                    |
+| ------------------------ | ------------------------------------------------ | -------------------------- |
+| `tools sync [agent_id]`  | Sync OpenViking CLI tools into agent workspace(s) | `tinyclaw tools sync coder` |
+
 ### Configuration Commands
 
 | Command                           | Description                  | Example                                          |
@@ -276,6 +282,75 @@ export TINYCLAW_SKIP_UPDATE_CHECK=1
 | ---------------- | --------------------------- | -------------------------------- |
 | `send <message>` | Send message to AI manually | `tinyclaw send "Hello!"`         |
 | `send <message>` | Route to specific agent     | `tinyclaw send "@coder fix bug"` |
+
+## 🧰 OpenViking Workspace Tools
+
+TinyClaw can provision lightweight OpenViking tools into each agent workspace:
+
+```bash
+tinyclaw tools sync
+```
+
+Tools are installed at:
+
+```bash
+<workspace>/<agent_id>/.tinyclaw/tools/openviking/
+```
+
+Common usage from an agent directory:
+
+```bash
+cd .tinyclaw/tools/openviking
+./ovk-ls.sh /
+./ovk-read.sh /context/spec.md
+./ovk-write.sh /context/spec.md "updated content"
+./ovk.sh res-get viking://workspace/resource
+```
+
+Environment variables:
+
+- `OPENVIKING_BASE_URL` (default: `http://127.0.0.1:8320`)
+- `OPENVIKING_API_KEY` (optional)
+- `OPENVIKING_PROJECT` (optional)
+
+### OpenViking Native Session Write Path
+
+TinyClaw supports OpenViking native session lifecycle as the primary write path:
+
+- `POST /api/v1/sessions` to create/reuse session IDs per `(channel, senderId, agentId)` mapping
+- `POST /api/v1/sessions/{id}/messages` for `user` and `assistant` turns
+- `POST /api/v1/sessions/{id}/commit` when reset/session-end is consumed
+
+Setup integration:
+
+- `tinyclaw setup` now prompts whether to enable OpenViking memory
+- if enabled, setup can install OpenViking CLI and generate `~/.openviking/ov.conf` (includes LLM API key for OpenViking internals)
+- `tinyclaw start` auto-starts OpenViking server (when enabled + auto_start) and exports OpenViking env vars for channel/queue processes
+
+Feature flags:
+
+- `TINYCLAW_OPENVIKING_SESSION_NATIVE=1` enable native session write path
+- `TINYCLAW_OPENVIKING_AUTOSYNC=0` disable legacy markdown sync fallback (`active.md`/`closed/*.md`)
+
+Legacy markdown sync remains as a compatibility fallback.
+
+### Pre-Prompt Retrieval (OpenViking)
+
+Before invoking the model for an external user turn, TinyClaw can prefetch related context via:
+
+- `POST /api/v1/search/search` (native, typed `memories/resources/skills`, optionally scoped with `session_id`)
+- legacy fallback (`find-uris` + `read` on `active.md` and archived sessions) when native search is disabled or misses
+
+Environment flags:
+
+- `TINYCLAW_OPENVIKING_PREFETCH=0` disable pre-prompt retrieval
+- `TINYCLAW_OPENVIKING_SEARCH_NATIVE=1` enable native search as primary prefetch path
+- `TINYCLAW_OPENVIKING_PREFETCH_TIMEOUT_MS` prefetch/search timeout (default: `5000`)
+- `TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS` native session commit timeout (default: `15000`)
+- `TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS` max injected chars (default: `2800`)
+- `TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS` max selected turns (default: `4`)
+- `TINYCLAW_OPENVIKING_PREFETCH_MAX_HITS` max typed native hits injected (default: `8`)
+- `TINYCLAW_OPENVIKING_SEARCH_SCORE_THRESHOLD` optional native score threshold passed to OpenViking search API
 
 ### In-Chat Commands
 

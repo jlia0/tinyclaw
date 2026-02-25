@@ -4,6 +4,84 @@
 # AGENTS_DIR set after loading settings (uses workspace path)
 AGENTS_DIR=""
 
+copy_openviking_tools_to_agent_dir() {
+    local agent_dir="$1"
+    local tools_src="$SCRIPT_DIR/lib/templates/agent-tools/openviking"
+    local tools_dest="$agent_dir/.tinyclaw/tools/openviking"
+
+    [ -d "$tools_src" ] || return 0
+
+    mkdir -p "$tools_dest"
+    cp "$tools_src"/* "$tools_dest/" 2>/dev/null || true
+
+    if [ -f "$SCRIPT_DIR/dist/tools/openviking-tool.js" ]; then
+        cp "$SCRIPT_DIR/dist/tools/openviking-tool.js" "$tools_dest/openviking-tool.js"
+    fi
+
+    if [ -f "$SCRIPT_DIR/src/tools/openviking-tool.ts" ]; then
+        cp "$SCRIPT_DIR/src/tools/openviking-tool.ts" "$tools_dest/openviking-tool.ts"
+    fi
+
+    chmod +x "$tools_dest/ovk.sh" "$tools_dest/ovk-ls.sh" "$tools_dest/ovk-read.sh" "$tools_dest/ovk-write.sh" 2>/dev/null || true
+}
+
+sync_agent_tools() {
+    load_settings || return 0
+    local agents_dir="$WORKSPACE_PATH"
+    [ -d "$agents_dir" ] || return 0
+
+    local target_agent="${1:-}"
+    if [ -n "$target_agent" ]; then
+        local agent_dir="$agents_dir/$target_agent"
+        [ -d "$agent_dir" ] || return 0
+        copy_openviking_tools_to_agent_dir "$agent_dir"
+        return 0
+    fi
+
+    local agent_ids
+    agent_ids=$(jq -r '(.agents // {}) | keys[]' "$SETTINGS_FILE" 2>/dev/null) || return 0
+    for agent_id in $agent_ids; do
+        local agent_dir="$agents_dir/$agent_id"
+        [ -d "$agent_dir" ] || continue
+        copy_openviking_tools_to_agent_dir "$agent_dir"
+    done
+}
+
+agent_tools_sync_command() {
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}No settings file found. Run setup first.${NC}"
+        exit 1
+    fi
+
+    load_settings
+    AGENTS_DIR="$WORKSPACE_PATH"
+
+    local target_agent="${1:-}"
+    if [ -n "$target_agent" ]; then
+        local exists
+        exists=$(jq -r "(.agents // {}).\"${target_agent}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
+        if [ -z "$exists" ]; then
+            echo -e "${RED}Agent '${target_agent}' not found.${NC}"
+            exit 1
+        fi
+        copy_openviking_tools_to_agent_dir "$AGENTS_DIR/$target_agent"
+        echo -e "${GREEN}✓ Synced OpenViking tools to @${target_agent}${NC}"
+        echo "  Path: $AGENTS_DIR/$target_agent/.tinyclaw/tools/openviking"
+        return
+    fi
+
+    local count=0
+    local agent_ids
+    agent_ids=$(jq -r '(.agents // {}) | keys[]' "$SETTINGS_FILE" 2>/dev/null)
+    for agent_id in $agent_ids; do
+        copy_openviking_tools_to_agent_dir "$AGENTS_DIR/$agent_id"
+        count=$((count + 1))
+    done
+
+    echo -e "${GREEN}✓ Synced OpenViking tools to ${count} agent(s)${NC}"
+    echo "  Tools path: <workspace>/<agent_id>/.tinyclaw/tools/openviking"
+}
+
 # Ensure all agent workspaces have .agents/skills symlinked
 ensure_agent_skills_links() {
     local skills_src="$SCRIPT_DIR/.agents/skills"
@@ -276,6 +354,9 @@ agent_add() {
         cp "$SCRIPT_DIR/SOUL.md" "$AGENTS_DIR/$AGENT_ID/.tinyclaw/SOUL.md"
         echo "  → Copied SOUL.md to .tinyclaw/"
     fi
+
+    copy_openviking_tools_to_agent_dir "$AGENTS_DIR/$AGENT_ID"
+    echo "  → Synced OpenViking tools to .tinyclaw/tools/openviking/"
 
     echo ""
     echo -e "${GREEN}✓ Agent '${AGENT_ID}' created!${NC}"
