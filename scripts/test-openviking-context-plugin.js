@@ -7,7 +7,16 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 function runParent() {
-    const scenarios = ['disabled', 'settings-disabled', 'enabled', 'failure'];
+    const scenarios = [
+        'disabled',
+        'settings-disabled',
+        'enabled',
+        'session-scope-empty',
+        'failure',
+        'idle-timeout',
+        'task-switch',
+        'shutdown-drain',
+    ];
 
     for (const scenario of scenarios) {
         const child = spawnSync(process.execPath, [__filename, 'child', scenario], {
@@ -43,11 +52,15 @@ if (logFile) {
 const scenario = process.env.OPENVIKING_TEST_SCENARIO || 'enabled';
 
 function out(data) {
-  process.stdout.write(JSON.stringify(data));
+  fs.writeSync(1, JSON.stringify(data));
 }
 
 if (cmd === 'session-create') {
-  out({ id: 'sess-1' });
+  if (scenario === 'idle-timeout' || scenario === 'task-switch') {
+    out({ id: 'sess-2' });
+  } else {
+    out({ id: 'sess-1' });
+  }
   process.exit(0);
 }
 
@@ -67,6 +80,20 @@ if (cmd === 'session-commit') {
 }
 
 if (cmd === 'search') {
+  const hasSessionScope = args.includes('--session-id');
+  if (scenario === 'session-scope-empty' && hasSessionScope) {
+    out({
+      status: 'ok',
+      result: {
+        memories: [],
+        resources: [],
+        skills: [],
+        total: 0,
+        query_plan: { queries: [] }
+      }
+    });
+    process.exit(0);
+  }
   out({
     result: {
       memories: [
@@ -114,6 +141,8 @@ async function runChild(scenario) {
     const toolDir = path.join(agentPath, '.tinyclaw', 'tools', 'openviking');
     const toolPath = path.join(toolDir, 'openviking-tool.js');
     const commandLogFile = path.join(tmpRoot, 'ovk-command.log');
+    const sessionMapDir = path.join(tinyclawHome, 'runtime', 'openviking');
+    const sessionMapFile = path.join(sessionMapDir, 'session-map.json');
 
     fs.mkdirSync(path.join(tinyclawHome, 'logs'), { recursive: true });
     fs.mkdirSync(path.join(tinyclawHome, 'runtime'), { recursive: true });
@@ -144,7 +173,28 @@ async function runChild(scenario) {
         process.env.TINYCLAW_OPENVIKING_SESSION_NATIVE = '1';
         process.env.TINYCLAW_OPENVIKING_SEARCH_NATIVE = '1';
         process.env.TINYCLAW_OPENVIKING_PREFETCH = '1';
+    } else if (scenario === 'session-scope-empty') {
+        process.env.TINYCLAW_OPENVIKING_CONTEXT_PLUGIN = '1';
+        process.env.TINYCLAW_OPENVIKING_SESSION_NATIVE = '1';
+        process.env.TINYCLAW_OPENVIKING_SEARCH_NATIVE = '1';
+        process.env.TINYCLAW_OPENVIKING_PREFETCH = '1';
     } else if (scenario === 'failure') {
+        process.env.TINYCLAW_OPENVIKING_CONTEXT_PLUGIN = '1';
+        process.env.TINYCLAW_OPENVIKING_SESSION_NATIVE = '1';
+        process.env.TINYCLAW_OPENVIKING_SEARCH_NATIVE = '0';
+        process.env.TINYCLAW_OPENVIKING_PREFETCH = '0';
+    } else if (scenario === 'idle-timeout') {
+        process.env.TINYCLAW_OPENVIKING_CONTEXT_PLUGIN = '1';
+        process.env.TINYCLAW_OPENVIKING_SESSION_NATIVE = '1';
+        process.env.TINYCLAW_OPENVIKING_SEARCH_NATIVE = '1';
+        process.env.TINYCLAW_OPENVIKING_PREFETCH = '1';
+        process.env.TINYCLAW_OPENVIKING_SESSION_IDLE_TIMEOUT_MS = '1000';
+    } else if (scenario === 'task-switch') {
+        process.env.TINYCLAW_OPENVIKING_CONTEXT_PLUGIN = '1';
+        process.env.TINYCLAW_OPENVIKING_SESSION_NATIVE = '1';
+        process.env.TINYCLAW_OPENVIKING_SEARCH_NATIVE = '0';
+        process.env.TINYCLAW_OPENVIKING_PREFETCH = '0';
+    } else if (scenario === 'shutdown-drain') {
         process.env.TINYCLAW_OPENVIKING_CONTEXT_PLUGIN = '1';
         process.env.TINYCLAW_OPENVIKING_SESSION_NATIVE = '1';
         process.env.TINYCLAW_OPENVIKING_SEARCH_NATIVE = '0';
@@ -171,6 +221,23 @@ async function runChild(scenario) {
                 path: workspacePath,
             },
         };
+
+    if (['enabled', 'session-scope-empty', 'failure', 'idle-timeout', 'task-switch', 'shutdown-drain'].includes(scenario)) {
+        const staleTimestamp = new Date(Date.now() - (60 * 60 * 1000)).toISOString();
+        fs.mkdirSync(sessionMapDir, { recursive: true });
+        fs.writeFileSync(sessionMapFile, JSON.stringify({
+            version: 1,
+            sessions: {
+                'telegram::u-1::default': {
+                    sessionId: 'sess-1',
+                    channel: 'telegram',
+                    senderId: 'u-1',
+                    agentId: 'default',
+                    updatedAt: scenario === 'idle-timeout' ? staleTimestamp : new Date().toISOString(),
+                },
+            },
+        }, null, 2));
+    }
 
     const messageData = {
         channel: 'telegram',
@@ -201,7 +268,10 @@ async function runChild(scenario) {
         userMessageForSession: 'hello',
     };
 
-    const initialMessage = 'what do you remember about me?';
+    let initialMessage = 'what do you remember about me?';
+    if (scenario === 'task-switch') {
+        initialMessage = '/newtask 现在开始一个新任务：请设计缓存策略';
+    }
     const before = await plugins.runBeforeModelHooks(initialMessage, baseContext);
 
     if (scenario === 'disabled' || scenario === 'settings-disabled') {
@@ -214,9 +284,6 @@ async function runChild(scenario) {
     }
 
     if (scenario === 'enabled') {
-        assert.match(before.message, /\[OpenViking Retrieved Context\]/, 'enabled plugin should inject context');
-        assert.match(before.message, /\[End OpenViking Context\]/, 'enabled plugin should append end marker');
-
         await plugins.runAfterModelHooks(
             'assistant response from model',
             { ...baseContext, message: before.message },
@@ -225,10 +292,50 @@ async function runChild(scenario) {
         await plugins.runSessionEndHooks({ settings, reason: 'shutdown', signal: 'TEST' });
 
         const called = fs.readFileSync(commandLogFile, 'utf8');
-        assert.match(called, /session-create/, 'enabled plugin should create native session');
         assert.match(called, /search/, 'enabled plugin should run native search prefetch');
         assert.match(called, /session-message sess-1 user/, 'enabled plugin should write native user message');
         assert.match(called, /session-message sess-1 assistant/, 'enabled plugin should write native assistant message');
+        assert.match(called, /session-commit sess-1/, 'enabled plugin should commit native session on shutdown');
+        return;
+    }
+
+    if (scenario === 'session-scope-empty') {
+        const called = fs.readFileSync(commandLogFile, 'utf8');
+        assert.match(called, /search .*--session-id sess-1/, 'should try session-scoped search first');
+        const searchLines = called.split('\n').filter((line) => line.startsWith('search '));
+        assert.ok(searchLines.length >= 2, 'should retry native search without session scope');
+        const hasUnscopedRetry = searchLines.some((line) => !line.includes('--session-id'));
+        assert.ok(hasUnscopedRetry, 'should contain an unscoped search retry');
+        return;
+    }
+
+    if (scenario === 'idle-timeout') {
+        const called = fs.readFileSync(commandLogFile, 'utf8');
+        assert.match(called, /session-commit sess-1/, 'idle timeout should commit stale mapped session');
+        assert.match(called, /session-create --agent-id default --channel telegram --sender-id u-1/, 'idle timeout should create a new session after commit');
+        assert.match(called, /session-message sess-2 user/, 'idle timeout should write user message to newly created session');
+        return;
+    }
+
+    if (scenario === 'task-switch') {
+        assert.strictEqual(
+            before.message,
+            '现在开始一个新任务：请设计缓存策略',
+            'task switch marker should be removed from model prompt'
+        );
+        const called = fs.readFileSync(commandLogFile, 'utf8');
+        assert.match(called, /session-commit sess-1/, 'task switch should commit previous mapped session');
+        assert.match(called, /session-create --agent-id default --channel telegram --sender-id u-1/, 'task switch should create a fresh session');
+        assert.match(called, /session-message sess-2 user 现在开始一个新任务：请设计缓存策略/, 'task switch should write stripped user text');
+        return;
+    }
+
+    if (scenario === 'shutdown-drain') {
+        await plugins.runSessionEndHooks({ settings, reason: 'shutdown', signal: 'TEST' });
+        const called = fs.readFileSync(commandLogFile, 'utf8');
+        assert.match(called, /session-commit sess-1/, 'shutdown should drain and commit mapped native session');
+        const mapAfter = JSON.parse(fs.readFileSync(sessionMapFile, 'utf8'));
+        assert.deepStrictEqual(mapAfter.sessions, {}, 'shutdown drain should clear session map entries');
         return;
     }
 

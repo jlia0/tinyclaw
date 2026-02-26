@@ -72,6 +72,9 @@ export interface Settings {
         native_search?: boolean;
         prefetch?: boolean;
         autosync?: boolean;
+        commit_on_shutdown?: boolean;
+        session_idle_timeout_ms?: number;
+        session_switch_markers?: string[];
         prefetch_timeout_ms?: number;
         commit_timeout_ms?: number;
         prefetch_max_chars?: number;

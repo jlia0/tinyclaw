@@ -26,7 +26,10 @@ import {
 } from './prefetch';
 import {
     buildOpenVikingSessionMapKey,
+    getOpenVikingSessionEntry,
     getOpenVikingSessionId,
+    listOpenVikingSessionEntries,
+    touchOpenVikingSessionId,
     upsertOpenVikingSessionId,
     deleteOpenVikingSessionId,
     OpenVikingSessionMapKey,
@@ -58,6 +61,9 @@ type OpenVikingContextConfig = {
     prefetchEnabled: boolean;
     sessionNativeEnabled: boolean;
     searchNativeEnabled: boolean;
+    commitOnShutdown: boolean;
+    sessionIdleTimeoutMs: number;
+    sessionSwitchMarkers: string[];
     prefetchTimeoutMs: number;
     commitTimeoutMs: number;
     prefetchMaxChars: number;
@@ -107,6 +113,28 @@ function resolveNumberFlag(
     return fallback;
 }
 
+function resolveStringListFlag(
+    envName: string,
+    settingValue: string[] | undefined,
+    fallback: string[]
+): string[] {
+    const raw = process.env[envName];
+    if (typeof raw === 'string') {
+        const parsed = raw
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+        if (parsed.length > 0) return parsed;
+    }
+    if (Array.isArray(settingValue)) {
+        const parsed = settingValue
+            .map((item) => String(item || '').trim())
+            .filter(Boolean);
+        if (parsed.length > 0) return parsed;
+    }
+    return fallback;
+}
+
 function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextConfig {
     const ov = settings.openviking || {};
     const enabled = resolveBooleanFlag(
@@ -118,6 +146,12 @@ function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextCo
     const prefetchEnabled = resolveBooleanFlag('TINYCLAW_OPENVIKING_PREFETCH', ov.prefetch, true);
     const sessionNativeEnabled = resolveBooleanFlag('TINYCLAW_OPENVIKING_SESSION_NATIVE', ov.native_session, false);
     const searchNativeEnabled = resolveBooleanFlag('TINYCLAW_OPENVIKING_SEARCH_NATIVE', ov.native_search, false);
+    const commitOnShutdown = resolveBooleanFlag('TINYCLAW_OPENVIKING_COMMIT_ON_SHUTDOWN', ov.commit_on_shutdown, true);
+    const sessionSwitchMarkers = resolveStringListFlag(
+        'TINYCLAW_OPENVIKING_SESSION_SWITCH_MARKERS',
+        ov.session_switch_markers,
+        ['/newtask']
+    );
 
     const scoreFromEnv = process.env.TINYCLAW_OPENVIKING_SEARCH_SCORE_THRESHOLD;
     const scoreFromSettings = ov.search_score_threshold;
@@ -131,6 +165,9 @@ function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextCo
         prefetchEnabled,
         sessionNativeEnabled,
         searchNativeEnabled,
+        commitOnShutdown,
+        sessionIdleTimeoutMs: resolveNumberFlag('TINYCLAW_OPENVIKING_SESSION_IDLE_TIMEOUT_MS', ov.session_idle_timeout_ms, 0, 0),
+        sessionSwitchMarkers,
         prefetchTimeoutMs: resolveNumberFlag('TINYCLAW_OPENVIKING_PREFETCH_TIMEOUT_MS', ov.prefetch_timeout_ms, 5000, 1),
         commitTimeoutMs: resolveNumberFlag('TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS', ov.commit_timeout_ms, 15000, 1),
         prefetchMaxChars: resolveNumberFlag('TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS', ov.prefetch_max_chars, 2800, 200),
@@ -337,6 +374,32 @@ function resolveSessionMapKey(messageData: MessageData, agentId: string): OpenVi
     return buildOpenVikingSessionMapKey(messageData.channel, senderId, agentId);
 }
 
+function resolveWorkspacePathFromSettings(settings: Settings): string {
+    return settings.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
+}
+
+function matchSessionSwitchDirective(
+    message: string,
+    markers: string[]
+): { matched: boolean; marker?: string; strippedMessage: string } {
+    const trimmed = message.trim();
+    const normalized = trimmed.toLowerCase();
+    for (const marker of markers) {
+        const candidate = marker.trim();
+        if (!candidate) continue;
+        const lower = candidate.toLowerCase();
+        if (!normalized.startsWith(lower)) continue;
+        const nextChar = trimmed[candidate.length];
+        if (nextChar && !/[\s:：,，\-]/.test(nextChar)) continue;
+        const strippedMessage = trimmed
+            .slice(candidate.length)
+            .replace(/^[\s:：,，\-]+/, '')
+            .trim();
+        return { matched: true, marker: candidate, strippedMessage };
+    }
+    return { matched: false, strippedMessage: message };
+}
+
 async function runOpenVikingToolJson(
     config: OpenVikingContextConfig,
     workspacePath: string,
@@ -452,6 +515,30 @@ async function commitNativeOpenVikingSession(
     );
     const elapsedMs = Date.now() - startedAt;
     log('INFO', `OpenViking session commit success for @${agentId}: session_id=${sessionId} elapsed_ms=${elapsedMs}`);
+}
+
+async function commitMappedNativeSessionAndClear(
+    config: OpenVikingContextConfig,
+    workspacePath: string,
+    sessionKey: OpenVikingSessionMapKey,
+    reason: string,
+    logPrefix: string
+): Promise<boolean> {
+    const existingSessionId = getOpenVikingSessionId(sessionKey);
+    if (!existingSessionId) {
+        log('INFO', `${logPrefix} for @${sessionKey.agentId}: no native session mapping found reason=${reason}`);
+        return false;
+    }
+
+    try {
+        await commitNativeOpenVikingSession(config, workspacePath, sessionKey.agentId, existingSessionId);
+    } catch (error) {
+        log('WARN', `OpenViking session commit failed for @${sessionKey.agentId}: session_id=${existingSessionId} reason=${reason} error=${(error as Error).message}`);
+    } finally {
+        deleteOpenVikingSessionId(sessionKey);
+        log('INFO', `OpenViking session map cleared for @${sessionKey.agentId}: session_id=${existingSessionId} reason=${reason}`);
+    }
+    return true;
 }
 
 async function fetchLegacyOpenVikingPrefetchContext(
@@ -594,8 +681,8 @@ async function fetchOpenVikingPrefetchContext(
 
     const diagnostics: string[] = [];
     if (config.searchNativeEnabled) {
-        try {
-            const searchLimit = Math.max(config.prefetchMaxHits * 2, 12);
+        const searchLimit = Math.max(config.prefetchMaxHits * 2, 12);
+        const runNativeSearchAttempt = async (scope: 'session' | 'global', sid?: string): Promise<ReturnType<typeof parseOpenVikingSearchHits>> => {
             const args = [
                 'search',
                 query,
@@ -604,23 +691,49 @@ async function fetchOpenVikingPrefetchContext(
             if (config.searchScoreThreshold !== undefined) {
                 args.push('--score-threshold', config.searchScoreThreshold);
             }
-            if (sessionId) {
-                args.push('--session-id', sessionId);
+            if (scope === 'session' && sid) {
+                args.push('--session-id', sid);
             }
             const searchResponse = await runOpenVikingToolJson(config, workspacePath, agentId, args, config.prefetchTimeoutMs);
-            const searchHits = parseOpenVikingSearchHits(searchResponse);
-            if (searchHits.length > 0) {
-                const distribution = summarizeOpenVikingSearchHitDistribution(searchHits.slice(0, config.prefetchMaxHits));
+            return parseOpenVikingSearchHits(searchResponse);
+        };
+
+        try {
+            if (sessionId) {
+                try {
+                    const sessionHits = await runNativeSearchAttempt('session', sessionId);
+                    if (sessionHits.length > 0) {
+                        const distribution = summarizeOpenVikingSearchHitDistribution(sessionHits.slice(0, config.prefetchMaxHits));
+                        return {
+                            block: buildOpenVikingSearchPrefetchBlock(sessionHits, config.prefetchMaxChars, config.prefetchMaxHits),
+                            source: 'search_native',
+                            diagnostics: ['session_id_used=1', `native_search_hits=${sessionHits.length}`],
+                            distribution,
+                        };
+                    }
+                    diagnostics.push('native_search_empty_session');
+                } catch (error) {
+                    diagnostics.push(`native_search_error_session=${(error as Error).message}`);
+                }
+
+                // Some OpenViking query planners can return an empty plan when scoped by session.
+                // Retry globally before falling back to legacy markdown retrieval.
+                diagnostics.push('native_search_retry_without_session');
+            }
+
+            const globalHits = await runNativeSearchAttempt('global');
+            if (globalHits.length > 0) {
+                const distribution = summarizeOpenVikingSearchHitDistribution(globalHits.slice(0, config.prefetchMaxHits));
                 return {
-                    block: buildOpenVikingSearchPrefetchBlock(searchHits, config.prefetchMaxChars, config.prefetchMaxHits),
+                    block: buildOpenVikingSearchPrefetchBlock(globalHits, config.prefetchMaxChars, config.prefetchMaxHits),
                     source: 'search_native',
-                    diagnostics: [`native_search_hits=${searchHits.length}`, sessionId ? 'session_id_used=1' : 'session_id_used=0'],
+                    diagnostics: ['session_id_used=0', `native_search_hits=${globalHits.length}`, ...diagnostics],
                     distribution,
                 };
             }
-            diagnostics.push('native_search_empty');
+            diagnostics.push('native_search_empty_global');
         } catch (error) {
-            diagnostics.push(`native_search_error=${(error as Error).message}`);
+            diagnostics.push(`native_search_error_global=${(error as Error).message}`);
         }
     } else {
         diagnostics.push('native_search_disabled');
@@ -657,19 +770,13 @@ async function onSessionReset(ctx: SessionResetContext): Promise<void> {
 
     if (!ctx.isInternal && config.sessionNativeEnabled) {
         const sessionMapKey = resolveSessionMapKey(ctx.messageData, ctx.agentId);
-        const existingSessionId = getOpenVikingSessionId(sessionMapKey);
-        if (existingSessionId) {
-            try {
-                await commitNativeOpenVikingSession(config, ctx.workspacePath, ctx.agentId, existingSessionId);
-            } catch (error) {
-                log('WARN', `OpenViking session commit failed for @${ctx.agentId}: session_id=${existingSessionId} error=${(error as Error).message}`);
-            } finally {
-                deleteOpenVikingSessionId(sessionMapKey);
-                log('INFO', `OpenViking session map cleared for @${ctx.agentId}: session_id=${existingSessionId}`);
-            }
-        } else {
-            log('INFO', `OpenViking reset consumed for @${ctx.agentId}: no native session mapping found`);
-        }
+        await commitMappedNativeSessionAndClear(
+            config,
+            ctx.workspacePath,
+            sessionMapKey,
+            'session_reset',
+            'OpenViking reset consumed'
+        );
     }
 
     if (config.autosyncFallbackEnabled) {
@@ -685,11 +792,53 @@ async function beforeModel(ctx: BeforeModelContext): Promise<BeforeModelHookResu
     if (!config.enabled) return;
 
     let message = ctx.message;
+    let sessionUserMessage = ctx.userMessageForSession;
     const sessionMapKey = !ctx.isInternal ? resolveSessionMapKey(ctx.messageData, ctx.agentId) : null;
     let openVikingSessionId: string | null = null;
     let nativeSessionWriteFailed = false;
 
     if (!ctx.isInternal && config.sessionNativeEnabled && sessionMapKey) {
+        const switchDirective = matchSessionSwitchDirective(message, config.sessionSwitchMarkers);
+        if (switchDirective.matched) {
+            await commitMappedNativeSessionAndClear(
+                config,
+                ctx.workspacePath,
+                sessionMapKey,
+                `task_switch:${switchDirective.marker || 'marker'}`,
+                'OpenViking session switch consumed'
+            );
+            if (switchDirective.strippedMessage) {
+                message = switchDirective.strippedMessage;
+                sessionUserMessage = switchDirective.strippedMessage;
+                log('INFO', `OpenViking session switch marker consumed for @${ctx.agentId}: marker=${switchDirective.marker}`);
+            } else {
+                log('INFO', `OpenViking session switch marker detected for @${ctx.agentId}: marker=${switchDirective.marker} message_retained=1`);
+            }
+        }
+
+        if (config.sessionIdleTimeoutMs > 0) {
+            const existingEntry = getOpenVikingSessionEntry(sessionMapKey);
+            if (existingEntry && existingEntry.updatedAt) {
+                const lastUpdatedAt = Date.parse(existingEntry.updatedAt);
+                if (Number.isFinite(lastUpdatedAt)) {
+                    const idleMs = Date.now() - lastUpdatedAt;
+                    if (idleMs >= config.sessionIdleTimeoutMs) {
+                        log(
+                            'INFO',
+                            `OpenViking idle timeout reached for @${ctx.agentId}: session_id=${existingEntry.sessionId} idle_ms=${idleMs} threshold_ms=${config.sessionIdleTimeoutMs}`
+                        );
+                        await commitMappedNativeSessionAndClear(
+                            config,
+                            ctx.workspacePath,
+                            sessionMapKey,
+                            `idle_timeout:${config.sessionIdleTimeoutMs}ms`,
+                            'OpenViking idle timeout consumed'
+                        );
+                    }
+                }
+            }
+        }
+
         try {
             const ensured = await ensureOpenVikingNativeSession(config, ctx.workspacePath, ctx.agentId, sessionMapKey);
             openVikingSessionId = ensured.sessionId;
@@ -734,8 +883,11 @@ async function beforeModel(ctx: BeforeModelContext): Promise<BeforeModelHookResu
                     ctx.agentId,
                     openVikingSessionId,
                     'user',
-                    ctx.userMessageForSession
+                    sessionUserMessage
                 );
+                if (sessionMapKey) {
+                    touchOpenVikingSessionId(sessionMapKey);
+                }
             } catch (error) {
                 nativeSessionWriteFailed = true;
                 log('WARN', `OpenViking session write failed for @${ctx.agentId}: session_id=${openVikingSessionId} role=user error=${(error as Error).message}`);
@@ -761,6 +913,7 @@ async function afterModel(ctx: Parameters<NonNullable<Hooks['afterModel']>>[0]):
 
     const pluginState = asPluginState(ctx.state);
     const openVikingSessionId = pluginState.openVikingSessionId;
+    const sessionMapKey = !ctx.isInternal ? resolveSessionMapKey(ctx.messageData, ctx.agentId) : null;
     let nativeSessionWriteFailed = pluginState.nativeSessionWriteFailed;
 
     if (!ctx.isInternal && config.sessionNativeEnabled && openVikingSessionId) {
@@ -773,6 +926,9 @@ async function afterModel(ctx: Parameters<NonNullable<Hooks['afterModel']>>[0]):
                 'assistant',
                 ctx.response
             );
+            if (sessionMapKey) {
+                touchOpenVikingSessionId(sessionMapKey);
+            }
         } catch (error) {
             nativeSessionWriteFailed = true;
             log('WARN', `OpenViking session write failed for @${ctx.agentId}: session_id=${openVikingSessionId} role=assistant error=${(error as Error).message}`);
@@ -820,7 +976,8 @@ function onStartup(ctx: StartupContext): void {
         'INFO',
         `[plugin:openviking-context] enabled prefetch=${config.prefetchEnabled ? 1 : 0} ` +
         `session_native=${config.sessionNativeEnabled ? 1 : 0} ` +
-        `search_native=${config.searchNativeEnabled ? 1 : 0} autosync=${config.autosyncFallbackEnabled ? 1 : 0}`
+        `search_native=${config.searchNativeEnabled ? 1 : 0} autosync=${config.autosyncFallbackEnabled ? 1 : 0} ` +
+        `idle_timeout_ms=${config.sessionIdleTimeoutMs} commit_on_shutdown=${config.commitOnShutdown ? 1 : 0}`
     );
 }
 
@@ -845,11 +1002,39 @@ function onHealth(ctx: HealthContext): HealthResult {
             sessionNativeEnabled: config.sessionNativeEnabled,
             searchNativeEnabled: config.searchNativeEnabled,
             autosyncFallbackEnabled: config.autosyncFallbackEnabled,
+            sessionIdleTimeoutMs: config.sessionIdleTimeoutMs,
+            commitOnShutdown: config.commitOnShutdown,
+            sessionSwitchMarkers: config.sessionSwitchMarkers,
         },
     };
 }
 
-async function onSessionEnd(_ctx: SessionEndContext): Promise<void> {
+async function onSessionEnd(ctx: SessionEndContext): Promise<void> {
+    const config = resolveOpenVikingContextConfig(ctx.settings);
+    if (
+        config.enabled
+        && config.sessionNativeEnabled
+        && config.commitOnShutdown
+        && ctx.reason === 'shutdown'
+    ) {
+        const entries = listOpenVikingSessionEntries();
+        if (entries.length > 0) {
+            const workspacePath = resolveWorkspacePathFromSettings(ctx.settings);
+            let committed = 0;
+            for (const entry of entries) {
+                const didCommit = await commitMappedNativeSessionAndClear(
+                    config,
+                    workspacePath,
+                    entry.key,
+                    'process_shutdown',
+                    'OpenViking shutdown drain'
+                );
+                if (didCommit) committed += 1;
+            }
+            log('INFO', `OpenViking shutdown session drain complete: committed=${committed} scanned=${entries.length}`);
+        }
+    }
+
     if (openVikingSyncChains.size === 0) return;
     await Promise.allSettled(Array.from(openVikingSyncChains.values()));
 }

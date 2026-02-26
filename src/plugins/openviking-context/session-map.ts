@@ -16,6 +16,12 @@ type OpenVikingSessionRecord = {
     updatedAt: string;
 };
 
+export type OpenVikingSessionMapEntry = {
+    key: OpenVikingSessionMapKey;
+    sessionId: string;
+    updatedAt: string;
+};
+
 type OpenVikingSessionMap = {
     version: 1;
     sessions: Record<string, OpenVikingSessionRecord>;
@@ -72,6 +78,21 @@ export function getOpenVikingSessionId(key: OpenVikingSessionMapKey): string | n
     return record.sessionId;
 }
 
+export function getOpenVikingSessionEntry(key: OpenVikingSessionMapKey): OpenVikingSessionMapEntry | null {
+    const map = loadMap();
+    const record = map.sessions[toCompositeKey(key)];
+    if (!record || !record.sessionId) return null;
+    return {
+        key: {
+            channel: record.channel,
+            senderId: record.senderId,
+            agentId: record.agentId,
+        },
+        sessionId: record.sessionId,
+        updatedAt: record.updatedAt,
+    };
+}
+
 export function upsertOpenVikingSessionId(key: OpenVikingSessionMapKey, sessionId: string): void {
     const map = loadMap();
     map.sessions[toCompositeKey(key)] = {
@@ -84,12 +105,42 @@ export function upsertOpenVikingSessionId(key: OpenVikingSessionMapKey, sessionI
     saveMap(map);
 }
 
+export function touchOpenVikingSessionId(key: OpenVikingSessionMapKey): void {
+    const map = loadMap();
+    const composite = toCompositeKey(key);
+    const existing = map.sessions[composite];
+    if (!existing || !existing.sessionId) return;
+    map.sessions[composite] = {
+        ...existing,
+        updatedAt: new Date().toISOString(),
+    };
+    saveMap(map);
+}
+
 export function deleteOpenVikingSessionId(key: OpenVikingSessionMapKey): void {
     const map = loadMap();
     const composite = toCompositeKey(key);
     if (!map.sessions[composite]) return;
     delete map.sessions[composite];
     saveMap(map);
+}
+
+export function listOpenVikingSessionEntries(): OpenVikingSessionMapEntry[] {
+    const map = loadMap();
+    const entries: OpenVikingSessionMapEntry[] = [];
+    for (const record of Object.values(map.sessions)) {
+        if (!record?.sessionId) continue;
+        entries.push({
+            key: {
+                channel: record.channel,
+                senderId: record.senderId,
+                agentId: record.agentId,
+            },
+            sessionId: record.sessionId,
+            updatedAt: record.updatedAt,
+        });
+    }
+    return entries;
 }
 
 export function getOpenVikingSessionMapFilePath(): string {
