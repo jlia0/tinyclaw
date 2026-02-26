@@ -163,10 +163,11 @@ export function parseResponseHandoff(
         return { targetAgentId: candidateId, message: trimmed };
     }
 
-    // Match by agent name (case-insensitive)
+    // Match by agent name (case-insensitive) — rewrite @name to @id
     for (const [id, config] of Object.entries(agents)) {
         if (config.name.toLowerCase() === candidateId && id !== currentAgentId) {
-            return { targetAgentId: id, message: trimmed };
+            const rewritten = `@${id} ${message}`;
+            return { targetAgentId: id, message: rewritten };
         }
     }
 

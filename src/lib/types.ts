@@ -62,6 +62,7 @@ export interface Settings {
     monitoring?: {
         heartbeat_interval?: number;
     };
+    sign_responses?: boolean;
 }
 
 export interface MessageData {

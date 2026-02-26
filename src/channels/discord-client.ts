@@ -5,7 +5,7 @@
  * Does NOT call Claude directly - that's handled by queue-processor
  */
 
-import { Client, Events, GatewayIntentBits, Partials, Message, DMChannel, TextChannel, AttachmentBuilder } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Partials, Message, DMChannel, TextChannel, AttachmentBuilder, REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
@@ -104,49 +104,85 @@ function log(level: string, message: string): void {
     fs.appendFileSync(LOG_FILE, logMessage);
 }
 
-// Load teams from settings for /team command
-function getTeamListText(): string {
+// Cached settings reader — single parse shared by all consumers
+let _cachedSettings: any = null;
+let _settingsMtime = 0;
+
+function getCachedSettings(): any {
     try {
-        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings = JSON.parse(settingsData);
-        const teams = settings.teams;
-        if (!teams || Object.keys(teams).length === 0) {
-            return 'No teams configured.\n\nCreate a team with `tinyclaw team add`.';
+        const mtime = fs.statSync(SETTINGS_FILE).mtimeMs;
+        if (!_cachedSettings || mtime !== _settingsMtime) {
+            _cachedSettings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+            _settingsMtime = mtime;
         }
-        let text = '**Available Teams:**\n';
-        for (const [id, team] of Object.entries(teams) as [string, any][]) {
-            text += `\n**@${id}** - ${team.name}`;
-            text += `\n  Agents: ${team.agents.join(', ')}`;
-            text += `\n  Leader: @${team.leader_agent}`;
-        }
-        text += '\n\nUsage: Start your message with `@team_id` to route to a team.';
-        return text;
+        return _cachedSettings;
     } catch {
-        return 'Could not load team configuration.';
+        return null;
     }
 }
 
-// Load agents from settings for /agent command
+function getTeamListText(): string {
+    const settings = getCachedSettings();
+    if (!settings) return 'Could not load team configuration.';
+    const teams = settings.teams;
+    if (!teams || Object.keys(teams).length === 0) {
+        return 'No teams configured.\n\nCreate a team with `tinyclaw team add`.';
+    }
+    let text = '**Available Teams:**\n';
+    for (const [id, team] of Object.entries(teams) as [string, any][]) {
+        text += `\n**@${id}** - ${team.name}`;
+        text += `\n  Agents: ${team.agents.join(', ')}`;
+        text += `\n  Leader: @${team.leader_agent}`;
+    }
+    text += '\n\nUsage: Start your message with `@team_id` to route to a team.';
+    return text;
+}
+
 function getAgentListText(): string {
-    try {
-        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings = JSON.parse(settingsData);
-        const agents = settings.agents;
-        if (!agents || Object.keys(agents).length === 0) {
-            return 'No agents configured. Using default single-agent mode.\n\nConfigure agents in `.tinyclaw/settings.json` or run `tinyclaw agent add`.';
+    const settings = getCachedSettings();
+    if (!settings) return 'Could not load agent configuration.';
+    const agents = settings.agents;
+    if (!agents || Object.keys(agents).length === 0) {
+        return 'No agents configured. Using default single-agent mode.\n\nConfigure agents in `.tinyclaw/settings.json` or run `tinyclaw agent add`.';
+    }
+    let text = '**Available Agents:**\n';
+    for (const [id, agent] of Object.entries(agents) as [string, any][]) {
+        text += `\n**@${id}** - ${agent.name}`;
+        text += `\n  Provider: ${agent.provider}/${agent.model}`;
+        text += `\n  Directory: ${agent.working_directory}`;
+        if (agent.system_prompt) text += `\n  Has custom system prompt`;
+        if (agent.prompt_file) text += `\n  Prompt file: ${agent.prompt_file}`;
+    }
+    text += '\n\nUsage: Start your message with `@agent_id` to route to a specific agent.';
+    return text;
+}
+
+// Shared reset logic
+function resetAgents(agentArgs: string[]): string[] {
+    const settings = getCachedSettings();
+    if (!settings) return ['Could not load settings.'];
+    const agents = settings.agents || {};
+    const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
+    const results: string[] = [];
+    for (const agentId of agentArgs) {
+        if (!agents[agentId]) {
+            results.push(`Agent '${agentId}' not found.`);
+            continue;
         }
-        let text = '**Available Agents:**\n';
-        for (const [id, agent] of Object.entries(agents) as [string, any][]) {
-            text += `\n**@${id}** - ${agent.name}`;
-            text += `\n  Provider: ${agent.provider}/${agent.model}`;
-            text += `\n  Directory: ${agent.working_directory}`;
-            if (agent.system_prompt) text += `\n  Has custom system prompt`;
-            if (agent.prompt_file) text += `\n  Prompt file: ${agent.prompt_file}`;
-        }
-        text += '\n\nUsage: Start your message with `@agent_id` to route to a specific agent.';
-        return text;
-    } catch {
-        return 'Could not load agent configuration.';
+        const flagDir = path.join(workspacePath, agentId);
+        if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
+        fs.writeFileSync(path.join(flagDir, 'reset_flag'), 'reset');
+        results.push(`Reset @${agentId} (${agents[agentId].name}).`);
+    }
+    return results;
+}
+
+// Reply with message splitting for slash commands
+async function interactionReplySplit(interaction: ChatInputCommandInteraction, text: string): Promise<void> {
+    const chunks = splitMessage(text);
+    await interaction.reply(chunks[0]!);
+    for (let i = 1; i < chunks.length; i++) {
+        await interaction.followUp(chunks[i]!);
     }
 }
 
@@ -199,13 +235,8 @@ type GuildChannelConfig = Record<string, { default_agent?: string }>;
 let guildChannels: GuildChannelConfig = {};
 
 function loadGuildChannels(): void {
-    try {
-        const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-        const settings = JSON.parse(settingsData);
-        guildChannels = settings?.channels?.discord?.guild_channels || {};
-    } catch {
-        guildChannels = {};
-    }
+    const settings = getCachedSettings();
+    guildChannels = settings?.channels?.discord?.guild_channels || {};
 }
 
 // Load on startup
@@ -213,6 +244,26 @@ loadGuildChannels();
 
 // Reload every 30 seconds to pick up config changes
 setInterval(loadGuildChannels, 30_000);
+
+// Slash command definitions
+const slashCommands = [
+    new SlashCommandBuilder()
+        .setName('agent')
+        .setDescription('List all configured agents'),
+    new SlashCommandBuilder()
+        .setName('team')
+        .setDescription('List all configured teams'),
+    new SlashCommandBuilder()
+        .setName('reset')
+        .setDescription('Reset one or more agents')
+        .addStringOption(option =>
+            option
+                .setName('agent_ids')
+                .setDescription('Space-separated agent IDs to reset (e.g. "coder writer")')
+                .setRequired(true)
+                .setAutocomplete(true)
+        ),
+];
 
 // Initialize Discord client
 const client = new Client({
@@ -228,10 +279,104 @@ const client = new Client({
     ],
 });
 
+// Register slash commands for a single guild
+const commandData = slashCommands.map(cmd => cmd.toJSON());
+
+async function registerGuildCommands(appId: string, guildId: string, guildName: string): Promise<void> {
+    const rest = new REST({ version: '10' }).setToken(DISCORD_BOT_TOKEN!);
+    try {
+        await rest.put(Routes.applicationGuildCommands(appId, guildId), { body: commandData });
+        log('INFO', `Registered ${commandData.length} slash commands for guild "${guildName}" (${guildId})`);
+    } catch (err) {
+        log('ERROR', `Failed to register slash commands for guild "${guildName}" (${guildId}): ${(err as Error).message}`);
+    }
+}
+
 // Client ready
-client.on(Events.ClientReady, (readyClient) => {
+client.on(Events.ClientReady, async (readyClient) => {
     log('INFO', `Discord bot connected as ${readyClient.user.tag}`);
     log('INFO', 'Listening for DMs...');
+
+    for (const [guildId, guild] of readyClient.guilds.cache) {
+        await registerGuildCommands(readyClient.user.id, guildId, guild.name);
+    }
+});
+
+// Register slash commands when bot joins a new guild
+client.on(Events.GuildCreate, async (guild) => {
+    if (!client.user) return;
+    log('INFO', `Joined new guild "${guild.name}" (${guild.id})`);
+    await registerGuildCommands(client.user.id, guild.id, guild.name);
+});
+
+// Slash command interactions
+client.on(Events.InteractionCreate, async (interaction) => {
+    try {
+        // Handle autocomplete for /reset
+        if (interaction.isAutocomplete()) {
+            if (interaction.commandName !== 'reset') return;
+
+            const focusedValue = interaction.options.getFocused();
+            try {
+                const settings = getCachedSettings();
+                const agentIds = Object.keys(settings?.agents || {});
+
+                // Support space-separated multi-agent input: autocomplete the last token
+                const tokens = focusedValue.split(/\s+/);
+                const prefix = tokens.length > 1 ? tokens.slice(0, -1).join(' ') + ' ' : '';
+                const lastToken = (tokens[tokens.length - 1] || '').toLowerCase();
+                const alreadySelected = new Set(tokens.slice(0, -1).map((t: string) => t.toLowerCase()));
+
+                const choices = agentIds
+                    .filter(id => !alreadySelected.has(id) && id.toLowerCase().startsWith(lastToken))
+                    .slice(0, 25)
+                    .map(id => ({ name: prefix + id, value: prefix + id }));
+
+                await interaction.respond(choices);
+            } catch {
+                await interaction.respond([]);
+            }
+            return;
+        }
+
+        // Handle slash commands
+        if (!interaction.isChatInputCommand()) return;
+
+        const { commandName } = interaction;
+
+        if (commandName === 'agent') {
+            log('INFO', 'Slash command /agent received');
+            await interactionReplySplit(interaction, getAgentListText());
+            return;
+        }
+
+        if (commandName === 'team') {
+            log('INFO', 'Slash command /team received');
+            await interactionReplySplit(interaction, getTeamListText());
+            return;
+        }
+
+        if (commandName === 'reset') {
+            log('INFO', 'Slash command /reset received');
+            const agentIdsRaw = interaction.options.getString('agent_ids', true);
+            const agentArgs = agentIdsRaw.split(/\s+/).map(a => a.replace(/^@/, '').toLowerCase()).filter(Boolean);
+
+            if (agentArgs.length === 0) {
+                await interaction.reply({ content: 'Please specify at least one agent ID to reset.', ephemeral: true });
+                return;
+            }
+
+            await interactionReplySplit(interaction, resetAgents(agentArgs).join('\n'));
+            return;
+        }
+    } catch (error) {
+        log('ERROR', `Interaction handling error: ${(error as Error).message}`);
+        try {
+            if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+                await interaction.reply({ content: 'An error occurred processing this command.', ephemeral: true });
+            }
+        } catch { /* ignore reply failure */ }
+    }
 });
 
 // Message received - Write to queue
@@ -301,54 +446,6 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 await message.reply(pairingMessage(pairing.code));
             } else {
                 log('INFO', `Blocked pending Discord sender ${sender} (${message.author.id}) without re-sending pairing message`);
-            }
-            return;
-        }
-
-        // Check for agent list command
-        if (messageText.trim().match(/^[!/]agent$/i)) {
-            log('INFO', 'Agent list command received');
-            const agentList = getAgentListText();
-            await message.reply(agentList);
-            return;
-        }
-
-        // Check for team list command
-        if (messageText.trim().match(/^[!/]team$/i)) {
-            log('INFO', 'Team list command received');
-            const teamList = getTeamListText();
-            await message.reply(teamList);
-            return;
-        }
-
-        // Check for reset command: /reset @agent_id [@agent_id2 ...]
-        const resetMatch = messageText.trim().match(/^[!/]reset\s+(.+)$/i);
-        if (messageText.trim().match(/^[!/]reset$/i)) {
-            await message.reply('Usage: `/reset @agent_id [@agent_id2 ...]`\nSpecify which agent(s) to reset.');
-            return;
-        }
-        if (resetMatch) {
-            log('INFO', 'Per-agent reset command received');
-            const agentArgs = resetMatch[1].split(/\s+/).map(a => a.replace(/^@/, '').toLowerCase());
-            try {
-                const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
-                const settings = JSON.parse(settingsData);
-                const agents = settings.agents || {};
-                const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
-                const resetResults: string[] = [];
-                for (const agentId of agentArgs) {
-                    if (!agents[agentId]) {
-                        resetResults.push(`Agent '${agentId}' not found.`);
-                        continue;
-                    }
-                    const flagDir = path.join(workspacePath, agentId);
-                    if (!fs.existsSync(flagDir)) fs.mkdirSync(flagDir, { recursive: true });
-                    fs.writeFileSync(path.join(flagDir, 'reset_flag'), 'reset');
-                    resetResults.push(`Reset @${agentId} (${agents[agentId].name}).`);
-                }
-                await message.reply(resetResults.join('\n'));
-            } catch {
-                await message.reply('Could not process reset command. Check settings.');
             }
             return;
         }
@@ -431,10 +528,11 @@ async function checkOutgoingQueue(): Promise<void> {
 
         for (const resp of responses) {
             try {
-                const responseText = resp.message;
-                const messageId = resp.messageId;
-                const sender = resp.sender;
-                const senderId = resp.senderId;
+                const responseText: string = resp.message;
+                const messageId: string = resp.messageId;
+                const sender: string = resp.sender;
+                const senderId: string | undefined = resp.senderId;
+                const agentId: string | undefined = resp.agent;
                 const files: string[] = resp.files || [];
 
                 // Find pending message, or fall back to senderId for proactive messages
@@ -478,9 +576,17 @@ async function checkOutgoingQueue(): Promise<void> {
                         }
                     }
 
+                    // Append agent signature to response
+                    let signedText = responseText;
+                    if (agentId) {
+                        const settings = getCachedSettings();
+                        const agentName = settings?.agents?.[agentId]?.name;
+                        if (agentName) signedText = `${responseText}\n\n— ${agentName}`;
+                    }
+
                     // Split message if needed (Discord 2000 char limit)
-                    if (responseText) {
-                        const chunks = splitMessage(responseText);
+                    if (signedText) {
+                        const chunks = splitMessage(signedText);
 
                         if (chunks.length > 0) {
                             if (pending) {

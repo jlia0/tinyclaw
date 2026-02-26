@@ -208,13 +208,12 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
                 log('WARN', `Agent handoff depth limit reached (${MAX_HANDOFF_DEPTH}): @${agentId} → @${handoff.targetAgentId} — skipping re-enqueue`);
             }
 
-            // Always deliver the response to the user (with system signature)
-            const signedResponse = `${responseMessage} [signed: @${agent.name}]`;
+            // Always deliver the response to the user
             enqueueResponse({
                 channel,
                 sender,
                 senderId: dbMsg.sender_id ?? undefined,
-                message: signedResponse,
+                message: responseMessage,
                 originalMessage: rawMessage,
                 messageId,
                 agent: agentId,
@@ -337,11 +336,14 @@ async function processQueue(): Promise<void> {
             // Update the chain
             agentProcessingChains.set(agentId, newChain);
 
-            // Clean up completed chains to avoid memory leaks
+            // Clean up completed chains and re-check for pending messages
             newChain.finally(() => {
                 if (agentProcessingChains.get(agentId) === newChain) {
                     agentProcessingChains.delete(agentId);
                 }
+                // Re-trigger queue processing in case more messages arrived
+                // while this agent was busy
+                processQueue();
             });
         }
     } catch (error) {
@@ -390,6 +392,12 @@ emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), te
 
 // Event-driven: all messages come through the API server (same process)
 queueEvents.on('message:enqueued', () => processQueue());
+
+// Process any pending messages left over from before restart
+processQueue();
+
+// Safety-net: periodically check for stranded pending messages
+setInterval(() => processQueue(), 30 * 1000); // every 30s
 
 // Periodic maintenance
 setInterval(() => {
