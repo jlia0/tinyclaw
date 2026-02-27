@@ -9,6 +9,12 @@ import { ensureAgentDirectory, updateAgentTeammates } from './agent';
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
+export interface RunCommandOptions {
+    cwd?: string;
+    timeoutMs?: number;
+    onOutput?: (chunk: string) => void; // called on each stdout chunk
+}
+
 // Ensure ~/.local/bin and ~/bin are in PATH for spawned processes
 const HOME = os.homedir();
 const extraPaths = [
@@ -18,10 +24,16 @@ const extraPaths = [
 ].filter(p => fs.existsSync(p));
 const spawnPath = [...extraPaths, process.env.PATH].join(':');
 
-export async function runCommand(command: string, args: string[], cwd?: string, timeoutMs?: number): Promise<string> {
+export async function runCommand(command: string, args: string[], cwd?: string, timeoutMs?: number): Promise<string>;
+export async function runCommand(command: string, args: string[], opts?: RunCommandOptions): Promise<string>;
+export async function runCommand(command: string, args: string[], cwdOrOpts?: string | RunCommandOptions, timeoutMs?: number): Promise<string> {
+    const opts: RunCommandOptions = typeof cwdOrOpts === 'string'
+        ? { cwd: cwdOrOpts, timeoutMs }
+        : (cwdOrOpts || {});
+
     return new Promise((resolve, reject) => {
         const child = spawn(command, args, {
-            cwd: cwd || SCRIPT_DIR,
+            cwd: opts.cwd || SCRIPT_DIR,
             stdio: ['ignore', 'pipe', 'pipe'],
             env: { ...process.env, PATH: spawnPath },
         });
@@ -30,6 +42,8 @@ export async function runCommand(command: string, args: string[], cwd?: string, 
         let stderr = '';
         let killed = false;
 
+        const effectiveTimeout = opts.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
+
         const timeout = setTimeout(() => {
             killed = true;
             child.kill('SIGTERM');
@@ -37,13 +51,14 @@ export async function runCommand(command: string, args: string[], cwd?: string, 
             setTimeout(() => {
                 if (!child.killed) child.kill('SIGKILL');
             }, 5000);
-        }, timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS);
+        }, effectiveTimeout);
 
         child.stdout.setEncoding('utf8');
         child.stderr.setEncoding('utf8');
 
         child.stdout.on('data', (chunk: string) => {
             stdout += chunk;
+            if (opts.onOutput) opts.onOutput(chunk);
         });
 
         child.stderr.on('data', (chunk: string) => {
@@ -59,7 +74,7 @@ export async function runCommand(command: string, args: string[], cwd?: string, 
             clearTimeout(timeout);
 
             if (killed) {
-                reject(new Error(`Command timed out after ${(timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS) / 1000}s and was killed`));
+                reject(new Error(`Command timed out after ${effectiveTimeout / 1000}s and was killed`));
                 return;
             }
 
@@ -78,6 +93,10 @@ export async function runCommand(command: string, args: string[], cwd?: string, 
  * Invoke a single agent with a message. Contains all Claude/Codex invocation logic.
  * Returns the raw response text.
  */
+export interface InvokeOptions {
+    onOutput?: (chunk: string) => void;
+}
+
 export async function invokeAgent(
     agent: AgentConfig,
     agentId: string,
@@ -85,7 +104,8 @@ export async function invokeAgent(
     workspacePath: string,
     shouldReset: boolean,
     agents: Record<string, AgentConfig> = {},
-    teams: Record<string, TeamConfig> = {}
+    teams: Record<string, TeamConfig> = {},
+    options: InvokeOptions = {}
 ): Promise<string> {
     // Ensure agent directory exists with config files
     const agentDir = path.join(workspacePath, agentId);
@@ -126,7 +146,7 @@ export async function invokeAgent(
         }
         codexArgs.push('--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json', message);
 
-        const codexOutput = await runCommand('codex', codexArgs, workingDir);
+        const codexOutput = await runCommand('codex', codexArgs, { cwd: workingDir, timeoutMs: (agent.timeout || 300) * 1000, onOutput: options.onOutput });
 
         // Parse JSONL output and extract final agent_message
         let response = '';
@@ -166,7 +186,7 @@ export async function invokeAgent(
         }
         opencodeArgs.push(message);
 
-        const opencodeOutput = await runCommand('opencode', opencodeArgs, workingDir);
+        const opencodeOutput = await runCommand('opencode', opencodeArgs, { cwd: workingDir, timeoutMs: (agent.timeout || 300) * 1000, onOutput: options.onOutput });
 
         // Parse JSONL output and collect all text parts
         let response = '';
@@ -203,6 +223,6 @@ export async function invokeAgent(
         }
         claudeArgs.push('-p', message);
 
-        return await runCommand('claude', claudeArgs, workingDir);
+        return await runCommand('claude', claudeArgs, { cwd: workingDir, timeoutMs: (agent.timeout || 300) * 1000, onOutput: options.onOutput });
     }
 }

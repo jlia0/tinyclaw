@@ -5,6 +5,7 @@ export interface AgentConfig {
     working_directory: string;
     system_prompt?: string;
     prompt_file?: string;
+    timeout?: number;         // max execution time in seconds (default: 300)
 }
 
 export interface TeamConfig {

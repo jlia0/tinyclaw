@@ -23,7 +23,7 @@ import {
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
-import { invokeAgent } from './lib/invoke';
+import { invokeAgent, InvokeOptions } from './lib/invoke';
 import { startApiServer } from './server';
 import {
     initQueueDb, claimNextMessage, completeMessage as dbCompleteMessage,
@@ -155,11 +155,52 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             }
         }
 
-        // Invoke agent
+        // Invoke agent with progress streaming for long-running tasks
         emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: messageData.fromAgent || null });
         let response: string;
         try {
-            response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+            const agentTimeout = agent.timeout || 300;
+            const PROGRESS_INTERVAL_MS = 60 * 1000; // send update every 60s
+            let lastProgressTime = Date.now();
+            let lastOutputSnippet = '';
+            let progressCount = 0;
+            let progressTimer: ReturnType<typeof setInterval> | null = null;
+
+            // Only stream progress for agents with timeout > 5 min
+            if (agentTimeout > 300 && !isInternal) {
+                progressTimer = setInterval(() => {
+                    progressCount++;
+                    const elapsed = Math.round((Date.now() - lastProgressTime + (progressCount * PROGRESS_INTERVAL_MS)) / 1000 / 60);
+                    const snippet = lastOutputSnippet ? `\n> ${lastOutputSnippet.substring(0, 200)}` : '';
+                    enqueueResponse({
+                        channel,
+                        sender,
+                        senderId: dbMsg.sender_id ?? undefined,
+                        message: `⏳ @${agentId} is still working... (${elapsed} min)${snippet}`,
+                        originalMessage: rawMessage,
+                        messageId: `${messageId}_progress_${progressCount}`,
+                        agent: agentId,
+                    });
+                    log('INFO', `Progress update #${progressCount} for ${messageId} (agent: ${agentId})`);
+                }, PROGRESS_INTERVAL_MS);
+            }
+
+            const invokeOpts: InvokeOptions = {
+                onOutput: (chunk: string) => {
+                    // Capture last meaningful line for progress snippets
+                    const trimmed = chunk.trim();
+                    if (trimmed.length > 0) {
+                        const lines = trimmed.split('\n').filter(l => l.trim());
+                        if (lines.length > 0) {
+                            lastOutputSnippet = lines[lines.length - 1];
+                        }
+                    }
+                },
+            };
+
+            response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams, invokeOpts);
+
+            if (progressTimer) clearInterval(progressTimer);
         } catch (error) {
             const provider = agent.provider || 'anthropic';
             const providerLabel = provider === 'openai' ? 'Codex' : provider === 'opencode' ? 'OpenCode' : 'Claude';
