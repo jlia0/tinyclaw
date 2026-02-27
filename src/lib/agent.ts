@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
-import { SCRIPT_DIR, TINYCLAW_HOME } from './config';
+import { SCRIPT_DIR } from './config';
 
 /**
  * Recursively copy directory
@@ -60,8 +60,8 @@ export function ensureAgentDirectory(agentDir: string): void {
         fs.copyFileSync(sourceAgents, path.join(agentDir, '.claude', 'CLAUDE.md'));
     }
 
-    // Copy default skills from TINYCLAW_HOME into .agents/skills
-    const sourceSkills = path.join(TINYCLAW_HOME, '.agents', 'skills');
+    // Copy default skills from SCRIPT_DIR into .agents/skills
+    const sourceSkills = path.join(SCRIPT_DIR, '.agents', 'skills');
     if (fs.existsSync(sourceSkills)) {
         const targetAgentsSkills = path.join(agentDir, '.agents', 'skills');
         fs.mkdirSync(targetAgentsSkills, { recursive: true });

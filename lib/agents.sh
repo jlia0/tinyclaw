@@ -4,9 +4,9 @@
 # AGENTS_DIR set after loading settings (uses workspace path)
 AGENTS_DIR=""
 
-# Ensure all agent workspaces have .agents/skills copied from TINYCLAW_HOME
+# Ensure all agent workspaces have .agents/skills copied from SCRIPT_DIR
 ensure_agent_skills_links() {
-    local skills_src="$TINYCLAW_HOME/.agents/skills"
+    local skills_src="$SCRIPT_DIR/.agents/skills"
     [ -d "$skills_src" ] || return 0
 
     local agents_dir="$WORKSPACE_PATH"
@@ -265,8 +265,8 @@ agent_add() {
         echo "  → Copied CLAUDE.md to .claude/ directory"
     fi
 
-    # Copy default skills from TINYCLAW_HOME
-    local skills_src="$TINYCLAW_HOME/.agents/skills"
+    # Copy default skills from SCRIPT_DIR
+    local skills_src="$SCRIPT_DIR/.agents/skills"
     if [ -d "$skills_src" ]; then
         mkdir -p "$AGENTS_DIR/$AGENT_ID/.agents/skills"
         cp -r "$skills_src/"* "$AGENTS_DIR/$AGENT_ID/.agents/skills/" 2>/dev/null || true

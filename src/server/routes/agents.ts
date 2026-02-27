@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Hono } from 'hono';
 import { AgentConfig } from '../../lib/types';
-import { SCRIPT_DIR, TINYCLAW_HOME, getSettings, getAgents } from '../../lib/config';
+import { SCRIPT_DIR, getSettings, getAgents } from '../../lib/config';
 import { log } from '../../lib/logging';
 import { mutateSettings } from './settings';
 
@@ -48,8 +48,8 @@ function provisionAgentWorkspace(agentDir: string, _agentId: string): string[] {
         steps.push('Copied CLAUDE.md to .claude/');
     }
 
-    // Copy default skills from TINYCLAW_HOME
-    const skillsSrc = path.join(TINYCLAW_HOME, '.agents', 'skills');
+    // Copy default skills from SCRIPT_DIR
+    const skillsSrc = path.join(SCRIPT_DIR, '.agents', 'skills');
     if (fs.existsSync(skillsSrc)) {
         const targetAgentsSkills = path.join(agentDir, '.agents', 'skills');
         fs.mkdirSync(targetAgentsSkills, { recursive: true });
