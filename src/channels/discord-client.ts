@@ -245,7 +245,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 if (mentionRoute) {
                     routedAgent = mentionRoute.agentId;
                     message.content = mentionRoute.cleanMessage;
-                    log('INFO', `@mention routed to agent: \${routedAgent}`);
+                    log('INFO', `@mention routed to agent: ${routedAgent}`);
                 }
             }
 
@@ -255,14 +255,14 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 const channelAgent = resolveChannelAgent(channelName, discordConfig.channel_routing, agents);
                 if (channelAgent) {
                     routedAgent = channelAgent;
-                    log('INFO', `Channel "\${channelName}" routed to agent: \${routedAgent}`);
+                    log('INFO', `Channel "${channelName}" routed to agent: ${routedAgent}`);
                 }
             }
 
             // Priority 3: Default agent from discord config
             if (!routedAgent && discordConfig.default_agent && agents[discordConfig.default_agent]) {
                 routedAgent = discordConfig.default_agent;
-                log('INFO', `Using default discord agent: \${routedAgent}`);
+                log('INFO', `Using default discord agent: ${routedAgent}`);
             }
         }
 
