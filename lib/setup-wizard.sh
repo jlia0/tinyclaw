@@ -84,13 +84,15 @@ echo ""
 echo "  1) Anthropic (Claude)  (recommended)"
 echo "  2) OpenAI (Codex/GPT)"
 echo "  3) OpenCode"
+echo "  4) Avian"
 echo ""
-read -rp "Choose [1-3]: " PROVIDER_CHOICE
+read -rp "Choose [1-4]: " PROVIDER_CHOICE
 
 case "$PROVIDER_CHOICE" in
     1) PROVIDER="anthropic" ;;
     2) PROVIDER="openai" ;;
     3) PROVIDER="opencode" ;;
+    4) PROVIDER="avian" ;;
     *)
         echo -e "${RED}Invalid choice${NC}"
         exit 1
@@ -123,6 +125,32 @@ if [ "$PROVIDER" = "anthropic" ]; then
             echo -e "${RED}Invalid choice${NC}"
             exit 1
             ;;
+    esac
+    echo -e "${GREEN}✓ Model: $MODEL${NC}"
+    echo ""
+elif [ "$PROVIDER" = "avian" ]; then
+    echo "Which Avian model?"
+    echo ""
+    echo "  1) deepseek/deepseek-v3.2  (recommended)"
+    echo "  2) moonshotai/kimi-k2.5"
+    echo "  3) z-ai/glm-5"
+    echo "  4) minimax/minimax-m2.5"
+    echo "  5) Custom  (enter model name)"
+    echo ""
+    read -rp "Choose [1-5, default: 1]: " MODEL_CHOICE
+
+    case "$MODEL_CHOICE" in
+        2) MODEL="moonshotai/kimi-k2.5" ;;
+        3) MODEL="z-ai/glm-5" ;;
+        4) MODEL="minimax/minimax-m2.5" ;;
+        5)
+            read -rp "Enter model name: " MODEL
+            if [ -z "$MODEL" ]; then
+                echo -e "${RED}Model name required${NC}"
+                exit 1
+            fi
+            ;;
+        *) MODEL="deepseek/deepseek-v3.2" ;;
     esac
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
     echo ""
@@ -270,15 +298,26 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
         read -rp "  Display name: " NEW_AGENT_NAME
         [ -z "$NEW_AGENT_NAME" ] && NEW_AGENT_NAME="$NEW_AGENT_ID"
 
-        echo "  Provider: 1) Anthropic  2) OpenAI  3) OpenCode"
-        read -rp "  Choose [1-3, default: 1]: " NEW_PROVIDER_CHOICE
+        echo "  Provider: 1) Anthropic  2) OpenAI  3) OpenCode  4) Avian"
+        read -rp "  Choose [1-4, default: 1]: " NEW_PROVIDER_CHOICE
         case "$NEW_PROVIDER_CHOICE" in
             2) NEW_PROVIDER="openai" ;;
             3) NEW_PROVIDER="opencode" ;;
+            4) NEW_PROVIDER="avian" ;;
             *) NEW_PROVIDER="anthropic" ;;
         esac
 
-        if [ "$NEW_PROVIDER" = "anthropic" ]; then
+        if [ "$NEW_PROVIDER" = "avian" ]; then
+            echo "  Model: 1) deepseek/deepseek-v3.2  2) moonshotai/kimi-k2.5  3) z-ai/glm-5  4) minimax/minimax-m2.5  5) Custom"
+            read -rp "  Choose [1-5, default: 1]: " NEW_MODEL_CHOICE
+            case "$NEW_MODEL_CHOICE" in
+                2) NEW_MODEL="moonshotai/kimi-k2.5" ;;
+                3) NEW_MODEL="z-ai/glm-5" ;;
+                4) NEW_MODEL="minimax/minimax-m2.5" ;;
+                5) read -rp "  Enter model name: " NEW_MODEL ;;
+                *) NEW_MODEL="deepseek/deepseek-v3.2" ;;
+            esac
+        elif [ "$NEW_PROVIDER" = "anthropic" ]; then
             echo "  Model: 1) Sonnet  2) Opus  3) Custom"
             read -rp "  Choose [1-3, default: 1]: " NEW_MODEL_CHOICE
             case "$NEW_MODEL_CHOICE" in
@@ -339,6 +378,8 @@ if [ "$PROVIDER" = "anthropic" ]; then
     MODELS_SECTION='"models": { "provider": "anthropic", "anthropic": { "model": "'"${MODEL}"'" } }'
 elif [ "$PROVIDER" = "opencode" ]; then
     MODELS_SECTION='"models": { "provider": "opencode", "opencode": { "model": "'"${MODEL}"'" } }'
+elif [ "$PROVIDER" = "avian" ]; then
+    MODELS_SECTION='"models": { "provider": "avian", "avian": { "model": "'"${MODEL}"'" } }'
 else
     MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
 fi

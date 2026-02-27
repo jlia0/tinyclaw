@@ -134,16 +134,33 @@ agent_add() {
     echo "  1) Anthropic (Claude)"
     echo "  2) OpenAI (Codex)"
     echo "  3) OpenCode"
-    read -rp "Choose [1-3, default: 1]: " AGENT_PROVIDER_CHOICE
+    echo "  4) Avian"
+    read -rp "Choose [1-4, default: 1]: " AGENT_PROVIDER_CHOICE
     case "$AGENT_PROVIDER_CHOICE" in
         2) AGENT_PROVIDER="openai" ;;
         3) AGENT_PROVIDER="opencode" ;;
+        4) AGENT_PROVIDER="avian" ;;
         *) AGENT_PROVIDER="anthropic" ;;
     esac
 
     # Model
     echo ""
-    if [ "$AGENT_PROVIDER" = "anthropic" ]; then
+    if [ "$AGENT_PROVIDER" = "avian" ]; then
+        echo "Model:"
+        echo "  1) deepseek/deepseek-v3.2 (recommended)"
+        echo "  2) moonshotai/kimi-k2.5"
+        echo "  3) z-ai/glm-5"
+        echo "  4) minimax/minimax-m2.5"
+        echo "  5) Custom (enter model name)"
+        read -rp "Choose [1-5, default: 1]: " AGENT_MODEL_CHOICE
+        case "$AGENT_MODEL_CHOICE" in
+            2) AGENT_MODEL="moonshotai/kimi-k2.5" ;;
+            3) AGENT_MODEL="z-ai/glm-5" ;;
+            4) AGENT_MODEL="minimax/minimax-m2.5" ;;
+            5) read -rp "Enter model name: " AGENT_MODEL ;;
+            *) AGENT_MODEL="deepseek/deepseek-v3.2" ;;
+        esac
+    elif [ "$AGENT_PROVIDER" = "anthropic" ]; then
         echo "Model:"
         echo "  1) Sonnet (fast)"
         echo "  2) Opus (smartest)"
@@ -402,15 +419,32 @@ agent_provider() {
                 echo "Use 'tinyclaw agent provider ${agent_id} openai --model {gpt-5.3-codex|gpt-5.2}' to also set the model."
             fi
             ;;
+        avian)
+            if [ -n "$model_arg" ]; then
+                jq --arg id "$agent_id" --arg model "$model_arg" \
+                    '.agents[$id].provider = "avian" | .agents[$id].model = $model' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to Avian with model: ${model_arg}${NC}"
+            else
+                jq --arg id "$agent_id" \
+                    '.agents[$id].provider = "avian"' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to Avian${NC}"
+                echo ""
+                echo "Use 'tinyclaw agent provider ${agent_id} avian --model {deepseek/deepseek-v3.2|moonshotai/kimi-k2.5|z-ai/glm-5|minimax/minimax-m2.5}' to also set the model."
+            fi
+            ;;
         *)
-            echo "Usage: tinyclaw agent provider <agent_id> {anthropic|openai} [--model MODEL_NAME]"
+            echo "Usage: tinyclaw agent provider <agent_id> {anthropic|openai|avian} [--model MODEL_NAME]"
             echo ""
             echo "Examples:"
             echo "  tinyclaw agent provider coder                                    # Show current provider/model"
             echo "  tinyclaw agent provider coder anthropic                           # Switch to Anthropic"
             echo "  tinyclaw agent provider coder openai                              # Switch to OpenAI"
+            echo "  tinyclaw agent provider coder avian                               # Switch to Avian"
             echo "  tinyclaw agent provider coder anthropic --model opus              # Switch to Anthropic Opus"
             echo "  tinyclaw agent provider coder openai --model gpt-5.3-codex        # Switch to OpenAI GPT-5.3 Codex"
+            echo "  tinyclaw agent provider coder avian --model deepseek/deepseek-v3.2  # Switch to Avian DeepSeek"
             exit 1
             ;;
     esac

@@ -1,7 +1,7 @@
 export interface AgentConfig {
     name: string;
-    provider: string;       // 'anthropic', 'openai', or 'opencode'
-    model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
+    provider: string;       // 'anthropic', 'openai', 'opencode', or 'avian'
+    model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex', 'deepseek/deepseek-v3.2'
     working_directory: string;
     system_prompt?: string;
     prompt_file?: string;
@@ -43,7 +43,7 @@ export interface Settings {
         whatsapp?: {};
     };
     models?: {
-        provider?: string; // 'anthropic', 'openai', or 'opencode'
+        provider?: string; // 'anthropic', 'openai', 'opencode', or 'avian'
         anthropic?: {
             model?: string;
         };
@@ -51,6 +51,9 @@ export interface Settings {
             model?: string;
         };
         opencode?: {
+            model?: string;
+        };
+        avian?: {
             model?: string;
         };
     };
@@ -114,6 +117,19 @@ export const CLAUDE_MODEL_IDS: Record<string, string> = {
 export const CODEX_MODEL_IDS: Record<string, string> = {
     'gpt-5.2': 'gpt-5.2',
     'gpt-5.3-codex': 'gpt-5.3-codex',
+};
+
+// Avian model IDs (OpenAI-compatible API at https://api.avian.io/v1).
+// Uses AVIAN_API_KEY env var for authentication.
+export const AVIAN_MODEL_IDS: Record<string, string> = {
+    'deepseek-v3.2': 'deepseek/deepseek-v3.2',
+    'deepseek/deepseek-v3.2': 'deepseek/deepseek-v3.2',
+    'kimi-k2.5': 'moonshotai/kimi-k2.5',
+    'moonshotai/kimi-k2.5': 'moonshotai/kimi-k2.5',
+    'glm-5': 'z-ai/glm-5',
+    'z-ai/glm-5': 'z-ai/glm-5',
+    'minimax-m2.5': 'minimax/minimax-m2.5',
+    'minimax/minimax-m2.5': 'minimax/minimax-m2.5',
 };
 
 // OpenCode model IDs in provider/model format (passed via --model / -m flag).

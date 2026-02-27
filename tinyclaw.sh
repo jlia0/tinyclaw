@@ -95,6 +95,8 @@ case "${1:-}" in
                 CURRENT_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
                 if [ "$CURRENT_PROVIDER" = "openai" ]; then
                     CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                elif [ "$CURRENT_PROVIDER" = "avian" ]; then
+                    CURRENT_MODEL=$(jq -r '.models.avian.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 else
                     CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 fi
@@ -158,16 +160,38 @@ case "${1:-}" in
                         echo "Note: Make sure you have the 'codex' CLI installed and authenticated."
                     fi
                     ;;
+                avian)
+                    if [ ! -f "$SETTINGS_FILE" ]; then
+                        echo -e "${RED}No settings file found. Run setup first.${NC}"
+                        exit 1
+                    fi
+
+                    # Switch to Avian provider (OpenAI-compatible API)
+                    tmp_file="$SETTINGS_FILE.tmp"
+                    if [ -n "$MODEL_ARG" ]; then
+                        jq ".models.provider = \"avian\" | .models.avian.model = \"$MODEL_ARG\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to Avian provider with model: $MODEL_ARG${NC}"
+                        echo ""
+                        echo "Note: Make sure AVIAN_API_KEY is set in your environment."
+                    else
+                        jq ".models.provider = \"avian\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to Avian provider${NC}"
+                        echo ""
+                        echo "Use 'tinyclaw model {deepseek/deepseek-v3.2|moonshotai/kimi-k2.5|z-ai/glm-5|minimax/minimax-m2.5}' to set the model."
+                        echo "Note: Make sure AVIAN_API_KEY is set in your environment."
+                    fi
+                    ;;
                 *)
-                    echo "Usage: $0 provider {anthropic|openai} [--model MODEL_NAME]"
+                    echo "Usage: $0 provider {anthropic|openai|avian} [--model MODEL_NAME]"
                     echo ""
                     echo "Examples:"
                     echo "  $0 provider                                    # Show current provider and model"
                     echo "  $0 provider anthropic                          # Switch to Anthropic"
                     echo "  $0 provider openai                             # Switch to OpenAI"
+                    echo "  $0 provider avian                              # Switch to Avian"
                     echo "  $0 provider anthropic --model sonnet           # Switch to Anthropic with Sonnet"
                     echo "  $0 provider openai --model gpt-5.3-codex       # Switch to OpenAI with GPT-5.3 Codex"
-                    echo "  $0 provider openai --model gpt-4o              # Switch to OpenAI with custom model"
+                    echo "  $0 provider avian --model deepseek/deepseek-v3.2  # Switch to Avian with DeepSeek"
                     exit 1
                     ;;
             esac
@@ -179,6 +203,8 @@ case "${1:-}" in
                 CURRENT_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
                 if [ "$CURRENT_PROVIDER" = "openai" ]; then
                     CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                elif [ "$CURRENT_PROVIDER" = "avian" ]; then
+                    CURRENT_MODEL=$(jq -r '.models.avian.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 else
                     CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 fi
@@ -223,8 +249,22 @@ case "${1:-}" in
                     echo ""
                     echo "Note: This affects the queue processor. Changes take effect on next message."
                     ;;
+                deepseek/deepseek-v3.2|moonshotai/kimi-k2.5|z-ai/glm-5|minimax/minimax-m2.5)
+                    if [ ! -f "$SETTINGS_FILE" ]; then
+                        echo -e "${RED}No settings file found. Run setup first.${NC}"
+                        exit 1
+                    fi
+
+                    # Update model using jq
+                    tmp_file="$SETTINGS_FILE.tmp"
+                    jq ".models.avian.model = \"$2\"" "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+
+                    echo -e "${GREEN}✓ Model switched to: $2${NC}"
+                    echo ""
+                    echo "Note: This affects the queue processor. Changes take effect on next message."
+                    ;;
                 *)
-                    echo "Usage: $0 model {sonnet|opus|gpt-5.2|gpt-5.3-codex}"
+                    echo "Usage: $0 model {sonnet|opus|gpt-5.2|gpt-5.3-codex|deepseek/deepseek-v3.2|moonshotai/kimi-k2.5|z-ai/glm-5|minimax/minimax-m2.5}"
                     echo ""
                     echo "Anthropic models:"
                     echo "  sonnet            # Claude Sonnet (fast)"
@@ -234,10 +274,17 @@ case "${1:-}" in
                     echo "  gpt-5.3-codex     # GPT-5.3 Codex"
                     echo "  gpt-5.2           # GPT-5.2"
                     echo ""
+                    echo "Avian models:"
+                    echo "  deepseek/deepseek-v3.2   # DeepSeek V3.2"
+                    echo "  moonshotai/kimi-k2.5     # Kimi K2.5"
+                    echo "  z-ai/glm-5               # GLM-5"
+                    echo "  minimax/minimax-m2.5     # MiniMax M2.5"
+                    echo ""
                     echo "Examples:"
-                    echo "  $0 model                # Show current model"
-                    echo "  $0 model sonnet         # Switch to Claude Sonnet"
-                    echo "  $0 model gpt-5.3-codex  # Switch to GPT-5.3 Codex"
+                    echo "  $0 model                       # Show current model"
+                    echo "  $0 model sonnet                # Switch to Claude Sonnet"
+                    echo "  $0 model gpt-5.3-codex         # Switch to GPT-5.3 Codex"
+                    echo "  $0 model deepseek/deepseek-v3.2  # Switch to Avian DeepSeek"
                     exit 1
                     ;;
             esac

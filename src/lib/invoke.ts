@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
-import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel } from './config';
+import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel, resolveAvianModel } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent';
 
@@ -112,6 +112,44 @@ export async function invokeAgent(
         }
 
         return response || 'Sorry, I could not generate a response from Codex.';
+    } else if (provider === 'avian') {
+        // Avian — OpenAI-compatible API at https://api.avian.io/v1
+        // Uses AVIAN_API_KEY env var for Bearer token auth.
+        const modelId = resolveAvianModel(agent.model);
+        log('INFO', `Using Avian API (agent: ${agentId}, model: ${modelId})`);
+
+        const apiKey = process.env.AVIAN_API_KEY;
+        if (!apiKey) {
+            throw new Error('AVIAN_API_KEY environment variable is not set');
+        }
+
+        const body: Record<string, unknown> = {
+            model: modelId,
+            messages: [{ role: 'user', content: message }],
+        };
+
+        if (agent.system_prompt) {
+            (body.messages as Record<string, string>[]).unshift({ role: 'system', content: agent.system_prompt });
+        }
+
+        const res = await fetch('https://api.avian.io/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+            const errorText = await res.text().catch(() => '');
+            throw new Error(`Avian API error ${res.status}: ${errorText}`);
+        }
+
+        const data = await res.json() as { choices?: { message?: { content?: string } }[] };
+        const response = data?.choices?.[0]?.message?.content || '';
+
+        return response || 'Sorry, I could not generate a response from Avian.';
     } else if (provider === 'opencode') {
         // OpenCode CLI — non-interactive mode via `opencode run`.
         // Outputs JSONL with --format json; extract "text" type events for the response.

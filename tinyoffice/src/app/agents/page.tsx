@@ -212,6 +212,7 @@ function AgentEditor({
               <option value="anthropic">anthropic</option>
               <option value="openai">openai</option>
               <option value="opencode">opencode</option>
+              <option value="avian">avian</option>
             </Select>
           </div>
           <div className="space-y-1.5">
@@ -287,6 +288,7 @@ function AgentCard({
     anthropic: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
     openai: "bg-green-500/10 text-green-600 dark:text-green-400",
     opencode: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    avian: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
   };
 
   return (
