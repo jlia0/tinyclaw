@@ -2,6 +2,28 @@
 # Daemon lifecycle management for TinyClaw
 # Handles starting, stopping, restarting, and status checking
 
+graceful_stop_queue_processor() {
+    local timeout_s="${1:-45}"
+    local queue_pid=""
+    queue_pid="$(pgrep -f "dist/queue-processor.js" | head -n 1 || true)"
+    if [ -z "$queue_pid" ]; then
+        return 0
+    fi
+
+    # Trigger graceful shutdown so onSessionEnd hooks can commit sessions.
+    kill -TERM "$queue_pid" 2>/dev/null || true
+
+    local waited=0
+    while kill -0 "$queue_pid" 2>/dev/null; do
+        if [ "$waited" -ge "$timeout_s" ]; then
+            log "Queue graceful shutdown timed out after ${timeout_s}s; forcing stop"
+            break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
 resolve_openviking_expected_dimension() {
     local conf_path="$1"
     if [ ! -f "$conf_path" ]; then
@@ -229,6 +251,17 @@ start_daemon() {
         fi
         echo "TINYCLAW_PLUGIN_HOOK_TIMEOUT_MS=${plugin_hook_timeout_ms}" >> "$env_file"
         echo "TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS=${OPENVIKING_COMMIT_TIMEOUT_MS}" >> "$env_file"
+        if [ "$OPENVIKING_COMMIT_ON_SHUTDOWN" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_COMMIT_ON_SHUTDOWN=1" >> "$env_file"
+        else
+            echo "TINYCLAW_OPENVIKING_COMMIT_ON_SHUTDOWN=0" >> "$env_file"
+        fi
+        echo "TINYCLAW_OPENVIKING_SESSION_IDLE_TIMEOUT_MS=${OPENVIKING_SESSION_IDLE_TIMEOUT_MS}" >> "$env_file"
+        local plugin_session_end_hook_timeout_ms=$((OPENVIKING_COMMIT_TIMEOUT_MS + 15000))
+        if [ "$plugin_session_end_hook_timeout_ms" -lt 45000 ]; then
+            plugin_session_end_hook_timeout_ms=45000
+        fi
+        echo "TINYCLAW_PLUGIN_SESSION_END_HOOK_TIMEOUT_MS=${plugin_session_end_hook_timeout_ms}" >> "$env_file"
         echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS=${OPENVIKING_PREFETCH_MAX_CHARS}" >> "$env_file"
         echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS=${OPENVIKING_PREFETCH_MAX_TURNS}" >> "$env_file"
         echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_HITS=${OPENVIKING_PREFETCH_MAX_HITS}" >> "$env_file"
@@ -406,6 +439,15 @@ start_daemon() {
 stop_daemon() {
     log "Stopping TinyClaw..."
     load_settings >/dev/null 2>&1 || true
+
+    local graceful_timeout_s=45
+    if [ -n "${OPENVIKING_COMMIT_TIMEOUT_MS:-}" ] && [[ "$OPENVIKING_COMMIT_TIMEOUT_MS" =~ ^[0-9]+$ ]]; then
+        graceful_timeout_s=$(( (OPENVIKING_COMMIT_TIMEOUT_MS + 20000 + 999) / 1000 ))
+        if [ "$graceful_timeout_s" -lt 45 ]; then
+            graceful_timeout_s=45
+        fi
+    fi
+    graceful_stop_queue_processor "$graceful_timeout_s"
 
     if session_exists; then
         tmux kill-session -t "$TMUX_SESSION"

@@ -354,9 +354,12 @@ Environment flags:
 - `TINYCLAW_OPENVIKING_PREFETCH_RULE_THRESHOLD` score threshold for rule gate (default: `3`)
 - `TINYCLAW_OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW` lower score bound that is considered ambiguous for `rule_then_llm` (default: `1`)
 - `TINYCLAW_OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH` upper score bound that is considered ambiguous for `rule_then_llm` (default: `2`)
-- `TINYCLAW_OPENVIKING_PREFETCH_LLM_TIMEOUT_MS` LLM gate timeout in milliseconds (default: `1500`, timeout => no prefetch)
+- `TINYCLAW_OPENVIKING_PREFETCH_LLM_TIMEOUT_MS` LLM gate timeout in milliseconds (default: `7000`, timeout => no prefetch)
 - `TINYCLAW_OPENVIKING_PREFETCH_TIMEOUT_MS` prefetch/search timeout (default: `5000`)
-- `TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS` native session commit timeout (default: `30000`)
+- `TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS` native session commit timeout (default: `60000`)
+- `TINYCLAW_OPENVIKING_COMMIT_ON_SHUTDOWN` commit mapped native sessions during process shutdown (default: `1`)
+- `TINYCLAW_OPENVIKING_SESSION_IDLE_TIMEOUT_MS` idle session auto-commit threshold in milliseconds (default: `1800000`, i.e. 30 minutes)
+- `TINYCLAW_PLUGIN_SESSION_END_HOOK_TIMEOUT_MS` session-end hook timeout (default: `30000`; TinyClaw runtime raises this automatically when OpenViking is enabled)
 - `TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS` max injected chars (default: `1200`)
 - `TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS` max selected turns (default: `4`)
 - `TINYCLAW_OPENVIKING_PREFETCH_MAX_HITS` max typed native hits injected (default: `8`)
@@ -367,7 +370,8 @@ Environment flags:
 `settings.openviking` also supports the same gate keys:
 `prefetch_gate_mode`, `prefetch_force_patterns`, `prefetch_skip_patterns`,
 `prefetch_rule_threshold`, `prefetch_llm_ambiguity_low`,
-`prefetch_llm_ambiguity_high`, `prefetch_llm_timeout_ms`.
+`prefetch_llm_ambiguity_high`, `prefetch_llm_timeout_ms`,
+plus session lifecycle keys `commit_on_shutdown` and `session_idle_timeout_ms`.
 
 #### Quick Usage
 

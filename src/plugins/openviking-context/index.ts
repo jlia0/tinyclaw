@@ -9,6 +9,7 @@ import {
 } from '../../lib/config';
 import { runCommand } from '../../lib/invoke';
 import { log } from '../../lib/logging';
+import { PLUGIN_HOOK_TIMEOUT_MS } from '../../lib/plugins';
 import type {
     BeforeModelContext,
     BeforeModelHookResult,
@@ -191,14 +192,6 @@ function resolveStringListFlag(
     return fallback;
 }
 
-function resolvePluginHookTimeoutMs(): number {
-    const envValue = Number(process.env.TINYCLAW_PLUGIN_HOOK_TIMEOUT_MS || 8000);
-    if (Number.isFinite(envValue) && envValue >= 1000) {
-        return Math.floor(envValue);
-    }
-    return 8000;
-}
-
 function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextConfig {
     const ov = settings.openviking || {};
     const enabled = resolveBooleanFlag(
@@ -245,10 +238,15 @@ function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextCo
         sessionNativeEnabled,
         searchNativeEnabled,
         commitOnShutdown,
-        sessionIdleTimeoutMs: resolveNumberFlag('TINYCLAW_OPENVIKING_SESSION_IDLE_TIMEOUT_MS', ov.session_idle_timeout_ms, 0, 0),
+        sessionIdleTimeoutMs: resolveNumberFlag(
+            'TINYCLAW_OPENVIKING_SESSION_IDLE_TIMEOUT_MS',
+            ov.session_idle_timeout_ms,
+            30 * 60 * 1000,
+            0
+        ),
         sessionSwitchMarkers,
         prefetchTimeoutMs: resolveNumberFlag('TINYCLAW_OPENVIKING_PREFETCH_TIMEOUT_MS', ov.prefetch_timeout_ms, 5000, 1),
-        commitTimeoutMs: resolveNumberFlag('TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS', ov.commit_timeout_ms, 30000, 1),
+        commitTimeoutMs: resolveNumberFlag('TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS', ov.commit_timeout_ms, 60000, 1),
         prefetchMaxChars: resolveNumberFlag('TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS', ov.prefetch_max_chars, 1200, 200),
         prefetchMaxTurns: resolveNumberFlag('TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS', ov.prefetch_max_turns, 4, 1),
         prefetchMaxHits: resolveNumberFlag('TINYCLAW_OPENVIKING_PREFETCH_MAX_HITS', ov.prefetch_max_hits, 8, 1),
@@ -282,7 +280,7 @@ function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextCo
         prefetchLlmTimeoutMs: resolveNumberFlag(
             'TINYCLAW_OPENVIKING_PREFETCH_LLM_TIMEOUT_MS',
             ov.prefetch_llm_timeout_ms,
-            1500,
+            7000,
             100
         ),
         // 0 means keep all closed sessions (default behavior).
@@ -1225,7 +1223,7 @@ async function beforeModel(ctx: BeforeModelContext): Promise<BeforeModelHookResu
     }
 
     if (!ctx.isInternal) {
-        const hookBudgetMs = resolvePluginHookTimeoutMs();
+        const hookBudgetMs = PLUGIN_HOOK_TIMEOUT_MS;
         const hookElapsedMs = Date.now() - beforeModelStartedAt;
         const hookRemainingMs = Math.max(0, hookBudgetMs - hookElapsedMs);
         const prefetchSafetyMarginMs = 600;

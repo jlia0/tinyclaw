@@ -1,4 +1,5 @@
 import { AgentConfig } from '../../lib/types';
+import { jsonrepair } from 'jsonrepair';
 
 export type PrefetchGateMode = 'always' | 'never' | 'rule' | 'rule_then_llm';
 
@@ -325,7 +326,7 @@ export function parsePrefetchLlmGateResult(raw: string): PrefetchLlmGateResult {
     if (!extracted) {
         throw new Error('llm_gate_no_json');
     }
-    const parsed = JSON.parse(extracted) as Record<string, unknown>;
+    const parsed = JSON.parse(jsonrepair(extracted)) as Record<string, unknown>;
     const needMemory = parsed.need_memory === true;
     const reasonRaw = typeof parsed.reason === 'string' ? parsed.reason.trim() : '';
     return {

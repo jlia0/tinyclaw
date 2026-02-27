@@ -238,7 +238,9 @@ OPENVIKING_PROJECT=""
 OPENVIKING_API_KEY=""
 OPENVIKING_CONFIG_PATH="$HOME/.openviking/ov.conf"
 OPENVIKING_PREFETCH_TIMEOUT_MS=5000
-OPENVIKING_COMMIT_TIMEOUT_MS=30000
+OPENVIKING_COMMIT_TIMEOUT_MS=60000
+OPENVIKING_COMMIT_ON_SHUTDOWN=true
+OPENVIKING_SESSION_IDLE_TIMEOUT_MS=1800000
 OPENVIKING_PREFETCH_MAX_CHARS=1200
 OPENVIKING_PREFETCH_MAX_TURNS=4
 OPENVIKING_PREFETCH_MAX_HITS=8
@@ -249,7 +251,7 @@ OPENVIKING_PREFETCH_SKIP_PATTERNS_JSON='["latest news","latest update","breaking
 OPENVIKING_PREFETCH_RULE_THRESHOLD=3
 OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW=1
 OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH=2
-OPENVIKING_PREFETCH_LLM_TIMEOUT_MS=1500
+OPENVIKING_PREFETCH_LLM_TIMEOUT_MS=7000
 OPENVIKING_CLOSED_SESSION_RETENTION_DAYS=0
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -466,6 +468,8 @@ OPENVIKING_JSON=$(jq -n \
   --arg api_key "$OPENVIKING_API_KEY" \
   --argjson prefetch_timeout_ms "$OPENVIKING_PREFETCH_TIMEOUT_MS" \
   --argjson commit_timeout_ms "$OPENVIKING_COMMIT_TIMEOUT_MS" \
+  --argjson commit_on_shutdown "$OPENVIKING_COMMIT_ON_SHUTDOWN" \
+  --argjson session_idle_timeout_ms "$OPENVIKING_SESSION_IDLE_TIMEOUT_MS" \
   --argjson prefetch_max_chars "$OPENVIKING_PREFETCH_MAX_CHARS" \
   --argjson prefetch_max_turns "$OPENVIKING_PREFETCH_MAX_TURNS" \
   --argjson prefetch_max_hits "$OPENVIKING_PREFETCH_MAX_HITS" \
@@ -491,6 +495,8 @@ OPENVIKING_JSON=$(jq -n \
     native_search: $enabled,
     prefetch: $enabled,
     autosync: true,
+    commit_on_shutdown: $commit_on_shutdown,
+    session_idle_timeout_ms: $session_idle_timeout_ms,
     prefetch_timeout_ms: $prefetch_timeout_ms,
     commit_timeout_ms: $commit_timeout_ms,
     prefetch_max_chars: $prefetch_max_chars,
