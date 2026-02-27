@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
-import { SCRIPT_DIR } from './config';
+import { SCRIPT_DIR, TINYCLAW_HOME } from './config';
 
 /**
  * Recursively copy directory
@@ -60,23 +60,17 @@ export function ensureAgentDirectory(agentDir: string): void {
         fs.copyFileSync(sourceAgents, path.join(agentDir, '.claude', 'CLAUDE.md'));
     }
 
-    // Symlink skills directory into .claude/skills
-    // Prefer .agent/skills, fall back to .agents/skills
-    const sourceSkills = fs.existsSync(path.join(SCRIPT_DIR, '.agent', 'skills'))
-        ? path.join(SCRIPT_DIR, '.agent', 'skills')
-        : path.join(SCRIPT_DIR, '.agents', 'skills');
-    const targetClaudeSkills = path.join(agentDir, '.claude', 'skills');
-    if (fs.existsSync(sourceSkills) && !fs.existsSync(targetClaudeSkills)) {
-        fs.mkdirSync(path.join(agentDir, '.claude'), { recursive: true });
-        fs.symlinkSync(sourceSkills, targetClaudeSkills);
-    }
+    // Copy default skills from TINYCLAW_HOME into .agents/skills
+    const sourceSkills = path.join(TINYCLAW_HOME, '.agents', 'skills');
+    if (fs.existsSync(sourceSkills)) {
+        const targetAgentsSkills = path.join(agentDir, '.agents', 'skills');
+        fs.mkdirSync(targetAgentsSkills, { recursive: true });
+        copyDirSync(sourceSkills, targetAgentsSkills);
 
-    // Symlink .agent/skills to .claude/skills for agent-level access
-    const targetAgentDir = path.join(agentDir, '.agent');
-    const targetAgentSkills = path.join(targetAgentDir, 'skills');
-    if (!fs.existsSync(targetAgentSkills)) {
-        fs.mkdirSync(targetAgentDir, { recursive: true });
-        fs.symlinkSync(sourceSkills, targetAgentSkills);
+        // Mirror into .claude/skills for Claude Code
+        const targetClaudeSkills = path.join(agentDir, '.claude', 'skills');
+        fs.mkdirSync(targetClaudeSkills, { recursive: true });
+        copyDirSync(targetAgentsSkills, targetClaudeSkills);
     }
 
     // Create .tinyclaw directory and copy SOUL.md

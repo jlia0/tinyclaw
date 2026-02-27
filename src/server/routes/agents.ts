@@ -20,14 +20,6 @@ function copyIfExists(src: string, dest: string): boolean {
     return true;
 }
 
-function symlinkIfMissing(target: string, linkPath: string): boolean {
-    if (!fs.existsSync(target)) return false;
-    if (fs.existsSync(linkPath)) return false;
-    fs.mkdirSync(path.dirname(linkPath), { recursive: true });
-    fs.symlinkSync(target, linkPath);
-    return true;
-}
-
 function provisionAgentWorkspace(agentDir: string, _agentId: string): string[] {
     const steps: string[] = [];
     fs.mkdirSync(agentDir, { recursive: true });
@@ -56,18 +48,19 @@ function provisionAgentWorkspace(agentDir: string, _agentId: string): string[] {
         steps.push('Copied CLAUDE.md to .claude/');
     }
 
-    let skillsSrc = path.join(SCRIPT_DIR, '.agents', 'skills');
-    if (!fs.existsSync(skillsSrc)) {
-        skillsSrc = path.join(TINYCLAW_HOME, '.agents', 'skills');
-    }
-
+    // Copy default skills from TINYCLAW_HOME
+    const skillsSrc = path.join(TINYCLAW_HOME, '.agents', 'skills');
     if (fs.existsSync(skillsSrc)) {
-        if (symlinkIfMissing(skillsSrc, path.join(agentDir, '.claude', 'skills'))) {
-            steps.push('Linked skills to .claude/skills/');
-        }
-        if (symlinkIfMissing(skillsSrc, path.join(agentDir, '.agents', 'skills'))) {
-            steps.push('Linked skills to .agents/skills/');
-        }
+        const targetAgentsSkills = path.join(agentDir, '.agents', 'skills');
+        fs.mkdirSync(targetAgentsSkills, { recursive: true });
+        fs.cpSync(skillsSrc, targetAgentsSkills, { recursive: true });
+        steps.push('Copied skills to .agents/skills/');
+
+        // Mirror into .claude/skills for Claude Code
+        const targetClaudeSkills = path.join(agentDir, '.claude', 'skills');
+        fs.mkdirSync(targetClaudeSkills, { recursive: true });
+        fs.cpSync(targetAgentsSkills, targetClaudeSkills, { recursive: true });
+        steps.push('Copied skills to .claude/skills/');
     }
 
     fs.mkdirSync(path.join(agentDir, '.tinyclaw'), { recursive: true });

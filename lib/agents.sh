@@ -4,12 +4,9 @@
 # AGENTS_DIR set after loading settings (uses workspace path)
 AGENTS_DIR=""
 
-# Ensure all agent workspaces have .agents/skills symlinked
+# Ensure all agent workspaces have .agents/skills copied from TINYCLAW_HOME
 ensure_agent_skills_links() {
-    local skills_src="$SCRIPT_DIR/.agents/skills"
-    if [ ! -d "$skills_src" ]; then
-        skills_src="$TINYCLAW_HOME/.agents/skills"
-    fi
+    local skills_src="$TINYCLAW_HOME/.agents/skills"
     [ -d "$skills_src" ] || return 0
 
     local agents_dir="$WORKSPACE_PATH"
@@ -22,11 +19,30 @@ ensure_agent_skills_links() {
         local agent_dir="$agents_dir/$agent_id"
         [ -d "$agent_dir" ] || continue
 
-        if [ ! -e "$agent_dir/.agents/skills" ]; then
-            mkdir -p "$agent_dir/.agents"
-            ln -s "$skills_src" "$agent_dir/.agents/skills"
-            log "Linked .agents/skills/ for agent @${agent_id}"
+        # Migrate: replace old symlinks with real directories
+        if [ -L "$agent_dir/.agents/skills" ]; then
+            rm "$agent_dir/.agents/skills"
         fi
+        if [ -L "$agent_dir/.claude/skills" ]; then
+            rm "$agent_dir/.claude/skills"
+        fi
+
+        # Sync default skills into .agents/skills
+        # - Overwrites skills that exist in source (keeps them up to date)
+        # - Preserves agent-specific custom skills not in source
+        mkdir -p "$agent_dir/.agents/skills"
+        for skill_dir in "$skills_src"/*/; do
+            [ -d "$skill_dir" ] || continue
+            local skill_name
+            skill_name="$(basename "$skill_dir")"
+            # Always overwrite default skills with latest from source
+            rm -rf "$agent_dir/.agents/skills/$skill_name"
+            cp -r "$skill_dir" "$agent_dir/.agents/skills/$skill_name"
+        done
+
+        # Mirror .agents/skills into .claude/skills for Claude Code
+        mkdir -p "$agent_dir/.claude/skills"
+        cp -r "$agent_dir/.agents/skills/"* "$agent_dir/.claude/skills/" 2>/dev/null || true
     done
 }
 
@@ -249,25 +265,17 @@ agent_add() {
         echo "  → Copied CLAUDE.md to .claude/ directory"
     fi
 
-    # Resolve skills source directory
-    local skills_src="$SCRIPT_DIR/.agents/skills"
-    if [ ! -d "$skills_src" ]; then
-        skills_src="$TINYCLAW_HOME/.agents/skills"
-    fi
-
+    # Copy default skills from TINYCLAW_HOME
+    local skills_src="$TINYCLAW_HOME/.agents/skills"
     if [ -d "$skills_src" ]; then
-        # Symlink skills directory into .claude/skills
-        if [ ! -e "$AGENTS_DIR/$AGENT_ID/.claude/skills" ]; then
-            ln -s "$skills_src" "$AGENTS_DIR/$AGENT_ID/.claude/skills"
-            echo "  → Linked skills to .claude/skills/"
-        fi
+        mkdir -p "$AGENTS_DIR/$AGENT_ID/.agents/skills"
+        cp -r "$skills_src/"* "$AGENTS_DIR/$AGENT_ID/.agents/skills/" 2>/dev/null || true
+        echo "  → Copied skills to .agents/skills/"
 
-        # Symlink .agents/skills directory
-        if [ ! -e "$AGENTS_DIR/$AGENT_ID/.agents/skills" ]; then
-            mkdir -p "$AGENTS_DIR/$AGENT_ID/.agents"
-            ln -s "$skills_src" "$AGENTS_DIR/$AGENT_ID/.agents/skills"
-            echo "  → Linked skills to .agents/skills/"
-        fi
+        # Mirror into .claude/skills for Claude Code
+        mkdir -p "$AGENTS_DIR/$AGENT_ID/.claude/skills"
+        cp -r "$AGENTS_DIR/$AGENT_ID/.agents/skills/"* "$AGENTS_DIR/$AGENT_ID/.claude/skills/" 2>/dev/null || true
+        echo "  → Copied skills to .claude/skills/"
     fi
 
     # Create .tinyclaw directory and copy SOUL.md
