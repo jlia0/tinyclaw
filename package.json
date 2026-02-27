@@ -1,6 +1,6 @@
 {
   "name": "tinyclaw",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Multi-agent, multi-team, multi-channel 24/7 AI assistant",
   "scripts": {
     "build": "tsc && tsc -p tsconfig.visualizer.json && echo '{\"type\":\"module\"}' > dist/visualizer/package.json",
