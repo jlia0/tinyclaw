@@ -319,7 +319,7 @@ TinyClaw supports OpenViking native session lifecycle as the primary write path:
 
 - `POST /api/v1/sessions` to create/reuse session IDs per `(channel, senderId, agentId)` mapping
 - `POST /api/v1/sessions/{id}/messages` for `user` and `assistant` turns
-- `POST /api/v1/sessions/{id}/commit` when reset/session-end is consumed
+- `POST /api/v1/sessions/{id}/commit` when session lifecycle boundaries are consumed (`reset`, idle timeout, or process shutdown)
 
 Setup integration:
 
@@ -359,7 +359,7 @@ Environment flags:
 - `TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS` native session commit timeout (default: `60000`)
 - `TINYCLAW_OPENVIKING_COMMIT_ON_SHUTDOWN` commit mapped native sessions during process shutdown (default: `1`)
 - `TINYCLAW_OPENVIKING_SESSION_IDLE_TIMEOUT_MS` idle session auto-commit threshold in milliseconds (default: `1800000`, i.e. 30 minutes)
-- `TINYCLAW_PLUGIN_SESSION_END_HOOK_TIMEOUT_MS` session-end hook timeout (default: `30000`; TinyClaw runtime raises this automatically when OpenViking is enabled)
+- `TINYCLAW_PLUGIN_SESSION_END_HOOK_TIMEOUT_MS` session-end hook timeout (default: `30000`; TinyClaw runtime raises this automatically when OpenViking is enabled, to `max(commit_timeout_ms + 15000, 45000)`)
 - `TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS` max injected chars (default: `1200`)
 - `TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS` max selected turns (default: `4`)
 - `TINYCLAW_OPENVIKING_PREFETCH_MAX_HITS` max typed native hits injected (default: `8`)
@@ -429,6 +429,20 @@ These commands work in Discord, Telegram, and WhatsApp:
 **Note:** The `@agent_id` routing prefix requires a space after it (e.g., `@coder fix` not `@coderfix`).
 
 **Access control note:** before routing, channel clients apply sender pairing allowlist checks.
+
+## 🔌 Plugin Security
+
+TinyClaw can load local plugins from `~/.tinyclaw/plugins`, but plugins are **disabled by default**.
+
+- Enable plugins: `TINYCLAW_PLUGINS_ENABLED=1`
+- Hook timeout (ms): `TINYCLAW_PLUGIN_HOOK_TIMEOUT_MS` (default `8000`; TinyClaw runtime may raise it for OpenViking prefetch budget)
+- Activate timeout (ms): `TINYCLAW_PLUGIN_ACTIVATE_TIMEOUT_MS` (default `3000`)
+
+Security model:
+
+- Plugins are fully trusted local code.
+- Do not install plugins from untrusted sources.
+- Plugin code runs with the same permissions as the TinyClaw process.
 
 ## 🤖 Using Agents
 
