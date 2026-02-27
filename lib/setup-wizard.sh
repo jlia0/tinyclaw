@@ -244,8 +244,8 @@ OPENVIKING_PREFETCH_MAX_TURNS=4
 OPENVIKING_PREFETCH_MAX_HITS=8
 OPENVIKING_PREFETCH_RESOURCE_SUPPLEMENT_MAX=2
 OPENVIKING_PREFETCH_GATE_MODE="rule"
-OPENVIKING_PREFETCH_FORCE_PATTERNS_JSON='["based on memory","from long term memory","long-term memory","memory only","remember what i told you","previously told","according to memory","根据记忆","基于记忆","只根据记忆","只基于记忆","你还记得","我之前告诉过","之前说过","长期记忆"]'
-OPENVIKING_PREFETCH_SKIP_PATTERNS_JSON='["latest news","today weather","current price","stock price","crypto price","search web","browse web","run command","execute command","shell command","npm run","git ","最新新闻","今天天气","实时价格","执行命令","跑一下命令","查一下最新","查今日"]'
+OPENVIKING_PREFETCH_FORCE_PATTERNS_JSON='["based on memory","using memory","from your memory","from long term memory","long-term memory","use long term memory","memory only","remember what i told you","what do you remember","what i told you before","based on our previous chats","previously told","according to memory","根据记忆","按记忆","按长期记忆","基于记忆","结合记忆","只根据记忆","只基于记忆","你还记得","你记得我说过","回忆一下","我之前告诉过","我之前提过","我之前说过","之前聊过","根据我们之前的对话","之前说过","长期记忆"]'
+OPENVIKING_PREFETCH_SKIP_PATTERNS_JSON='["latest news","latest update","breaking news","today weather","live score","current price","price now","stock price","crypto price","search web","web search","search online","browse internet","browse web","run command","run this command","execute this command","execute command","terminal command","shell command","npm run","git ","最新新闻","最新动态","今天天气","当前价格","实时价格","在线搜索","网页搜索","上网查","终端命令","shell命令","执行命令","执行这个命令","跑一下命令","查一下最新","查今日"]'
 OPENVIKING_PREFETCH_RULE_THRESHOLD=3
 OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW=1
 OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH=2
@@ -279,9 +279,7 @@ if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
     OV_EMBED_DIM="3072"
 
     OPENVIKING_CONF_DIR="$(dirname "$OPENVIKING_CONFIG_PATH")"
-    OPENVIKING_DATA_PATH="$HOME/.tinyclaw/openviking-data"
     mkdir -p "$OPENVIKING_CONF_DIR"
-    mkdir -p "$OPENVIKING_DATA_PATH"
 
     if ! command -v openviking &> /dev/null; then
         echo -e "${YELLOW}OpenViking CLI not found. Installing with pip...${NC}"
@@ -304,8 +302,6 @@ if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
     fi
 
     jq -n \
-      --arg agfs_path "$OPENVIKING_DATA_PATH/agfs" \
-      --arg vectordb_path "$OPENVIKING_DATA_PATH/vectordb" \
       --arg api_key "$OV_LLM_API_KEY" \
       --arg api_base "$OV_LLM_API_BASE" \
       --arg vlm_model "$OV_LLM_MODEL" \
@@ -314,12 +310,10 @@ if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
       '{
         storage: {
           agfs: {
-            backend: "local",
-            path: $agfs_path
+            backend: "local"
           },
           vectordb: {
             backend: "local",
-            path: $vectordb_path,
             dimension: $embed_dim
           }
         },

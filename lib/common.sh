@@ -80,8 +80,8 @@ OPENVIKING_PREFETCH_MAX_TURNS="4"
 OPENVIKING_PREFETCH_MAX_HITS="8"
 OPENVIKING_PREFETCH_RESOURCE_SUPPLEMENT_MAX="2"
 OPENVIKING_PREFETCH_GATE_MODE="rule"
-OPENVIKING_PREFETCH_FORCE_PATTERNS="based on memory,long-term memory,memory only,remember what i told you,according to memory,根据记忆,基于记忆,只根据记忆,只基于记忆,你还记得,我之前告诉过,之前说过,长期记忆"
-OPENVIKING_PREFETCH_SKIP_PATTERNS="latest news,today weather,current price,stock price,crypto price,search web,browse web,run command,execute command,shell command,npm run,git ,最新新闻,今天天气,实时价格,执行命令,跑一下命令,查一下最新,查今日"
+OPENVIKING_PREFETCH_FORCE_PATTERNS="based on memory,using memory,from your memory,from long term memory,long-term memory,use long term memory,memory only,remember what i told you,what do you remember,what i told you before,based on our previous chats,previously told,according to memory,根据记忆,按记忆,按长期记忆,基于记忆,结合记忆,只根据记忆,只基于记忆,你还记得,你记得我说过,回忆一下,我之前告诉过,我之前提过,我之前说过,之前聊过,根据我们之前的对话,之前说过,长期记忆"
+OPENVIKING_PREFETCH_SKIP_PATTERNS="latest news,latest update,breaking news,today weather,live score,current price,price now,stock price,crypto price,search web,web search,search online,browse internet,browse web,run command,run this command,execute this command,execute command,terminal command,shell command,npm run,git ,最新新闻,最新动态,今天天气,当前价格,实时价格,在线搜索,网页搜索,上网查,终端命令,shell命令,执行命令,执行这个命令,跑一下命令,查一下最新,查今日"
 OPENVIKING_PREFETCH_RULE_THRESHOLD="3"
 OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW="1"
 OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH="2"
@@ -172,10 +172,10 @@ load_settings() {
     OPENVIKING_PREFETCH_LLM_TIMEOUT_MS=$(jq -r '.openviking.prefetch_llm_timeout_ms // 1500' "$SETTINGS_FILE" 2>/dev/null)
     OPENVIKING_CLOSED_SESSION_RETENTION_DAYS=$(jq -r '.openviking.closed_session_retention_days // 0' "$SETTINGS_FILE" 2>/dev/null)
     if [ -z "$OPENVIKING_PREFETCH_FORCE_PATTERNS" ]; then
-        OPENVIKING_PREFETCH_FORCE_PATTERNS="based on memory,long-term memory,memory only,remember what i told you,according to memory,根据记忆,基于记忆,只根据记忆,只基于记忆,你还记得,我之前告诉过,之前说过,长期记忆"
+        OPENVIKING_PREFETCH_FORCE_PATTERNS="based on memory,using memory,from your memory,from long term memory,long-term memory,use long term memory,memory only,remember what i told you,what do you remember,what i told you before,based on our previous chats,previously told,according to memory,根据记忆,按记忆,按长期记忆,基于记忆,结合记忆,只根据记忆,只基于记忆,你还记得,你记得我说过,回忆一下,我之前告诉过,我之前提过,我之前说过,之前聊过,根据我们之前的对话,之前说过,长期记忆"
     fi
     if [ -z "$OPENVIKING_PREFETCH_SKIP_PATTERNS" ]; then
-        OPENVIKING_PREFETCH_SKIP_PATTERNS="latest news,today weather,current price,stock price,crypto price,search web,browse web,run command,execute command,shell command,npm run,git ,最新新闻,今天天气,实时价格,执行命令,跑一下命令,查一下最新,查今日"
+        OPENVIKING_PREFETCH_SKIP_PATTERNS="latest news,latest update,breaking news,today weather,live score,current price,price now,stock price,crypto price,search web,web search,search online,browse internet,browse web,run command,run this command,execute this command,execute command,terminal command,shell command,npm run,git ,最新新闻,最新动态,今天天气,当前价格,实时价格,在线搜索,网页搜索,上网查,终端命令,shell命令,执行命令,执行这个命令,跑一下命令,查一下最新,查今日"
     fi
 
     return 0

@@ -191,6 +191,14 @@ function resolveStringListFlag(
     return fallback;
 }
 
+function resolvePluginHookTimeoutMs(): number {
+    const envValue = Number(process.env.TINYCLAW_PLUGIN_HOOK_TIMEOUT_MS || 8000);
+    if (Number.isFinite(envValue) && envValue >= 1000) {
+        return Math.floor(envValue);
+    }
+    return 8000;
+}
+
 function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextConfig {
     const ov = settings.openviking || {};
     const enabled = resolveBooleanFlag(
@@ -700,7 +708,8 @@ async function fetchLegacyOpenVikingPrefetchContext(
     config: OpenVikingContextConfig,
     workspacePath: string,
     agentId: string,
-    query: string
+    query: string,
+    timeoutMs: number
 ): Promise<OpenVikingLegacyPrefetchResult> {
     const toolPath = getOpenVikingToolPath(workspacePath, agentId);
     if (!toolPath) return { block: '', diagnostics: ['tool_missing'] };
@@ -723,7 +732,7 @@ async function fetchLegacyOpenVikingPrefetchContext(
                 'node',
                 [toolPath, 'find-uris', query, target, '--limit', String(searchLimit)],
                 workdir,
-                config.prefetchTimeoutMs
+                timeoutMs
             );
             const lines = found
                 .trim()
@@ -762,7 +771,7 @@ async function fetchLegacyOpenVikingPrefetchContext(
                 'node',
                 [toolPath, 'read', uri],
                 workdir,
-                config.prefetchTimeoutMs
+                timeoutMs
             );
             const content = output.trim();
             if (!content || content.startsWith('[openviking-tool]')) continue;
@@ -783,7 +792,7 @@ async function fetchLegacyOpenVikingPrefetchContext(
                     'node',
                     [toolPath, 'read', target],
                     workdir,
-                    config.prefetchTimeoutMs
+                    timeoutMs
                 );
                 const content = output.trim();
                 if (!content || content.startsWith('[openviking-tool]')) {
@@ -823,7 +832,8 @@ async function fetchOpenVikingPrefetchContext(
     workspacePath: string,
     agentId: string,
     query: string,
-    sessionId?: string
+    sessionId: string | undefined,
+    timeoutMs: number
 ): Promise<OpenVikingPrefetchResult> {
     if (!config.prefetchEnabled) {
         return { block: '', source: 'none', diagnostics: ['prefetch_disabled'] };
@@ -838,7 +848,11 @@ async function fetchOpenVikingPrefetchContext(
     let nativeSearchTimedOut = false;
     if (config.searchNativeEnabled) {
         const searchLimit = Math.max(config.prefetchMaxHits * 2, 12);
-        const runNativeSearchAttempt = async (scope: 'session' | 'global', sid?: string): Promise<ReturnType<typeof parseOpenVikingSearchHits>> => {
+        const runNativeSearchAttempt = async (
+            scope: 'session' | 'global',
+            requestTimeoutMs: number,
+            sid?: string
+        ): Promise<ReturnType<typeof parseOpenVikingSearchHits>> => {
             const args = [
                 'search',
                 query,
@@ -850,7 +864,7 @@ async function fetchOpenVikingPrefetchContext(
             if (scope === 'session' && sid) {
                 args.push('--session-id', sid);
             }
-            const searchResponse = await runOpenVikingToolJson(config, workspacePath, agentId, args, config.prefetchTimeoutMs);
+            const searchResponse = await runOpenVikingToolJson(config, workspacePath, agentId, args, requestTimeoutMs);
             return parseOpenVikingSearchHits(searchResponse);
         };
 
@@ -858,7 +872,7 @@ async function fetchOpenVikingPrefetchContext(
             if (sessionId) {
                 let sessionSearchTimedOut = false;
                 try {
-                    const sessionHits = await runNativeSearchAttempt('session', sessionId);
+                    const sessionHits = await runNativeSearchAttempt('session', timeoutMs, sessionId);
                     if (sessionHits.length > 0) {
                         const selectedHits = selectOpenVikingSearchHits(
                             sessionHits,
@@ -883,7 +897,6 @@ async function fetchOpenVikingPrefetchContext(
                     diagnostics.push(`native_search_error_session=${(error as Error).message}`);
                     if (isCommandTimeoutError(error)) {
                         sessionSearchTimedOut = true;
-                        nativeSearchTimedOut = true;
                     }
                 }
 
@@ -892,20 +905,15 @@ async function fetchOpenVikingPrefetchContext(
                 if (!sessionSearchTimedOut) {
                     diagnostics.push('native_search_retry_without_session');
                 } else {
-                    diagnostics.push('native_search_retry_skipped_due_timeout');
+                    diagnostics.push('native_search_retry_without_session_after_timeout');
                 }
             }
 
-            if (nativeSearchTimedOut) {
-                return {
-                    block: '',
-                    source: 'none',
-                    diagnostics: [...diagnostics, 'legacy_fallback_skipped_due_native_timeout'],
-                    fallbackReason: 'native_search_timeout',
-                };
-            }
-
-            const globalHits = await runNativeSearchAttempt('global');
+            const globalRetryTimeoutMs = sessionId
+                ? Math.max(800, Math.min(timeoutMs, 1200))
+                : timeoutMs;
+            diagnostics.push(`native_search_global_timeout_ms=${globalRetryTimeoutMs}`);
+            const globalHits = await runNativeSearchAttempt('global', globalRetryTimeoutMs);
             if (globalHits.length > 0) {
                 const selectedHits = selectOpenVikingSearchHits(
                     globalHits,
@@ -945,7 +953,7 @@ async function fetchOpenVikingPrefetchContext(
         };
     }
 
-    const legacy = await fetchLegacyOpenVikingPrefetchContext(config, workspacePath, agentId, query);
+    const legacy = await fetchLegacyOpenVikingPrefetchContext(config, workspacePath, agentId, query, timeoutMs);
     const fallbackReason = config.searchNativeEnabled
         ? 'native_search_no_hits_or_error'
         : 'native_search_flag_disabled';
@@ -1150,6 +1158,7 @@ async function onSessionReset(ctx: SessionResetContext): Promise<void> {
 }
 
 async function beforeModel(ctx: BeforeModelContext): Promise<BeforeModelHookResult | void> {
+    const beforeModelStartedAt = Date.now();
     const config = resolveOpenVikingContextConfig(ctx.settings);
     if (!config.enabled) return;
 
@@ -1216,8 +1225,29 @@ async function beforeModel(ctx: BeforeModelContext): Promise<BeforeModelHookResu
     }
 
     if (!ctx.isInternal) {
-        const gateDecision = await decidePrefetchGate(config, ctx, message, sessionSetupTimedOut);
-        log('INFO', `OpenViking prefetch gate for @${ctx.agentId}: prefetch_decision=${gateDecision.decision} reason=${gateDecision.reason}`);
+        const hookBudgetMs = resolvePluginHookTimeoutMs();
+        const hookElapsedMs = Date.now() - beforeModelStartedAt;
+        const hookRemainingMs = Math.max(0, hookBudgetMs - hookElapsedMs);
+        const prefetchSafetyMarginMs = 600;
+        const prefetchTimeoutEffectiveMs = Math.max(
+            0,
+            Math.min(config.prefetchTimeoutMs, hookRemainingMs - prefetchSafetyMarginMs)
+        );
+
+        let gateDecision = await decidePrefetchGate(config, ctx, message, sessionSetupTimedOut);
+        if (gateDecision.shouldPrefetch && prefetchTimeoutEffectiveMs < 500) {
+            gateDecision = {
+                decision: 'disabled',
+                shouldPrefetch: false,
+                reason: `hook_budget_insufficient remaining_ms=${hookRemainingMs} elapsed_ms=${hookElapsedMs}`,
+            };
+        }
+
+        log(
+            'INFO',
+            `OpenViking prefetch gate for @${ctx.agentId}: prefetch_decision=${gateDecision.decision} reason=${gateDecision.reason} ` +
+            `hook_budget_ms=${hookBudgetMs} hook_remaining_ms=${hookRemainingMs} prefetch_timeout_effective_ms=${prefetchTimeoutEffectiveMs}`
+        );
         if (gateDecision.shouldPrefetch) {
             try {
                 const prefetch = await fetchOpenVikingPrefetchContext(
@@ -1225,7 +1255,8 @@ async function beforeModel(ctx: BeforeModelContext): Promise<BeforeModelHookResu
                     ctx.workspacePath,
                     ctx.agentId,
                     message,
-                    openVikingSessionId || undefined
+                    openVikingSessionId || undefined,
+                    prefetchTimeoutEffectiveMs
                 );
                 if (prefetch.block) {
                     writeNativePrefetchDump(config, ctx.agentId, message, openVikingSessionId || undefined, prefetch);

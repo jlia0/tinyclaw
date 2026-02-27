@@ -2,6 +2,59 @@
 # Daemon lifecycle management for TinyClaw
 # Handles starting, stopping, restarting, and status checking
 
+resolve_openviking_expected_dimension() {
+    local conf_path="$1"
+    if [ ! -f "$conf_path" ]; then
+        echo ""
+        return 0
+    fi
+    jq -r '(.embedding.dense.dimension // .storage.vectordb.dimension // empty)' "$conf_path" 2>/dev/null
+}
+
+resolve_openviking_actual_dimension() {
+    local data_root="$1"
+    local meta_file="$data_root/vectordb/context/collection_meta.json"
+    if [ ! -f "$meta_file" ]; then
+        echo ""
+        return 0
+    fi
+    jq -r '(
+        .Dimension
+        // .FieldsDict.vector.Dim
+        // ([.Fields[]? | select(.FieldName=="vector") | .Dim][0])
+        // empty
+    )' "$meta_file" 2>/dev/null
+}
+
+ensure_openviking_vector_dimension_consistency() {
+    local conf_path="$1"
+    local data_root="$2"
+    local expected_dim
+    local actual_dim
+
+    expected_dim="$(resolve_openviking_expected_dimension "$conf_path")"
+    actual_dim="$(resolve_openviking_actual_dimension "$data_root")"
+
+    if [ -z "$expected_dim" ] || [ -z "$actual_dim" ]; then
+        return 0
+    fi
+    if [ "$expected_dim" = "$actual_dim" ]; then
+        return 0
+    fi
+
+    local timestamp
+    timestamp="$(date '+%Y%m%d-%H%M%S')"
+    local backup_dir="${data_root}-backup-dim${actual_dim}-to-${expected_dim}-${timestamp}"
+
+    log "OpenViking vectordb dimension mismatch detected (actual=${actual_dim}, expected=${expected_dim}). Rebuilding runtime data with backup: ${backup_dir}"
+    echo -e "${YELLOW}OpenViking vectordb dimension mismatch detected (${actual_dim} -> ${expected_dim}). Backing up and rebuilding data...${NC}"
+
+    if [ -d "$data_root" ]; then
+        mv "$data_root" "$backup_dir"
+    fi
+    mkdir -p "$data_root"
+}
+
 # Start daemon
 start_daemon() {
     if session_exists; then
@@ -112,6 +165,9 @@ start_daemon() {
             echo "Run 'tinyclaw setup' again to regenerate OpenViking config."
             return 1
         fi
+        if ! curl -fsS --max-time 2 "$OPENVIKING_BASE_URL/health" >/dev/null 2>&1; then
+            ensure_openviking_vector_dimension_consistency "$OPENVIKING_CONFIG_PATH" "$SCRIPT_DIR/data"
+        fi
         if curl -fsS --max-time 2 "$OPENVIKING_BASE_URL/health" >/dev/null 2>&1; then
             openviking_started_outside=true
         else
@@ -167,6 +223,11 @@ start_daemon() {
             echo "TINYCLAW_OPENVIKING_AUTOSYNC=0" >> "$env_file"
         fi
         echo "TINYCLAW_OPENVIKING_PREFETCH_TIMEOUT_MS=${OPENVIKING_PREFETCH_TIMEOUT_MS}" >> "$env_file"
+        local plugin_hook_timeout_ms=$((OPENVIKING_PREFETCH_TIMEOUT_MS + 2000))
+        if [ "$plugin_hook_timeout_ms" -lt 8000 ]; then
+            plugin_hook_timeout_ms=8000
+        fi
+        echo "TINYCLAW_PLUGIN_HOOK_TIMEOUT_MS=${plugin_hook_timeout_ms}" >> "$env_file"
         echo "TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS=${OPENVIKING_COMMIT_TIMEOUT_MS}" >> "$env_file"
         echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS=${OPENVIKING_PREFETCH_MAX_CHARS}" >> "$env_file"
         echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS=${OPENVIKING_PREFETCH_MAX_TURNS}" >> "$env_file"

@@ -326,6 +326,8 @@ Setup integration:
 - `tinyclaw setup` now prompts whether to enable OpenViking memory
 - if enabled, setup can install OpenViking CLI and generate `~/.openviking/ov.conf` (includes LLM API key for OpenViking internals)
 - `tinyclaw start` auto-starts OpenViking server (when enabled + auto_start) and exports OpenViking env vars for channel/queue processes
+- OpenViking runtime data is stored under TinyClaw workspace `./data` (relative to the TinyClaw repo root)
+- on startup, TinyClaw checks vectordb dimension compatibility and auto-backs up/rebuilds `./data` when mismatch is detected
 
 Feature flags:
 
