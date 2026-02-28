@@ -908,7 +908,7 @@ async function fetchOpenVikingPrefetchContext(
             }
 
             const globalRetryTimeoutMs = sessionId
-                ? Math.max(800, Math.min(timeoutMs, 1200))
+                ? Math.max(800, Math.min(timeoutMs, 5000))
                 : timeoutMs;
             diagnostics.push(`native_search_global_timeout_ms=${globalRetryTimeoutMs}`);
             const globalHits = await runNativeSearchAttempt('global', globalRetryTimeoutMs);
