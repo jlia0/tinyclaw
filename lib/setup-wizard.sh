@@ -253,6 +253,31 @@ OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW=1
 OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH=2
 OPENVIKING_PREFETCH_LLM_TIMEOUT_MS=7000
 OPENVIKING_CLOSED_SESSION_RETENTION_DAYS=0
+OPENVIKING_PINNED_VERSION="0.1.18"
+
+get_installed_openviking_version() {
+    if ! command -v python3 &> /dev/null; then
+        return 0
+    fi
+    python3 - <<'PY' 2>/dev/null || true
+import importlib.metadata as m
+try:
+    print(m.version("openviking"))
+except Exception:
+    pass
+PY
+}
+
+install_openviking_version() {
+    local pinned_version="$1"
+    if ! python3 -m pip install --user --upgrade "openviking==${pinned_version}"; then
+        echo -e "${YELLOW}Default pip install failed. Retrying with PEP 668 override...${NC}"
+        if ! python3 -m pip install --user --upgrade --break-system-packages "openviking==${pinned_version}"; then
+            return 1
+        fi
+    fi
+    return 0
+}
 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  OpenViking Memory (Optional)${NC}"
@@ -283,19 +308,32 @@ if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
     OPENVIKING_CONF_DIR="$(dirname "$OPENVIKING_CONFIG_PATH")"
     mkdir -p "$OPENVIKING_CONF_DIR"
 
-    if ! command -v openviking &> /dev/null; then
-        echo -e "${YELLOW}OpenViking CLI not found. Installing with pip...${NC}"
-        if ! command -v python3 &> /dev/null; then
-            echo -e "${RED}python3 is required to install OpenViking${NC}"
+    if ! command -v python3 &> /dev/null; then
+        echo -e "${RED}python3 is required to install OpenViking${NC}"
+        exit 1
+    fi
+
+    CURRENT_OPENVIKING_VERSION="$(get_installed_openviking_version)"
+    if [ -z "$CURRENT_OPENVIKING_VERSION" ]; then
+        echo -e "${YELLOW}OpenViking not found. Installing pinned version ${OPENVIKING_PINNED_VERSION}...${NC}"
+        if ! install_openviking_version "$OPENVIKING_PINNED_VERSION"; then
+            echo -e "${RED}Failed to install pinned openviking ${OPENVIKING_PINNED_VERSION}${NC}"
             exit 1
         fi
-        if ! python3 -m pip install --user --upgrade openviking; then
-            echo -e "${YELLOW}Default pip install failed. Retrying with PEP 668 override...${NC}"
-            if ! python3 -m pip install --user --upgrade --break-system-packages openviking; then
-                echo -e "${RED}Failed to install openviking package${NC}"
-                exit 1
-            fi
+    elif [ "$CURRENT_OPENVIKING_VERSION" != "$OPENVIKING_PINNED_VERSION" ]; then
+        echo -e "${YELLOW}OpenViking version mismatch (installed=${CURRENT_OPENVIKING_VERSION}, pinned=${OPENVIKING_PINNED_VERSION}). Reinstalling pinned version...${NC}"
+        if ! install_openviking_version "$OPENVIKING_PINNED_VERSION"; then
+            echo -e "${RED}Failed to install pinned openviking ${OPENVIKING_PINNED_VERSION}${NC}"
+            exit 1
         fi
+    else
+        echo -e "${GREEN}✓ OpenViking pinned version already installed: ${OPENVIKING_PINNED_VERSION}${NC}"
+    fi
+
+    CURRENT_OPENVIKING_VERSION="$(get_installed_openviking_version)"
+    if [ "$CURRENT_OPENVIKING_VERSION" != "$OPENVIKING_PINNED_VERSION" ]; then
+        echo -e "${RED}OpenViking version verification failed (expected=${OPENVIKING_PINNED_VERSION}, actual=${CURRENT_OPENVIKING_VERSION:-missing})${NC}"
+        exit 1
     fi
 
     if ! command -v jq &> /dev/null; then

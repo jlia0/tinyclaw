@@ -324,7 +324,7 @@ TinyClaw supports OpenViking native session lifecycle as the primary write path:
 Setup integration:
 
 - `tinyclaw setup` now prompts whether to enable OpenViking memory
-- if enabled, setup can install OpenViking CLI and generate `~/.openviking/ov.conf` (includes LLM API key for OpenViking internals)
+- if enabled, setup installs a pinned OpenViking version (`0.1.18`) and generates `~/.openviking/ov.conf` (includes LLM API key for OpenViking internals)
 - `tinyclaw start` auto-starts OpenViking server (when enabled + auto_start) and exports OpenViking env vars for channel/queue processes
 - OpenViking runtime data is stored under TinyClaw workspace `./data` (relative to the TinyClaw repo root)
 - on startup, TinyClaw checks vectordb dimension compatibility and auto-backs up/rebuilds `./data` when mismatch is detected
