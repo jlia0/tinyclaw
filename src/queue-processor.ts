@@ -14,314 +14,61 @@
  *   - Conversations complete when all branches resolve (no more pending mentions)
  */
 
-import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-import { MessageData, ResponseData, QueueFile, ChainStep, Conversation, TeamConfig } from './lib/types';
+import { MessageData, Conversation, TeamConfig } from './lib/types';
 import {
-    QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING,
-    LOG_FILE, EVENTS_DIR, CHATS_DIR, FILES_DIR,
-    TINYCLAW_HOME, getSettings, getAgents, getTeams
+    LOG_FILE, CHATS_DIR, FILES_DIR,
+    getSettings, getAgents, getTeams
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
-import { jsonrepair } from 'jsonrepair';
+import { loadPlugins, runIncomingHooks, runOutgoingHooks } from './lib/plugins';
+import { startApiServer } from './server';
 import {
-    loadPlugins,
-    runIncomingHooks,
-    runOutgoingHooks,
-    runBeforeModelHooks,
-    runAfterModelHooks,
-    runSessionResetHooks,
-    runStartupHooks,
-    runHealthHooks,
-    runSessionEndHooks,
-} from './lib/plugins';
-import { ensureAgentDirectory } from './lib/agent-setup';
-
-/** Parse JSON with automatic repair for malformed content (e.g. bad escapes). */
-function safeParseJSON<T = unknown>(raw: string, label?: string): T {
-    try {
-        return JSON.parse(raw);
-    } catch {
-        log('WARN', `Invalid JSON${label ? ` in ${label}` : ''}, attempting auto-repair`);
-        return JSON.parse(jsonrepair(raw));
-    }
-}
+    initQueueDb, claimNextMessage, completeMessage as dbCompleteMessage,
+    failMessage, enqueueResponse, getPendingAgents, recoverStaleMessages,
+    pruneAckedResponses, pruneCompletedMessages, closeQueueDb, queueEvents, DbMessage,
+} from './lib/db';
+import { handleLongResponse, collectFiles } from './lib/response';
+import {
+    conversations, MAX_CONVERSATION_MESSAGES, enqueueInternalMessage, completeConversation,
+    withConversationLock, incrementPending, decrementPending,
+} from './lib/conversation';
 
 // Ensure directories exist
-[QUEUE_INCOMING, QUEUE_OUTGOING, QUEUE_PROCESSING, FILES_DIR, path.dirname(LOG_FILE)].forEach(dir => {
+[FILES_DIR, path.dirname(LOG_FILE), CHATS_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
 });
 
-const RUNTIME_DIR = path.join(TINYCLAW_HOME, 'runtime');
-const QUEUE_PROCESSOR_LOCK_FILE = path.join(RUNTIME_DIR, 'queue-processor.lock');
-let queueProcessorLockFd: number | null = null;
-
-function isPidRunning(pid: number): boolean {
-    if (!Number.isFinite(pid) || pid <= 0) return false;
+// Process a single message from the DB
+async function processMessage(dbMsg: DbMessage): Promise<void> {
     try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'EPERM';
-    }
-}
+        const channel = dbMsg.channel;
+        const sender = dbMsg.sender;
+        const rawMessage = dbMsg.message;
+        const messageId = dbMsg.message_id;
+        const isInternal = !!dbMsg.conversation_id;
+        const files: string[] = dbMsg.files ? JSON.parse(dbMsg.files) : [];
 
-function releaseQueueProcessorLock(): void {
-    if (queueProcessorLockFd !== null) {
-        try {
-            fs.closeSync(queueProcessorLockFd);
-        } catch {
-            // Ignore lock fd close errors during shutdown.
-        }
-        queueProcessorLockFd = null;
-    }
-    try {
-        if (fs.existsSync(QUEUE_PROCESSOR_LOCK_FILE)) {
-            fs.unlinkSync(QUEUE_PROCESSOR_LOCK_FILE);
-        }
-    } catch {
-        // Ignore lock file cleanup errors during shutdown.
-    }
-}
+        // Build a MessageData-like object for compatibility
+        const messageData: MessageData = {
+            channel,
+            sender,
+            senderId: dbMsg.sender_id ?? undefined,
+            message: rawMessage,
+            timestamp: dbMsg.created_at,
+            messageId,
+            agent: dbMsg.agent ?? undefined,
+            files: files.length > 0 ? files : undefined,
+            conversationId: dbMsg.conversation_id ?? undefined,
+            fromAgent: dbMsg.from_agent ?? undefined,
+        };
 
-function acquireQueueProcessorLock(): boolean {
-    if (!fs.existsSync(RUNTIME_DIR)) {
-        fs.mkdirSync(RUNTIME_DIR, { recursive: true });
-    }
-
-    for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-            const fd = fs.openSync(QUEUE_PROCESSOR_LOCK_FILE, 'wx');
-            queueProcessorLockFd = fd;
-            const payload = {
-                pid: process.pid,
-                startedAt: new Date().toISOString(),
-            };
-            fs.writeFileSync(fd, JSON.stringify(payload, null, 2) + '\n', 'utf8');
-            return true;
-        } catch (error) {
-            const err = error as NodeJS.ErrnoException;
-            if (err.code !== 'EEXIST') {
-                log('ERROR', `Failed to acquire queue processor lock: ${err.message}`);
-                return false;
-            }
-
-            try {
-                const raw = fs.readFileSync(QUEUE_PROCESSOR_LOCK_FILE, 'utf8');
-                const lock = JSON.parse(raw) as { pid?: number };
-                const pid = Number(lock?.pid || 0);
-                if (isPidRunning(pid)) {
-                    log('WARN', `Queue processor already running (pid=${pid}), exiting duplicate instance`);
-                    return false;
-                }
-                fs.unlinkSync(QUEUE_PROCESSOR_LOCK_FILE);
-                log('WARN', `Removed stale queue processor lock (pid=${pid || 'unknown'})`);
-            } catch {
-                try {
-                    fs.unlinkSync(QUEUE_PROCESSOR_LOCK_FILE);
-                    log('WARN', 'Removed unreadable queue processor lock file');
-                } catch (unlinkError) {
-                    log('ERROR', `Failed to clear queue processor lock: ${(unlinkError as Error).message}`);
-                    return false;
-                }
-            }
-        }
-    }
-
-    log('ERROR', 'Failed to acquire queue processor lock after stale-lock recovery');
-    return false;
-}
-
-// Files currently queued in a promise chain — prevents duplicate processing across ticks
-const queuedFiles = new Set<string>();
-
-// Active conversations — tracks in-flight team message passing
-const conversations = new Map<string, Conversation>();
-
-const MAX_CONVERSATION_MESSAGES = 50;
-function sanitizeResponseMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
-    const allowed: Record<string, unknown> = {};
-    const parseMode = metadata.parseMode;
-    if (parseMode === 'MarkdownV2') {
-        allowed.parseMode = parseMode;
-    }
-    return allowed;
-}
-
-// Clean up orphaned files from processing/ on startup
-function recoverOrphanedFiles() {
-    for (const f of fs.readdirSync(QUEUE_PROCESSING).filter(f => f.endsWith('.json'))) {
-        try {
-            fs.unlinkSync(path.join(QUEUE_PROCESSING, f));
-            log('INFO', `Cleared orphaned file: ${f}`);
-        } catch (error) {
-            log('ERROR', `Failed to clear orphaned file ${f}: ${(error as Error).message}`);
-        }
-    }
-}
-
-/**
- * Enqueue an internal (agent-to-agent) message into QUEUE_INCOMING.
- */
-function enqueueInternalMessage(
-    conversationId: string,
-    fromAgent: string,
-    targetAgent: string,
-    message: string,
-    originalData: MessageData
-): void {
-    const internalMessage: MessageData = {
-        channel: originalData.channel,
-        sender: originalData.sender,
-        senderId: originalData.senderId,
-        message,
-        timestamp: Date.now(),
-        messageId: originalData.messageId,
-        agent: targetAgent,
-        conversationId,
-        fromAgent,
-    };
-
-    const filename = `internal_${conversationId}_${targetAgent}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.json`;
-    fs.writeFileSync(path.join(QUEUE_INCOMING, filename), JSON.stringify(internalMessage, null, 2));
-    log('INFO', `Enqueued internal message: @${fromAgent} → @${targetAgent}`);
-}
-
-/**
- * Collect files from a response text.
- */
-function collectFiles(response: string, fileSet: Set<string>): void {
-    const fileRegex = /\[send_file:\s*([^\]]+)\]/g;
-    let match: RegExpExecArray | null;
-    while ((match = fileRegex.exec(response)) !== null) {
-        const filePath = match[1].trim();
-        if (fs.existsSync(filePath)) fileSet.add(filePath);
-    }
-}
-
-/**
- * Complete a conversation: aggregate responses, write to outgoing queue, save chat history.
- */
-async function completeConversation(conv: Conversation): Promise<void> {
-    const settings = getSettings();
-    const agents = getAgents(settings);
-
-    log('INFO', `Conversation ${conv.id} complete — ${conv.responses.length} response(s), ${conv.totalMessages} total message(s)`);
-    emitEvent('team_chain_end', {
-        teamId: conv.teamContext.teamId,
-        totalSteps: conv.responses.length,
-        agents: conv.responses.map(s => s.agentId),
-    });
-
-    // Aggregate responses
-    let finalResponse: string;
-    if (conv.responses.length === 1) {
-        finalResponse = conv.responses[0].response;
-    } else {
-        finalResponse = conv.responses
-            .map(step => `@${step.agentId}: ${step.response}`)
-            .join('\n\n------\n\n');
-    }
-
-    // Save chat history
-    try {
-        const teamChatsDir = path.join(CHATS_DIR, conv.teamContext.teamId);
-        if (!fs.existsSync(teamChatsDir)) {
-            fs.mkdirSync(teamChatsDir, { recursive: true });
-        }
-        const chatLines: string[] = [];
-        chatLines.push(`# Team Conversation: ${conv.teamContext.team.name} (@${conv.teamContext.teamId})`);
-        chatLines.push(`**Date:** ${new Date().toISOString()}`);
-        chatLines.push(`**Channel:** ${conv.channel} | **Sender:** ${conv.sender}`);
-        chatLines.push(`**Messages:** ${conv.totalMessages}`);
-        chatLines.push('');
-        chatLines.push('------');
-        chatLines.push('');
-        chatLines.push(`## User Message`);
-        chatLines.push('');
-        chatLines.push(conv.originalMessage);
-        chatLines.push('');
-        for (let i = 0; i < conv.responses.length; i++) {
-            const step = conv.responses[i];
-            const stepAgent = agents[step.agentId];
-            const stepLabel = stepAgent ? `${stepAgent.name} (@${step.agentId})` : `@${step.agentId}`;
-            chatLines.push('------');
-            chatLines.push('');
-            chatLines.push(`## ${stepLabel}`);
-            chatLines.push('');
-            chatLines.push(step.response);
-            chatLines.push('');
-        }
-        const now = new Date();
-        const dateTime = now.toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
-        fs.writeFileSync(path.join(teamChatsDir, `${dateTime}.md`), chatLines.join('\n'));
-        log('INFO', `Chat history saved`);
-    } catch (e) {
-        log('ERROR', `Failed to save chat history: ${(e as Error).message}`);
-    }
-
-    // Detect file references
-    finalResponse = finalResponse.trim();
-    const outboundFilesSet = new Set<string>(conv.files);
-    collectFiles(finalResponse, outboundFilesSet);
-    const outboundFiles = Array.from(outboundFilesSet);
-
-    // Remove [send_file: ...] tags
-    if (outboundFiles.length > 0) {
-        finalResponse = finalResponse.replace(/\[send_file:\s*[^\]]+\]/g, '').trim();
-    }
-
-    // Remove [@agent: ...] tags from final response
-    finalResponse = finalResponse.replace(/\[@\S+?:\s*[\s\S]*?\]/g, '').trim();
-
-    // Run outgoing hooks
-    const { text: hookedResponse, metadata } = await runOutgoingHooks(finalResponse, { channel: conv.channel, sender: conv.sender, messageId: conv.messageId, originalMessage: conv.originalMessage });
-    const safeMetadata = sanitizeResponseMetadata(metadata);
-
-    // Write to outgoing queue
-    const responseData: ResponseData = {
-        channel: conv.channel,
-        sender: conv.sender,
-        message: hookedResponse,
-        originalMessage: conv.originalMessage,
-        timestamp: Date.now(),
-        messageId: conv.messageId,
-        files: outboundFiles.length > 0 ? outboundFiles : undefined,
-        metadata: Object.keys(safeMetadata).length > 0 ? safeMetadata : undefined,
-    };
-
-    const responseFile = conv.channel === 'heartbeat'
-        ? path.join(QUEUE_OUTGOING, `${conv.messageId}.json`)
-        : path.join(QUEUE_OUTGOING, `${conv.channel}_${conv.messageId}_${Date.now()}.json`);
-
-    fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
-
-    log('INFO', `✓ Response ready [${conv.channel}] ${conv.sender} (${finalResponse.length} chars)`);
-    emitEvent('response_ready', { channel: conv.channel, sender: conv.sender, responseLength: finalResponse.length, responseText: finalResponse, messageId: conv.messageId });
-
-    // Clean up
-    conversations.delete(conv.id);
-}
-
-// Process a single message
-async function processMessage(messageFile: string): Promise<void> {
-    const processingFile = path.join(QUEUE_PROCESSING, path.basename(messageFile));
-
-    try {
-        // Move to processing to mark as in-progress
-        fs.renameSync(messageFile, processingFile);
-
-        // Read message
-        const messageData: MessageData = safeParseJSON(fs.readFileSync(processingFile, 'utf8'), path.basename(processingFile));
-        const { channel, sender, message: rawMessage, timestamp, messageId } = messageData;
-        const isInternal = !!messageData.conversationId;
-
-        log('INFO', `Processing [${isInternal ? 'internal' : channel}] ${isInternal ? `@${messageData.fromAgent}→@${messageData.agent}` : `from ${sender}`}: ${rawMessage.substring(0, 50)}...`);
+        log('INFO', `Processing [${isInternal ? 'internal' : channel}] ${isInternal ? `@${dbMsg.from_agent}→@${dbMsg.agent}` : `from ${sender}`}: ${rawMessage.substring(0, 50)}...`);
         if (!isInternal) {
             emitEvent('message_received', { channel, sender, message: rawMessage.substring(0, 120), messageId });
         }
@@ -351,26 +98,6 @@ async function processMessage(messageFile: string): Promise<void> {
             isTeamRouted = !!routing.isTeam;
         }
 
-        // Easter egg: Handle multiple agent mentions (only for external messages)
-        if (!isInternal && agentId === 'error') {
-            log('INFO', `Multiple agents detected, sending easter egg message`);
-
-            const responseFile = path.join(QUEUE_OUTGOING, path.basename(processingFile));
-            const responseData: ResponseData = {
-                channel,
-                sender,
-                message: message,
-                originalMessage: rawMessage,
-                timestamp: Date.now(),
-                messageId,
-            };
-
-            fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
-            fs.unlinkSync(processingFile);
-            log('INFO', `✓ Easter egg sent to ${sender}`);
-            return;
-        }
-
         // Fall back to default if agent not found
         if (!agents[agentId]) {
             agentId = 'default';
@@ -383,7 +110,6 @@ async function processMessage(messageFile: string): Promise<void> {
         }
 
         const agent = agents[agentId];
-        ensureAgentDirectory(path.join(workspacePath, agentId));
         log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
         if (!isInternal) {
             emitEvent('agent_routed', { agentId, agentName: agent.name, provider: agent.provider, model: agent.model, isTeamRouted });
@@ -412,25 +138,9 @@ async function processMessage(messageFile: string): Promise<void> {
         // Check for per-agent reset
         const agentResetFlag = getAgentResetFlag(agentId, workspacePath);
         const shouldReset = fs.existsSync(agentResetFlag);
-        const userMessageForSession = message;
-        const modelHookBaseContext = {
-            settings,
-            messageData,
-            channel,
-            sender,
-            messageId,
-            originalMessage: rawMessage,
-            agentId,
-            agent,
-            workspacePath,
-            isInternal,
-            shouldReset,
-            userMessageForSession,
-        };
 
         if (shouldReset) {
             fs.unlinkSync(agentResetFlag);
-            await runSessionResetHooks(modelHookBaseContext);
         }
 
         // For internal messages: append pending response indicator so the agent
@@ -448,9 +158,6 @@ async function processMessage(messageFile: string): Promise<void> {
 
         // Run incoming hooks
         ({ text: message } = await runIncomingHooks(message, { channel, sender, messageId, originalMessage: rawMessage }));
-        const beforeModel = await runBeforeModelHooks(message, modelHookBaseContext);
-        message = beforeModel.message;
-        const modelHookStates = beforeModel.states;
 
         // Invoke agent
         emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: messageData.fromAgent || null });
@@ -465,11 +172,6 @@ async function processMessage(messageFile: string): Promise<void> {
         }
 
         emitEvent('chain_step_done', { agentId, agentName: agent.name, responseLength: response.length, responseText: response });
-        await runAfterModelHooks(
-            response,
-            { ...modelHookBaseContext, message },
-            modelHookStates
-        );
 
         // --- No team context: simple response to user ---
         if (!teamContext) {
@@ -485,30 +187,26 @@ async function processMessage(messageFile: string): Promise<void> {
 
             // Run outgoing hooks
             const { text: hookedResponse, metadata } = await runOutgoingHooks(finalResponse, { channel, sender, messageId, originalMessage: rawMessage });
-            const safeMetadata = sanitizeResponseMetadata(metadata);
 
-            const responseData: ResponseData = {
+            // Handle long responses — send as file attachment
+            const { message: responseMessage, files: allFiles } = handleLongResponse(hookedResponse, outboundFiles);
+
+            enqueueResponse({
                 channel,
                 sender,
-                message: hookedResponse,
+                senderId: dbMsg.sender_id ?? undefined,
+                message: responseMessage,
                 originalMessage: rawMessage,
-                timestamp: Date.now(),
                 messageId,
                 agent: agentId,
-                files: outboundFiles.length > 0 ? outboundFiles : undefined,
-                metadata: Object.keys(safeMetadata).length > 0 ? safeMetadata : undefined,
-            };
-
-            const responseFile = channel === 'heartbeat'
-                ? path.join(QUEUE_OUTGOING, `${messageId}.json`)
-                : path.join(QUEUE_OUTGOING, `${channel}_${messageId}_${Date.now()}.json`);
-
-            fs.writeFileSync(responseFile, JSON.stringify(responseData, null, 2));
+                files: allFiles.length > 0 ? allFiles : undefined,
+                metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+            });
 
             log('INFO', `✓ Response ready [${channel}] ${sender} via agent:${agentId} (${finalResponse.length} chars)`);
             emitEvent('response_ready', { channel, sender, agentId, responseLength: finalResponse.length, responseText: finalResponse, messageId });
 
-            fs.unlinkSync(processingFile);
+            dbCompleteMessage(dbMsg.id);
             return;
         }
 
@@ -553,120 +251,79 @@ async function processMessage(messageFile: string): Promise<void> {
 
         if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
             // Enqueue internal messages for each mention
-            conv.pending += teammateMentions.length;
+            incrementPending(conv, teammateMentions.length);
             conv.outgoingMentions.set(agentId, teammateMentions.length);
             for (const mention of teammateMentions) {
                 log('INFO', `@${agentId} → @${mention.teammateId}`);
                 emitEvent('chain_handoff', { teamId: conv.teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
 
                 const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
-                enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, messageData);
+                enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, {
+                    channel: messageData.channel,
+                    sender: messageData.sender,
+                    senderId: messageData.senderId,
+                    messageId: messageData.messageId,
+                });
             }
         } else if (teammateMentions.length > 0) {
             log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing further mentions`);
         }
 
-        // This branch is done
-        conv.pending--;
+        // This branch is done - use atomic decrement with locking
+        await withConversationLock(conv.id, async () => {
+            const shouldComplete = decrementPending(conv);
 
-        if (conv.pending === 0) {
-            await completeConversation(conv);
-        } else {
-            log('INFO', `Conversation ${conv.id}: ${conv.pending} branch(es) still pending`);
-        }
+            if (shouldComplete) {
+                completeConversation(conv);
+            } else {
+                log('INFO', `Conversation ${conv.id}: ${conv.pending} branch(es) still pending`);
+            }
+        });
 
-        // Clean up processing file
-        fs.unlinkSync(processingFile);
+        // Mark message as completed in DB
+        dbCompleteMessage(dbMsg.id);
 
     } catch (error) {
         log('ERROR', `Processing error: ${(error as Error).message}`);
-
-        // Move back to incoming for retry
-        if (fs.existsSync(processingFile)) {
-            try {
-                fs.renameSync(processingFile, messageFile);
-            } catch (e) {
-                log('ERROR', `Failed to move file back: ${(e as Error).message}`);
-            }
-        }
+        failMessage(dbMsg.id, (error as Error).message);
     }
 }
 
 // Per-agent processing chains - ensures messages to same agent are sequential
 const agentProcessingChains = new Map<string, Promise<void>>();
 
-/**
- * Peek at a message file to determine which agent it's routed to.
- * Also resolves team IDs to their leader agent.
- */
-function peekAgentId(filePath: string): string {
-    try {
-        const messageData = safeParseJSON<MessageData>(fs.readFileSync(filePath, 'utf8'));
-        const settings = getSettings();
-        const agents = getAgents(settings);
-        const teams = getTeams(settings);
-
-        // Check for pre-routed agent
-        if (messageData.agent && agents[messageData.agent]) {
-            return messageData.agent;
-        }
-
-        // Parse @agent_id or @team_id prefix
-        const routing = parseAgentRouting(messageData.message || '', agents, teams);
-        return routing.agentId || 'default';
-    } catch {
-        return 'default';
-    }
-}
-
 // Main processing loop
 async function processQueue(): Promise<void> {
     try {
-        // Get all files from incoming queue, sorted by timestamp
-        const files: QueueFile[] = fs.readdirSync(QUEUE_INCOMING)
-            .filter(f => f.endsWith('.json'))
-            .map(f => ({
-                name: f,
-                path: path.join(QUEUE_INCOMING, f),
-                time: fs.statSync(path.join(QUEUE_INCOMING, f)).mtimeMs
-            }))
-            .sort((a, b) => a.time - b.time);
+        // Get all agents with pending messages
+        const pendingAgents = getPendingAgents();
 
-        if (files.length > 0) {
-            log('DEBUG', `Found ${files.length} message(s) in queue`);
+        if (pendingAgents.length === 0) return;
 
-            // Process messages in parallel by agent (sequential within each agent)
-            for (const file of files) {
-                // Skip files already queued in a promise chain
-                if (queuedFiles.has(file.name)) continue;
-                queuedFiles.add(file.name);
+        for (const agentId of pendingAgents) {
+            // Claim next message for this agent
+            const dbMsg = claimNextMessage(agentId);
+            if (!dbMsg) continue;
 
-                // Determine target agent
-                const agentId = peekAgentId(file.path);
+            // Get or create promise chain for this agent
+            const currentChain = agentProcessingChains.get(agentId) || Promise.resolve();
 
-                // Get or create promise chain for this agent
-                const currentChain = agentProcessingChains.get(agentId) || Promise.resolve();
-
-                // Chain this message to the agent's promise
-                const newChain = currentChain
-                    .then(() => processMessage(file.path))
-                    .catch(error => {
-                        log('ERROR', `Error processing message for agent ${agentId}: ${error.message}`);
-                    })
-                    .finally(() => {
-                        queuedFiles.delete(file.name);
-                    });
-
-                // Update the chain
-                agentProcessingChains.set(agentId, newChain);
-
-                // Clean up completed chains to avoid memory leaks
-                newChain.finally(() => {
-                    if (agentProcessingChains.get(agentId) === newChain) {
-                        agentProcessingChains.delete(agentId);
-                    }
+            // Chain this message to the agent's promise
+            const newChain = currentChain
+                .then(() => processMessage(dbMsg))
+                .catch(error => {
+                    log('ERROR', `Error processing message for agent ${agentId}: ${error.message}`);
                 });
-            }
+
+            // Update the chain
+            agentProcessingChains.set(agentId, newChain);
+
+            // Clean up completed chains to avoid memory leaks
+            newChain.finally(() => {
+                if (agentProcessingChains.get(agentId) === newChain) {
+                    agentProcessingChains.delete(agentId);
+                }
+            });
         }
     } catch (error) {
         log('ERROR', `Queue processing error: ${(error as Error).message}`);
@@ -694,53 +351,70 @@ function logAgentConfig(): void {
     }
 }
 
-// Ensure events dir exists
-if (!fs.existsSync(EVENTS_DIR)) {
-    fs.mkdirSync(EVENTS_DIR, { recursive: true });
+// ─── Start ──────────────────────────────────────────────────────────────────
+
+// Initialize SQLite queue
+initQueueDb();
+
+// Recover stale messages from previous crash
+const recovered = recoverStaleMessages();
+if (recovered > 0) {
+    log('INFO', `Recovered ${recovered} stale message(s) from previous session`);
 }
 
-// Main loop
-(async () => {
-    if (!acquireQueueProcessorLock()) {
-        process.exit(0);
-    }
-    log('INFO', 'Queue processor started');
-    recoverOrphanedFiles();
-    const startupSettings = getSettings();
-    await loadPlugins();
-    await runStartupHooks({ settings: startupSettings });
-    const pluginHealth = await runHealthHooks({ settings: startupSettings });
-    for (const health of pluginHealth) {
-        log(
-            'INFO',
-            `Plugin health: ${health.plugin} status=${health.result.status} summary=${health.result.summary}`
-        );
-    }
-    log('INFO', `Watching: ${QUEUE_INCOMING}`);
-    logAgentConfig();
-    emitEvent('processor_start', { agents: Object.keys(getAgents(startupSettings)), teams: Object.keys(getTeams(startupSettings)) });
+// Start the API server (passes conversations for queue status reporting)
+const apiServer = startApiServer(conversations);
 
-    // Process queue every 1 second
-    setInterval(processQueue, 1000);
+// Load plugins (async IIFE to avoid top-level await)
+(async () => {
+    await loadPlugins();
 })();
 
-// Graceful shutdown
-let isShuttingDown = false;
-async function gracefulShutdown(signal: string): Promise<void> {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-    log('INFO', `Shutting down queue processor... (${signal})`);
-    await runSessionEndHooks({
-        settings: getSettings(),
-        reason: 'shutdown',
-        signal,
-    });
-    releaseQueueProcessorLock();
-    process.exit(0);
-}
+log('INFO', 'Queue processor started (SQLite-backed)');
+logAgentConfig();
+emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), teams: Object.keys(getTeams(getSettings())) });
 
-process.on('SIGINT', () => { void gracefulShutdown('SIGINT'); });
-process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
-process.on('exit', () => {
-    releaseQueueProcessorLock();
+// Event-driven: all messages come through the API server (same process)
+queueEvents.on('message:enqueued', () => processQueue());
+
+// Periodic maintenance
+setInterval(() => {
+    const count = recoverStaleMessages();
+    if (count > 0) log('INFO', `Recovered ${count} stale message(s)`);
+}, 5 * 60 * 1000); // every 5 min
+
+setInterval(() => {
+    // Clean up old conversations (TTL: 30 min)
+    const cutoff = Date.now() - 30 * 60 * 1000;
+    for (const [id, conv] of conversations.entries()) {
+        if (conv.startTime < cutoff) {
+            log('WARN', `Conversation ${id} timed out after 30 min — cleaning up`);
+            conversations.delete(id);
+        }
+    }
+}, 30 * 60 * 1000); // every 30 min
+
+setInterval(() => {
+    const pruned = pruneAckedResponses();
+    if (pruned > 0) log('INFO', `Pruned ${pruned} acked response(s)`);
+}, 60 * 60 * 1000); // every 1 hr
+
+setInterval(() => {
+    const pruned = pruneCompletedMessages();
+    if (pruned > 0) log('INFO', `Pruned ${pruned} completed message(s)`);
+}, 60 * 60 * 1000); // every 1 hr
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+    log('INFO', 'Shutting down queue processor...');
+    closeQueueDb();
+    apiServer.close();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    log('INFO', 'Shutting down queue processor...');
+    closeQueueDb();
+    apiServer.close();
+    process.exit(0);
 });
