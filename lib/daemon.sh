@@ -2,6 +2,81 @@
 # Daemon lifecycle management for TinyClaw
 # Handles starting, stopping, restarting, and status checking
 
+graceful_stop_queue_processor() {
+    local timeout_s="${1:-45}"
+    local queue_pid=""
+    queue_pid="$(pgrep -f "dist/queue-processor.js" | head -n 1 || true)"
+    if [ -z "$queue_pid" ]; then
+        return 0
+    fi
+
+    # Trigger graceful shutdown so onSessionEnd hooks can commit sessions.
+    kill -TERM "$queue_pid" 2>/dev/null || true
+
+    local waited=0
+    while kill -0 "$queue_pid" 2>/dev/null; do
+        if [ "$waited" -ge "$timeout_s" ]; then
+            log "Queue graceful shutdown timed out after ${timeout_s}s; forcing stop"
+            break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
+resolve_openviking_expected_dimension() {
+    local conf_path="$1"
+    if [ ! -f "$conf_path" ]; then
+        echo ""
+        return 0
+    fi
+    jq -r '(.embedding.dense.dimension // .storage.vectordb.dimension // empty)' "$conf_path" 2>/dev/null
+}
+
+resolve_openviking_actual_dimension() {
+    local data_root="$1"
+    local meta_file="$data_root/vectordb/context/collection_meta.json"
+    if [ ! -f "$meta_file" ]; then
+        echo ""
+        return 0
+    fi
+    jq -r '(
+        .Dimension
+        // .FieldsDict.vector.Dim
+        // ([.Fields[]? | select(.FieldName=="vector") | .Dim][0])
+        // empty
+    )' "$meta_file" 2>/dev/null
+}
+
+ensure_openviking_vector_dimension_consistency() {
+    local conf_path="$1"
+    local data_root="$2"
+    local expected_dim
+    local actual_dim
+
+    expected_dim="$(resolve_openviking_expected_dimension "$conf_path")"
+    actual_dim="$(resolve_openviking_actual_dimension "$data_root")"
+
+    if [ -z "$expected_dim" ] || [ -z "$actual_dim" ]; then
+        return 0
+    fi
+    if [ "$expected_dim" = "$actual_dim" ]; then
+        return 0
+    fi
+
+    local timestamp
+    timestamp="$(date '+%Y%m%d-%H%M%S')"
+    local backup_dir="${data_root}-backup-dim${actual_dim}-to-${expected_dim}-${timestamp}"
+
+    log "OpenViking vectordb dimension mismatch detected (actual=${actual_dim}, expected=${expected_dim}). Rebuilding runtime data with backup: ${backup_dir}"
+    echo -e "${YELLOW}OpenViking vectordb dimension mismatch detected (${actual_dim} -> ${expected_dim}). Backing up and rebuilding data...${NC}"
+
+    if [ -d "$data_root" ]; then
+        mv "$data_root" "$backup_dir"
+    fi
+    mkdir -p "$data_root"
+}
+
 # Start daemon
 start_daemon() {
     if session_exists; then
@@ -23,13 +98,14 @@ start_daemon() {
     if [ ! -d "$SCRIPT_DIR/dist" ]; then
         needs_build=true
     else
-        for ts_file in "$SCRIPT_DIR"/src/*.ts; do
-            local js_file="$SCRIPT_DIR/dist/$(basename "${ts_file%.ts}.js")"
+        while IFS= read -r -d '' ts_file; do
+            local rel_path="${ts_file#"$SCRIPT_DIR/src/"}"
+            local js_file="$SCRIPT_DIR/dist/${rel_path%.ts}.js"
             if [ ! -f "$js_file" ] || [ "$ts_file" -nt "$js_file" ]; then
                 needs_build=true
                 break
             fi
-        done
+        done < <(find "$SCRIPT_DIR/src" -type f -name '*.ts' ! -path '*/visualizer/*' -print0)
     fi
     if [ "$needs_build" = true ]; then
         echo -e "${YELLOW}Building TypeScript...${NC}"
@@ -85,8 +161,45 @@ start_daemon() {
         return 1
     fi
 
+    local openviking_enabled=false
+    local openviking_autostart=false
+    local openviking_started_outside=false
+    local openviking_start_in_tmux=false
+    local openviking_bin=""
+    if [ "$OPENVIKING_ENABLED" = "true" ]; then
+        openviking_enabled=true
+    fi
+    if [ "$OPENVIKING_AUTO_START" = "true" ]; then
+        openviking_autostart=true
+    fi
+    if [ "$openviking_enabled" = true ] && [ "$openviking_autostart" = true ]; then
+        openviking_bin="$(command -v openviking || true)"
+        if [ -z "$openviking_bin" ] && [ -x "$HOME/.local/bin/openviking" ]; then
+            openviking_bin="$HOME/.local/bin/openviking"
+        fi
+        if [ -z "$openviking_bin" ]; then
+            echo -e "${RED}OpenViking is enabled but CLI is not installed${NC}"
+            echo "Run 'tinyclaw setup' again to install OpenViking, or disable OpenViking in settings."
+            return 1
+        fi
+        if [ ! -f "$OPENVIKING_CONFIG_PATH" ]; then
+            echo -e "${RED}OpenViking is enabled but config file is missing: $OPENVIKING_CONFIG_PATH${NC}"
+            echo "Run 'tinyclaw setup' again to regenerate OpenViking config."
+            return 1
+        fi
+        if ! curl -fsS --max-time 2 "$OPENVIKING_BASE_URL/health" >/dev/null 2>&1; then
+            ensure_openviking_vector_dimension_consistency "$OPENVIKING_CONFIG_PATH" "$SCRIPT_DIR/data"
+        fi
+        if curl -fsS --max-time 2 "$OPENVIKING_BASE_URL/health" >/dev/null 2>&1; then
+            openviking_started_outside=true
+        else
+            openviking_start_in_tmux=true
+        fi
+    fi
+
     # Ensure all agent workspaces have .agents/skills symlink
     ensure_agent_skills_links
+    sync_agent_tools
 
     # Validate tokens for channels that need them
     for ch in "${ACTIVE_CHANNELS[@]}"; do
@@ -107,6 +220,61 @@ start_daemon() {
             echo "${env_var}=${CHANNEL_TOKENS[$ch]}" >> "$env_file"
         fi
     done
+    if [ "$openviking_enabled" = true ]; then
+        echo "OPENVIKING_BASE_URL=${OPENVIKING_BASE_URL}" >> "$env_file"
+        if [ -n "$OPENVIKING_API_KEY" ]; then
+            echo "OPENVIKING_API_KEY=${OPENVIKING_API_KEY}" >> "$env_file"
+        fi
+        if [ -n "$OPENVIKING_PROJECT" ]; then
+            echo "OPENVIKING_PROJECT=${OPENVIKING_PROJECT}" >> "$env_file"
+        fi
+        if [ "$OPENVIKING_NATIVE_SESSION" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_SESSION_NATIVE=1" >> "$env_file"
+        fi
+        if [ "$OPENVIKING_NATIVE_SEARCH" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_SEARCH_NATIVE=1" >> "$env_file"
+        fi
+        if [ "$OPENVIKING_PREFETCH" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_PREFETCH=1" >> "$env_file"
+        else
+            echo "TINYCLAW_OPENVIKING_PREFETCH=0" >> "$env_file"
+        fi
+        if [ "$OPENVIKING_AUTOSYNC" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_AUTOSYNC=1" >> "$env_file"
+        else
+            echo "TINYCLAW_OPENVIKING_AUTOSYNC=0" >> "$env_file"
+        fi
+        echo "TINYCLAW_OPENVIKING_PREFETCH_TIMEOUT_MS=${OPENVIKING_PREFETCH_TIMEOUT_MS}" >> "$env_file"
+        local plugin_hook_timeout_ms=$((OPENVIKING_PREFETCH_TIMEOUT_MS + 2000))
+        if [ "$plugin_hook_timeout_ms" -lt 8000 ]; then
+            plugin_hook_timeout_ms=8000
+        fi
+        echo "TINYCLAW_PLUGIN_HOOK_TIMEOUT_MS=${plugin_hook_timeout_ms}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS=${OPENVIKING_COMMIT_TIMEOUT_MS}" >> "$env_file"
+        if [ "$OPENVIKING_COMMIT_ON_SHUTDOWN" = "true" ]; then
+            echo "TINYCLAW_OPENVIKING_COMMIT_ON_SHUTDOWN=1" >> "$env_file"
+        else
+            echo "TINYCLAW_OPENVIKING_COMMIT_ON_SHUTDOWN=0" >> "$env_file"
+        fi
+        echo "TINYCLAW_OPENVIKING_SESSION_IDLE_TIMEOUT_MS=${OPENVIKING_SESSION_IDLE_TIMEOUT_MS}" >> "$env_file"
+        local plugin_session_end_hook_timeout_ms=$((OPENVIKING_COMMIT_TIMEOUT_MS + 15000))
+        if [ "$plugin_session_end_hook_timeout_ms" -lt 45000 ]; then
+            plugin_session_end_hook_timeout_ms=45000
+        fi
+        echo "TINYCLAW_PLUGIN_SESSION_END_HOOK_TIMEOUT_MS=${plugin_session_end_hook_timeout_ms}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS=${OPENVIKING_PREFETCH_MAX_CHARS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS=${OPENVIKING_PREFETCH_MAX_TURNS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_MAX_HITS=${OPENVIKING_PREFETCH_MAX_HITS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_RESOURCE_SUPPLEMENT_MAX=${OPENVIKING_PREFETCH_RESOURCE_SUPPLEMENT_MAX}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_GATE_MODE=${OPENVIKING_PREFETCH_GATE_MODE}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_FORCE_PATTERNS=${OPENVIKING_PREFETCH_FORCE_PATTERNS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_SKIP_PATTERNS=${OPENVIKING_PREFETCH_SKIP_PATTERNS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_RULE_THRESHOLD=${OPENVIKING_PREFETCH_RULE_THRESHOLD}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW=${OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH=${OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_PREFETCH_LLM_TIMEOUT_MS=${OPENVIKING_PREFETCH_LLM_TIMEOUT_MS}" >> "$env_file"
+        echo "TINYCLAW_OPENVIKING_CLOSED_SESSION_RETENTION_DAYS=${OPENVIKING_CLOSED_SESSION_RETENTION_DAYS}" >> "$env_file"
+    fi
 
     # Check for updates (non-blocking)
     local update_info
@@ -121,6 +289,13 @@ start_daemon() {
     for ch in "${ACTIVE_CHANNELS[@]}"; do
         echo -e "  ${GREEN}✓${NC} ${CHANNEL_DISPLAY[$ch]}"
     done
+    if [ "$openviking_enabled" = true ]; then
+        if [ "$openviking_started_outside" = true ]; then
+            echo -e "  ${GREEN}✓${NC} OpenViking (already running at ${OPENVIKING_BASE_URL})"
+        elif [ "$openviking_start_in_tmux" = true ]; then
+            echo -e "  ${GREEN}✓${NC} OpenViking (auto-start)"
+        fi
+    fi
     echo ""
 
     # Build log tail command
@@ -130,8 +305,12 @@ start_daemon() {
     done
 
     # --- Build tmux session dynamically ---
-    # Total panes = N channels + 3 (queue, heartbeat, logs)
-    local total_panes=$(( ${#ACTIVE_CHANNELS[@]} + 3 ))
+    # Total panes = N channels + optional OpenViking + 3 (queue, heartbeat, logs)
+    local extra_panes=3
+    if [ "$openviking_start_in_tmux" = true ]; then
+        extra_panes=$((extra_panes + 1))
+    fi
+    local total_panes=$(( ${#ACTIVE_CHANNELS[@]} + extra_panes ))
 
     tmux new-session -d -s "$TMUX_SESSION" -n "tinyclaw" -c "$SCRIPT_DIR"
 
@@ -150,6 +329,13 @@ start_daemon() {
         tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "${CHANNEL_DISPLAY[$ch]}"
         pane_idx=$((pane_idx + 1))
     done
+
+    # OpenViking pane (optional)
+    if [ "$openviking_start_in_tmux" = true ]; then
+        tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && '$openviking_bin' serve --host '$OPENVIKING_HOST' --port '$OPENVIKING_PORT' --config '$OPENVIKING_CONFIG_PATH' 2>&1 | tee -a '$LOG_DIR/openviking.log'" C-m
+        tmux select-pane -t "$TMUX_SESSION:0.$pane_idx" -T "OpenViking"
+        pane_idx=$((pane_idx + 1))
+    fi
 
     # Queue pane
     tmux send-keys -t "$TMUX_SESSION:0.$pane_idx" "cd '$SCRIPT_DIR' && node dist/queue-processor.js" C-m
@@ -252,6 +438,16 @@ start_daemon() {
 # Stop daemon
 stop_daemon() {
     log "Stopping TinyClaw..."
+    load_settings >/dev/null 2>&1 || true
+
+    local graceful_timeout_s=45
+    if [ -n "${OPENVIKING_COMMIT_TIMEOUT_MS:-}" ] && [[ "$OPENVIKING_COMMIT_TIMEOUT_MS" =~ ^[0-9]+$ ]]; then
+        graceful_timeout_s=$(( (OPENVIKING_COMMIT_TIMEOUT_MS + 20000 + 999) / 1000 ))
+        if [ "$graceful_timeout_s" -lt 45 ]; then
+            graceful_timeout_s=45
+        fi
+    fi
+    graceful_stop_queue_processor "$graceful_timeout_s"
 
     if session_exists; then
         tmux kill-session -t "$TMUX_SESSION"
@@ -263,6 +459,9 @@ stop_daemon() {
     done
     pkill -f "dist/queue-processor.js" || true
     pkill -f "heartbeat-cron.sh" || true
+    if [ -n "${OPENVIKING_PORT:-}" ]; then
+        pkill -f "openviking serve .*--port ${OPENVIKING_PORT}" || true
+    fi
 
     echo -e "${GREEN}✓ TinyClaw stopped${NC}"
     log "Daemon stopped"
@@ -290,6 +489,8 @@ restart_daemon() {
 
 # Status
 status_daemon() {
+    load_settings >/dev/null 2>&1 || true
+
     echo -e "${BLUE}TinyClaw Status${NC}"
     echo "==============="
     echo ""
@@ -338,6 +539,13 @@ status_daemon() {
         echo -e "Heartbeat:       ${GREEN}Running${NC}"
     else
         echo -e "Heartbeat:       ${RED}Not Running${NC}"
+    fi
+    if [ "$OPENVIKING_ENABLED" = "true" ]; then
+        if pgrep -f "openviking serve .*--port ${OPENVIKING_PORT}" > /dev/null; then
+            echo -e "OpenViking:      ${GREEN}Running${NC}"
+        else
+            echo -e "OpenViking:      ${RED}Not Running${NC}"
+        fi
     fi
 
     # Recent activity per channel (only show if log file exists)

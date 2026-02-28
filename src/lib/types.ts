@@ -59,6 +59,39 @@ export interface Settings {
     monitoring?: {
         heartbeat_interval?: number;
     };
+    openviking?: {
+        enabled?: boolean;
+        auto_start?: boolean;
+        host?: string;
+        port?: number;
+        base_url?: string;
+        config_path?: string;
+        project?: string;
+        api_key?: string;
+        native_session?: boolean;
+        native_search?: boolean;
+        prefetch?: boolean;
+        autosync?: boolean;
+        commit_on_shutdown?: boolean;
+        session_idle_timeout_ms?: number;
+        session_switch_markers?: string[];
+        prefetch_timeout_ms?: number;
+        commit_timeout_ms?: number;
+        prefetch_max_chars?: number;
+        prefetch_max_turns?: number;
+        prefetch_max_hits?: number;
+        prefetch_resource_supplement_max?: number;
+        prefetch_gate_mode?: 'always' | 'never' | 'rule' | 'rule_then_llm';
+        prefetch_force_patterns?: string[];
+        prefetch_skip_patterns?: string[];
+        prefetch_rule_threshold?: number;
+        prefetch_llm_ambiguity_low?: number;
+        prefetch_llm_ambiguity_high?: number;
+        prefetch_llm_timeout_ms?: number;
+        closed_session_retention_days?: number;
+        search_score_threshold?: number;
+        context_plugin_enabled?: boolean;
+    };
 }
 
 export interface MessageData {

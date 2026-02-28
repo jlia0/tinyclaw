@@ -201,6 +201,12 @@ Commands work with `tinyclaw` (if CLI installed) or `./tinyclaw.sh` (direct scri
 | `team remove <id>`    | Remove a team                      | `tinyclaw team remove dev`    |
 | `team visualize [id]` | Live TUI dashboard for team chains | `tinyclaw team visualize dev` |
 
+### Tool Commands
+
+| Command                  | Description                                      | Example                    |
+| ------------------------ | ------------------------------------------------ | -------------------------- |
+| `tools sync [agent_id]`  | Sync OpenViking CLI tools into agent workspace(s) | `tinyclaw tools sync coder` |
+
 ### Configuration Commands
 
 | Command                           | Description                  | Example                                          |
@@ -277,6 +283,135 @@ export TINYCLAW_SKIP_UPDATE_CHECK=1
 | `send <message>` | Send message to AI manually | `tinyclaw send "Hello!"`         |
 | `send <message>` | Route to specific agent     | `tinyclaw send "@coder fix bug"` |
 
+## 🧰 OpenViking Workspace Tools
+
+TinyClaw can provision lightweight OpenViking tools into each agent workspace:
+
+```bash
+tinyclaw tools sync
+```
+
+Tools are installed at:
+
+```bash
+<workspace>/<agent_id>/.tinyclaw/tools/openviking/
+```
+
+Common usage from an agent directory:
+
+```bash
+cd .tinyclaw/tools/openviking
+./ovk-ls.sh /
+./ovk-read.sh /context/spec.md
+./ovk-write.sh /context/spec.md "updated content"
+./ovk.sh res-get viking://workspace/resource
+```
+
+Environment variables:
+
+- `OPENVIKING_BASE_URL` (default: `http://127.0.0.1:8320`)
+- `OPENVIKING_API_KEY` (optional)
+- `OPENVIKING_PROJECT` (optional)
+
+### OpenViking Native Session Write Path
+
+TinyClaw supports OpenViking native session lifecycle as the primary write path:
+
+- `POST /api/v1/sessions` to create/reuse session IDs per `(channel, senderId, agentId)` mapping
+- `POST /api/v1/sessions/{id}/messages` for `user` and `assistant` turns
+- `POST /api/v1/sessions/{id}/commit` when session lifecycle boundaries are consumed (`reset`, idle timeout, or process shutdown)
+
+Setup integration:
+
+- `tinyclaw setup` now prompts whether to enable OpenViking memory
+- if enabled, setup installs a pinned OpenViking version (`0.1.18`) and generates `~/.openviking/ov.conf` (includes LLM API key for OpenViking internals)
+- `tinyclaw start` auto-starts OpenViking server (when enabled + auto_start) and exports OpenViking env vars for channel/queue processes
+- OpenViking runtime data is stored under TinyClaw workspace `./data` (relative to the TinyClaw repo root)
+- on startup, TinyClaw checks vectordb dimension compatibility and auto-backs up/rebuilds `./data` when mismatch is detected
+
+Feature flags:
+
+- `TINYCLAW_OPENVIKING_SESSION_NATIVE=1` enable native session write path
+- `TINYCLAW_OPENVIKING_AUTOSYNC=0` disable legacy markdown sync fallback (`active.md`/`closed/*.md`)
+- `TINYCLAW_OPENVIKING_CONTEXT_PLUGIN=0` disable the built-in OpenViking context plugin entirely
+
+Legacy markdown sync remains as a compatibility fallback.
+
+### Pre-Prompt Retrieval (OpenViking)
+
+Before invoking the model for an external user turn, TinyClaw can prefetch related context via:
+
+- `POST /api/v1/search/search` (native, typed `memories/resources/skills`, optionally scoped with `session_id`)
+- legacy fallback (`find-uris` + `read` on `active.md` and archived sessions) when native search is disabled or misses
+
+Environment flags:
+
+- `TINYCLAW_OPENVIKING_PREFETCH=0` disable pre-prompt retrieval
+- `TINYCLAW_OPENVIKING_SEARCH_NATIVE=1` enable native search as primary prefetch path
+- `TINYCLAW_OPENVIKING_PREFETCH_GATE_MODE` prefetch gate mode: `always | never | rule | rule_then_llm` (default: `rule`)
+- `TINYCLAW_OPENVIKING_PREFETCH_FORCE_PATTERNS` comma-separated force patterns (match => force prefetch)
+- `TINYCLAW_OPENVIKING_PREFETCH_SKIP_PATTERNS` comma-separated skip patterns (match => skip prefetch)
+- `TINYCLAW_OPENVIKING_PREFETCH_RULE_THRESHOLD` score threshold for rule gate (default: `3`)
+- `TINYCLAW_OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW` lower score bound that is considered ambiguous for `rule_then_llm` (default: `1`)
+- `TINYCLAW_OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH` upper score bound that is considered ambiguous for `rule_then_llm` (default: `2`)
+- `TINYCLAW_OPENVIKING_PREFETCH_LLM_TIMEOUT_MS` LLM gate timeout in milliseconds (default: `7000`, timeout => no prefetch)
+- `TINYCLAW_OPENVIKING_PREFETCH_TIMEOUT_MS` prefetch/search timeout (default: `5000`)
+- `TINYCLAW_OPENVIKING_COMMIT_TIMEOUT_MS` native session commit timeout (default: `60000`)
+- `TINYCLAW_OPENVIKING_COMMIT_ON_SHUTDOWN` commit mapped native sessions during process shutdown (default: `1`)
+- `TINYCLAW_OPENVIKING_SESSION_IDLE_TIMEOUT_MS` idle session auto-commit threshold in milliseconds (default: `1800000`, i.e. 30 minutes)
+- `TINYCLAW_PLUGIN_SESSION_END_HOOK_TIMEOUT_MS` session-end hook timeout (default: `30000`; TinyClaw runtime raises this automatically when OpenViking is enabled, to `max(commit_timeout_ms + 15000, 45000)`)
+- `TINYCLAW_OPENVIKING_PREFETCH_MAX_CHARS` max injected chars (default: `1200`)
+- `TINYCLAW_OPENVIKING_PREFETCH_MAX_TURNS` max selected turns (default: `4`)
+- `TINYCLAW_OPENVIKING_PREFETCH_MAX_HITS` max typed native hits injected (default: `8`)
+- `TINYCLAW_OPENVIKING_PREFETCH_RESOURCE_SUPPLEMENT_MAX` max resource supplements when memory-first selection is enabled (default: `2`)
+- `TINYCLAW_OPENVIKING_CLOSED_SESSION_RETENTION_DAYS` closed session retention days (`0` means keep forever; default: `0`)
+- `TINYCLAW_OPENVIKING_SEARCH_SCORE_THRESHOLD` optional native score threshold passed to OpenViking search API
+
+`settings.openviking` also supports the same gate keys:
+`prefetch_gate_mode`, `prefetch_force_patterns`, `prefetch_skip_patterns`,
+`prefetch_rule_threshold`, `prefetch_llm_ambiguity_low`,
+`prefetch_llm_ambiguity_high`, `prefetch_llm_timeout_ms`,
+plus session lifecycle keys `commit_on_shutdown` and `session_idle_timeout_ms`.
+
+#### Quick Usage
+
+1. Enable OpenViking in setup:
+```bash
+tinyclaw setup
+```
+2. Start TinyClaw (auto-starts OpenViking when enabled):
+```bash
+tinyclaw start
+```
+3. Watch gate/prefetch logs:
+```bash
+tail -f ~/.tinyclaw/logs/queue.log | grep -E "prefetch gate|prefetch llm gate|prefetch hit|prefetch miss"
+```
+
+Typical prompt patterns:
+- Force memory retrieval: `based on memory...`
+- Likely skip retrieval: realtime/news/weather/price/tool-execution queries
+- Ambiguous (may use LLM gate in `rule_then_llm`): `do you remember what I told you before?`
+
+#### Gate Decision Rules
+
+Gate priority is:
+1. `mode=never` => `prefetch_decision=disabled`
+2. `mode=always` => `prefetch_decision=force`
+3. `force_patterns` hit => `prefetch_decision=force`
+4. `skip_patterns` hit => `prefetch_decision=rule_no`
+5. Rule scoring:
+   - `score >= threshold` => `rule_yes`
+   - `score in [ambiguity_low, ambiguity_high]`:
+     - `mode=rule` => `rule_no` (ambiguous fallback)
+     - `mode=rule_then_llm` => `llm_yes` or `llm_no`
+   - otherwise => `rule_no`
+
+Notes:
+- LLM gate runs only for ambiguous cases and only in `rule_then_llm`.
+- LLM timeout/error falls back to no-prefetch (`llm_no`) to protect response latency.
+- Even with `llm_yes`, prefetch may still be skipped if plugin hook budget is exhausted.
+
 ### In-Chat Commands
 
 These commands work in Discord, Telegram, and WhatsApp:
@@ -294,6 +429,20 @@ These commands work in Discord, Telegram, and WhatsApp:
 **Note:** The `@agent_id` routing prefix requires a space after it (e.g., `@coder fix` not `@coderfix`).
 
 **Access control note:** before routing, channel clients apply sender pairing allowlist checks.
+
+## 🔌 Plugin Security
+
+TinyClaw can load local plugins from `~/.tinyclaw/plugins`, but plugins are **disabled by default**.
+
+- Enable plugins: `TINYCLAW_PLUGINS_ENABLED=1`
+- Hook timeout (ms): `TINYCLAW_PLUGIN_HOOK_TIMEOUT_MS` (default `8000`; TinyClaw runtime may raise it for OpenViking prefetch budget)
+- Activate timeout (ms): `TINYCLAW_PLUGIN_ACTIVATE_TIMEOUT_MS` (default `3000`)
+
+Security model:
+
+- Plugins are fully trusted local code.
+- Do not install plugins from untrusted sources.
+- Plugin code runs with the same permissions as the TinyClaw process.
 
 ## 🤖 Using Agents
 

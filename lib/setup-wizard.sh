@@ -228,6 +228,158 @@ DEFAULT_AGENT_NAME=$(echo "$DEFAULT_AGENT_NAME" | tr ' ' '-' | tr -cd 'a-zA-Z0-9
 echo -e "${GREEN}✓ Default agent: $DEFAULT_AGENT_NAME${NC}"
 echo ""
 
+# OpenViking setup (optional)
+OPENVIKING_ENABLED=false
+OPENVIKING_AUTO_START=false
+OPENVIKING_HOST="127.0.0.1"
+OPENVIKING_PORT="8320"
+OPENVIKING_BASE_URL="http://127.0.0.1:8320"
+OPENVIKING_PROJECT=""
+OPENVIKING_API_KEY=""
+OPENVIKING_CONFIG_PATH="$HOME/.openviking/ov.conf"
+OPENVIKING_PREFETCH_TIMEOUT_MS=5000
+OPENVIKING_COMMIT_TIMEOUT_MS=60000
+OPENVIKING_COMMIT_ON_SHUTDOWN=true
+OPENVIKING_SESSION_IDLE_TIMEOUT_MS=1800000
+OPENVIKING_PREFETCH_MAX_CHARS=1200
+OPENVIKING_PREFETCH_MAX_TURNS=4
+OPENVIKING_PREFETCH_MAX_HITS=8
+OPENVIKING_PREFETCH_RESOURCE_SUPPLEMENT_MAX=2
+OPENVIKING_PREFETCH_GATE_MODE="rule"
+OPENVIKING_PREFETCH_FORCE_PATTERNS_JSON='["based on memory","using memory","from your memory","from long term memory","long-term memory","use long term memory","memory only","remember what i told you","what do you remember","what i told you before","based on our previous chats","previously told","according to memory","根据记忆","按记忆","按长期记忆","基于记忆","结合记忆","只根据记忆","只基于记忆","你还记得","你记得我说过","回忆一下","我之前告诉过","我之前提过","我之前说过","之前聊过","根据我们之前的对话","之前说过","长期记忆"]'
+OPENVIKING_PREFETCH_SKIP_PATTERNS_JSON='["latest news","latest update","breaking news","today weather","live score","current price","price now","stock price","crypto price","search web","web search","search online","browse internet","browse web","run command","run this command","execute this command","execute command","terminal command","shell command","npm run","git ","最新新闻","最新动态","今天天气","当前价格","实时价格","在线搜索","网页搜索","上网查","终端命令","shell命令","执行命令","执行这个命令","跑一下命令","查一下最新","查今日"]'
+OPENVIKING_PREFETCH_RULE_THRESHOLD=3
+OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW=1
+OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH=2
+OPENVIKING_PREFETCH_LLM_TIMEOUT_MS=7000
+OPENVIKING_CLOSED_SESSION_RETENTION_DAYS=0
+OPENVIKING_PINNED_VERSION="0.1.18"
+
+get_installed_openviking_version() {
+    if ! command -v python3 &> /dev/null; then
+        return 0
+    fi
+    python3 - <<'PY' 2>/dev/null || true
+import importlib.metadata as m
+try:
+    print(m.version("openviking"))
+except Exception:
+    pass
+PY
+}
+
+install_openviking_version() {
+    local pinned_version="$1"
+    if ! python3 -m pip install --user --upgrade "openviking==${pinned_version}"; then
+        echo -e "${YELLOW}Default pip install failed. Retrying with PEP 668 override...${NC}"
+        if ! python3 -m pip install --user --upgrade --break-system-packages "openviking==${pinned_version}"; then
+            return 1
+        fi
+    fi
+    return 0
+}
+
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  OpenViking Memory (Optional)${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo "Enable OpenViking native memory (Session + Search + Memory extraction)?"
+read -rp "Enable OpenViking? [y/N]: " ENABLE_OPENVIKING
+if [[ "$ENABLE_OPENVIKING" =~ ^[yY] ]]; then
+    OPENVIKING_ENABLED=true
+    OPENVIKING_AUTO_START=true
+    echo ""
+    echo -e "${GREEN}✓ OpenViking enabled${NC}"
+    echo -e "${BLUE}Using default OpenViking server endpoint: ${OPENVIKING_BASE_URL}${NC}"
+
+    echo ""
+    echo "Now configure values that will be written into ~/.openviking/ov.conf"
+    echo -e "${YELLOW}Note: currently TinyClaw setup only supports OpenAI for OpenViking (tested path).${NC}"
+    read -rp "OpenAI API key (required for VLM + embedding): " OV_LLM_API_KEY
+    if [ -z "$OV_LLM_API_KEY" ]; then
+        echo -e "${RED}API key is required when OpenViking is enabled${NC}"
+        exit 1
+    fi
+    OV_LLM_API_BASE="https://api.openai.com/v1"
+    OV_LLM_MODEL="gpt-4o-mini"
+    OV_EMBED_MODEL="text-embedding-3-large"
+    OV_EMBED_DIM="3072"
+
+    OPENVIKING_CONF_DIR="$(dirname "$OPENVIKING_CONFIG_PATH")"
+    mkdir -p "$OPENVIKING_CONF_DIR"
+
+    if ! command -v python3 &> /dev/null; then
+        echo -e "${RED}python3 is required to install OpenViking${NC}"
+        exit 1
+    fi
+
+    CURRENT_OPENVIKING_VERSION="$(get_installed_openviking_version)"
+    if [ -z "$CURRENT_OPENVIKING_VERSION" ]; then
+        echo -e "${YELLOW}OpenViking not found. Installing pinned version ${OPENVIKING_PINNED_VERSION}...${NC}"
+        if ! install_openviking_version "$OPENVIKING_PINNED_VERSION"; then
+            echo -e "${RED}Failed to install pinned openviking ${OPENVIKING_PINNED_VERSION}${NC}"
+            exit 1
+        fi
+    elif [ "$CURRENT_OPENVIKING_VERSION" != "$OPENVIKING_PINNED_VERSION" ]; then
+        echo -e "${YELLOW}OpenViking version mismatch (installed=${CURRENT_OPENVIKING_VERSION}, pinned=${OPENVIKING_PINNED_VERSION}). Reinstalling pinned version...${NC}"
+        if ! install_openviking_version "$OPENVIKING_PINNED_VERSION"; then
+            echo -e "${RED}Failed to install pinned openviking ${OPENVIKING_PINNED_VERSION}${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}✓ OpenViking pinned version already installed: ${OPENVIKING_PINNED_VERSION}${NC}"
+    fi
+
+    CURRENT_OPENVIKING_VERSION="$(get_installed_openviking_version)"
+    if [ "$CURRENT_OPENVIKING_VERSION" != "$OPENVIKING_PINNED_VERSION" ]; then
+        echo -e "${RED}OpenViking version verification failed (expected=${OPENVIKING_PINNED_VERSION}, actual=${CURRENT_OPENVIKING_VERSION:-missing})${NC}"
+        exit 1
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        echo -e "${RED}jq is required for OpenViking config generation${NC}"
+        exit 1
+    fi
+
+    jq -n \
+      --arg api_key "$OV_LLM_API_KEY" \
+      --arg api_base "$OV_LLM_API_BASE" \
+      --arg vlm_model "$OV_LLM_MODEL" \
+      --arg embed_model "$OV_EMBED_MODEL" \
+      --argjson embed_dim "$OV_EMBED_DIM" \
+      '{
+        storage: {
+          agfs: {
+            backend: "local"
+          },
+          vectordb: {
+            backend: "local",
+            dimension: $embed_dim
+          }
+        },
+        embedding: {
+          dense: {
+            provider: "openai",
+            model: $embed_model,
+            dimension: $embed_dim,
+            api_key: $api_key,
+            api_base: (if $api_base == "" then null else $api_base end)
+          }
+        },
+        vlm: {
+          provider: "openai",
+          model: $vlm_model,
+          api_key: $api_key,
+          api_base: (if $api_base == "" then null else $api_base end),
+          temperature: 0.0
+        }
+      }' > "$OPENVIKING_CONFIG_PATH"
+
+    echo -e "${GREEN}✓ OpenViking config written: $OPENVIKING_CONFIG_PATH${NC}"
+    echo -e "${GREEN}✓ TinyClaw will auto-start OpenViking server on tinyclaw start${NC}"
+    echo ""
+fi
+
 # --- Additional Agents (optional) ---
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  Additional Agents (Optional)${NC}"
@@ -343,6 +495,62 @@ else
     MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
 fi
 
+OPENVIKING_JSON=$(jq -n \
+  --argjson enabled "$OPENVIKING_ENABLED" \
+  --argjson auto_start "$OPENVIKING_AUTO_START" \
+  --arg host "$OPENVIKING_HOST" \
+  --argjson port "$OPENVIKING_PORT" \
+  --arg base_url "$OPENVIKING_BASE_URL" \
+  --arg config_path "$OPENVIKING_CONFIG_PATH" \
+  --arg project "$OPENVIKING_PROJECT" \
+  --arg api_key "$OPENVIKING_API_KEY" \
+  --argjson prefetch_timeout_ms "$OPENVIKING_PREFETCH_TIMEOUT_MS" \
+  --argjson commit_timeout_ms "$OPENVIKING_COMMIT_TIMEOUT_MS" \
+  --argjson commit_on_shutdown "$OPENVIKING_COMMIT_ON_SHUTDOWN" \
+  --argjson session_idle_timeout_ms "$OPENVIKING_SESSION_IDLE_TIMEOUT_MS" \
+  --argjson prefetch_max_chars "$OPENVIKING_PREFETCH_MAX_CHARS" \
+  --argjson prefetch_max_turns "$OPENVIKING_PREFETCH_MAX_TURNS" \
+  --argjson prefetch_max_hits "$OPENVIKING_PREFETCH_MAX_HITS" \
+  --argjson prefetch_resource_supplement_max "$OPENVIKING_PREFETCH_RESOURCE_SUPPLEMENT_MAX" \
+  --arg prefetch_gate_mode "$OPENVIKING_PREFETCH_GATE_MODE" \
+  --argjson prefetch_force_patterns "$OPENVIKING_PREFETCH_FORCE_PATTERNS_JSON" \
+  --argjson prefetch_skip_patterns "$OPENVIKING_PREFETCH_SKIP_PATTERNS_JSON" \
+  --argjson prefetch_rule_threshold "$OPENVIKING_PREFETCH_RULE_THRESHOLD" \
+  --argjson prefetch_llm_ambiguity_low "$OPENVIKING_PREFETCH_LLM_AMBIGUITY_LOW" \
+  --argjson prefetch_llm_ambiguity_high "$OPENVIKING_PREFETCH_LLM_AMBIGUITY_HIGH" \
+  --argjson prefetch_llm_timeout_ms "$OPENVIKING_PREFETCH_LLM_TIMEOUT_MS" \
+  --argjson closed_session_retention_days "$OPENVIKING_CLOSED_SESSION_RETENTION_DAYS" \
+  '{
+    enabled: $enabled,
+    auto_start: $auto_start,
+    host: $host,
+    port: $port,
+    base_url: $base_url,
+    config_path: $config_path,
+    project: (if $project == "" then null else $project end),
+    api_key: (if $api_key == "" then null else $api_key end),
+    native_session: $enabled,
+    native_search: $enabled,
+    prefetch: $enabled,
+    autosync: true,
+    commit_on_shutdown: $commit_on_shutdown,
+    session_idle_timeout_ms: $session_idle_timeout_ms,
+    prefetch_timeout_ms: $prefetch_timeout_ms,
+    commit_timeout_ms: $commit_timeout_ms,
+    prefetch_max_chars: $prefetch_max_chars,
+    prefetch_max_turns: $prefetch_max_turns,
+    prefetch_max_hits: $prefetch_max_hits,
+    prefetch_resource_supplement_max: $prefetch_resource_supplement_max,
+    prefetch_gate_mode: $prefetch_gate_mode,
+    prefetch_force_patterns: $prefetch_force_patterns,
+    prefetch_skip_patterns: $prefetch_skip_patterns,
+    prefetch_rule_threshold: $prefetch_rule_threshold,
+    prefetch_llm_ambiguity_low: $prefetch_llm_ambiguity_low,
+    prefetch_llm_ambiguity_high: $prefetch_llm_ambiguity_high,
+    prefetch_llm_timeout_ms: $prefetch_llm_timeout_ms,
+    closed_session_retention_days: $closed_session_retention_days
+  }')
+
 cat > "$SETTINGS_FILE" <<EOF
 {
   "workspace": {
@@ -361,6 +569,7 @@ cat > "$SETTINGS_FILE" <<EOF
   },
   ${AGENTS_JSON}
   ${MODELS_SECTION},
+  "openviking": ${OPENVIKING_JSON},
   "monitoring": {
     "heartbeat_interval": ${HEARTBEAT_INTERVAL}
   }
