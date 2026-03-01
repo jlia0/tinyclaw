@@ -163,7 +163,7 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
         emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: messageData.fromAgent || null });
         let response: string;
         try {
-            response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+            response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams, dbMsg.thread_id ?? undefined);
         } catch (error) {
             const provider = agent.provider || 'anthropic';
             const providerLabel = provider === 'openai' ? 'Codex' : provider === 'opencode' ? 'OpenCode' : 'Claude';

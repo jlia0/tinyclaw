@@ -447,6 +447,7 @@ bot.on('message', async (msg: TelegramBot.Message) => {
                 message: fullMessage,
                 messageId: queueMessageId,
                 files: downloadedFiles.length > 0 ? downloadedFiles : undefined,
+                threadId: `telegram:${senderId}`,
             }),
         });
 

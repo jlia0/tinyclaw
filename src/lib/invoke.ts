@@ -1,10 +1,12 @@
 import { spawn } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
 import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent';
+import { getThreadSession, saveThreadSession } from './db';
 
 export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -58,7 +60,8 @@ export async function invokeAgent(
     workspacePath: string,
     shouldReset: boolean,
     agents: Record<string, AgentConfig> = {},
-    teams: Record<string, TeamConfig> = {}
+    teams: Record<string, TeamConfig> = {},
+    threadId?: string
 ): Promise<string> {
     // Ensure agent directory exists with config files
     const agentDir = path.join(workspacePath, agentId);
@@ -83,17 +86,28 @@ export async function invokeAgent(
     if (provider === 'openai') {
         log('INFO', `Using Codex CLI (agent: ${agentId})`);
 
-        const shouldResume = !shouldReset;
-
         if (shouldReset) {
             log('INFO', `🔄 Resetting Codex conversation for agent: ${agentId}`);
         }
 
         const modelId = resolveCodexModel(agent.model);
         const codexArgs = ['exec'];
-        if (shouldResume) {
-            codexArgs.push('resume', '--last');
+
+        if (threadId) {
+            // Thread-aware session management
+            const existing = !shouldReset ? getThreadSession(agentId, threadId) : null;
+            if (existing) {
+                codexArgs.push('resume', existing.session_id);
+                log('INFO', `Resuming Codex session ${existing.session_id} for thread ${threadId}`);
+            }
+            // else: new session — we'll capture the session ID from JSONL output
+        } else {
+            // No thread context — fall back to resume --last
+            if (!shouldReset) {
+                codexArgs.push('resume', '--last');
+            }
         }
+
         if (modelId) {
             codexArgs.push('--model', modelId);
         }
@@ -101,8 +115,9 @@ export async function invokeAgent(
 
         const codexOutput = await runCommand('codex', codexArgs, workingDir);
 
-        // Parse JSONL output and extract final agent_message
+        // Parse JSONL output and extract final agent_message + session ID
         let response = '';
+        let detectedSessionId: string | null = null;
         const lines = codexOutput.trim().split('\n');
         for (const line of lines) {
             try {
@@ -110,9 +125,22 @@ export async function invokeAgent(
                 if (json.type === 'item.completed' && json.item?.type === 'agent_message') {
                     response = json.item.text;
                 }
+                // Capture session/thread ID from JSONL events
+                if (!detectedSessionId) {
+                    const sid = json.session_id ?? json.thread_id;
+                    if (sid && typeof sid === 'string') {
+                        detectedSessionId = sid;
+                    }
+                }
             } catch (e) {
                 // Ignore lines that aren't valid JSON
             }
+        }
+
+        // Save session ID for this thread if we detected one on a new session
+        if (threadId && detectedSessionId && !getThreadSession(agentId, threadId)) {
+            saveThreadSession(agentId, threadId, detectedSessionId, 'openai');
+            log('INFO', `Saved Codex session ${detectedSessionId} for thread ${threadId}`);
         }
 
         return response || 'Sorry, I could not generate a response from Codex.';
@@ -160,8 +188,6 @@ export async function invokeAgent(
         // Default to Claude (Anthropic)
         log('INFO', `Using Claude provider (agent: ${agentId})`);
 
-        const continueConversation = !shouldReset;
-
         if (shouldReset) {
             log('INFO', `🔄 Resetting conversation for agent: ${agentId}`);
         }
@@ -171,9 +197,28 @@ export async function invokeAgent(
         if (modelId) {
             claudeArgs.push('--model', modelId);
         }
-        if (continueConversation) {
-            claudeArgs.push('-c');
+
+        if (threadId) {
+            // Thread-aware session management
+            const existing = !shouldReset ? getThreadSession(agentId, threadId) : null;
+            if (existing) {
+                // Resume existing session
+                claudeArgs.push('-r', existing.session_id);
+                log('INFO', `Resuming session ${existing.session_id} for thread ${threadId}`);
+            } else {
+                // Start new session
+                const sessionId = crypto.randomUUID();
+                claudeArgs.push('--session-id', sessionId);
+                saveThreadSession(agentId, threadId, sessionId, 'anthropic');
+                log('INFO', `New session ${sessionId} for thread ${threadId}`);
+            }
+        } else {
+            // No thread context — fall back to continue-last behavior
+            if (!shouldReset) {
+                claudeArgs.push('-c');
+            }
         }
+
         claudeArgs.push('-p', message);
 
         return await runCommand('claude', claudeArgs, workingDir);
