@@ -6,7 +6,7 @@ import { AgentConfig, TeamConfig } from './types';
 import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent';
-import { getThreadSession, saveThreadSession, deleteThreadSession } from './db';
+import { getThreadSession, saveThreadSession } from './db';
 
 export async function runCommand(command: string, args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -88,9 +88,6 @@ export async function invokeAgent(
 
         if (shouldReset) {
             log('INFO', `🔄 Resetting Codex conversation for agent: ${agentId}`);
-            if (threadId) {
-                deleteThreadSession(agentId, threadId);
-            }
         }
 
         const modelId = resolveCodexModel(agent.model);
@@ -193,9 +190,6 @@ export async function invokeAgent(
 
         if (shouldReset) {
             log('INFO', `🔄 Resetting conversation for agent: ${agentId}`);
-            if (threadId) {
-                deleteThreadSession(agentId, threadId);
-            }
         }
 
         const modelId = resolveClaudeModel(agent.model);
