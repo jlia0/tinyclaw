@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
 import { jsonrepair } from 'jsonrepair';
 import {
     LOG_FILE,
@@ -7,7 +8,6 @@ import {
     resolveCodexModel,
     resolveOpenCodeModel,
 } from '../../lib/config';
-import { runCommand } from '../../lib/invoke';
 import { log } from '../../lib/logging';
 import { PLUGIN_HOOK_TIMEOUT_MS } from '../../lib/plugins';
 import type {
@@ -73,6 +73,33 @@ type OpenVikingPluginState = {
     nativeSessionWriteFailed: boolean;
 };
 
+type OpenVikingSettingsInput = {
+    enabled?: boolean;
+    context_plugin_enabled?: boolean;
+    native_session?: boolean;
+    native_search?: boolean;
+    prefetch?: boolean;
+    autosync?: boolean;
+    commit_on_shutdown?: boolean;
+    session_idle_timeout_ms?: number;
+    session_switch_markers?: string[];
+    prefetch_timeout_ms?: number;
+    commit_timeout_ms?: number;
+    prefetch_max_chars?: number;
+    prefetch_max_turns?: number;
+    prefetch_max_hits?: number;
+    prefetch_resource_supplement_max?: number;
+    prefetch_gate_mode?: 'always' | 'never' | 'rule' | 'rule_then_llm';
+    prefetch_force_patterns?: string[];
+    prefetch_skip_patterns?: string[];
+    prefetch_rule_threshold?: number;
+    prefetch_llm_ambiguity_low?: number;
+    prefetch_llm_ambiguity_high?: number;
+    prefetch_llm_timeout_ms?: number;
+    closed_session_retention_days?: number;
+    search_score_threshold?: number | string;
+};
+
 type OpenVikingContextConfig = {
     enabled: boolean;
     autosyncFallbackEnabled: boolean;
@@ -112,6 +139,61 @@ type PrefetchGateDecision = {
 const OPENVIKING_SESSION_ROOT = '/tinyclaw/sessions';
 const OPENVIKING_NATIVE_PREFETCH_DUMP_FILE = path.join(path.dirname(LOG_FILE), 'prefetch_dump_native_latest.txt');
 const openVikingSyncChains = new Map<string, Promise<void>>();
+
+async function runCommand(command: string, args: string[], cwd?: string, timeoutMs?: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const env = { ...process.env };
+        delete env.CLAUDECODE;
+
+        const child = spawn(command, args, {
+            cwd: cwd || process.cwd(),
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env,
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+
+        child.stdout.on('data', (chunk: string) => {
+            stdout += chunk;
+        });
+
+        child.stderr.on('data', (chunk: string) => {
+            stderr += chunk;
+        });
+
+        let timedOut = false;
+        let timer: NodeJS.Timeout | null = null;
+        if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+            timer = setTimeout(() => {
+                timedOut = true;
+                child.kill('SIGKILL');
+            }, timeoutMs);
+        }
+
+        child.on('error', (error) => {
+            if (timer) clearTimeout(timer);
+            reject(error);
+        });
+
+        child.on('close', (code) => {
+            if (timer) clearTimeout(timer);
+            if (timedOut) {
+                reject(new Error(`Command timed out after ${timeoutMs}ms`));
+                return;
+            }
+            if (code === 0) {
+                resolve(stdout);
+                return;
+            }
+            const errorMessage = stderr.trim() || `Command exited with code ${code}`;
+            reject(new Error(errorMessage));
+        });
+    });
+}
 
 function parseBoolean(value: string | undefined): boolean | undefined {
     if (value === undefined) return undefined;
@@ -192,8 +274,16 @@ function resolveStringListFlag(
     return fallback;
 }
 
+function getOpenVikingSettings(settings: Settings): OpenVikingSettingsInput {
+    const candidate = (settings as Settings & { openviking?: OpenVikingSettingsInput }).openviking;
+    if (!candidate || typeof candidate !== 'object') {
+        return {};
+    }
+    return candidate;
+}
+
 function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextConfig {
-    const ov = settings.openviking || {};
+    const ov = getOpenVikingSettings(settings);
     const enabled = resolveBooleanFlag(
         'TINYCLAW_OPENVIKING_CONTEXT_PLUGIN',
         ov.context_plugin_enabled ?? ov.enabled,
