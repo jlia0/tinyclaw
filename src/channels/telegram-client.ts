@@ -261,6 +261,67 @@ function pairingMessage(code: string): string {
 // Initialize Telegram bot (polling mode)
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
+const MAX_RECONNECT_ATTEMPTS = 8;
+const BASE_RECONNECT_DELAY_MS = 1000;
+let reconnectAttempts = 0;
+let reconnectTimer: NodeJS.Timeout | null = null;
+let reconnecting = false;
+
+function isFatalPollingError(message: string): boolean {
+    const lower = message.toLowerCase();
+    return lower.includes('401')
+        || lower.includes('403')
+        || lower.includes('unauthorized')
+        || lower.includes('forbidden')
+        || lower.includes('409 conflict')
+        || lower.includes('terminated by other getupdates request');
+}
+
+function nextReconnectDelay(attempt: number): number {
+    // 1s, 2s, 4s, ... capped at 30s
+    return Math.min(BASE_RECONNECT_DELAY_MS * (2 ** Math.max(0, attempt - 1)), 30000);
+}
+
+function scheduleReconnect(reason: string): void {
+    if (reconnecting || reconnectTimer) {
+        return;
+    }
+
+    reconnecting = true;
+    reconnectAttempts += 1;
+
+    if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+        log('ERROR', `Polling reconnection failed after ${MAX_RECONNECT_ATTEMPTS} attempts, exiting process`);
+        process.exit(1);
+    }
+
+    const delay = nextReconnectDelay(reconnectAttempts);
+    log('WARN', `Scheduling Telegram polling reconnect in ${delay}ms (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}) after: ${reason}`);
+
+    reconnectTimer = setTimeout(async () => {
+        reconnectTimer = null;
+        try {
+            await bot.stopPolling();
+        } catch {
+            // ignore stop errors, polling may already be stopped
+        }
+
+        try {
+            await bot.startPolling();
+            reconnectAttempts = 0;
+            log('INFO', 'Telegram polling reconnected successfully');
+        } catch (err) {
+            const message = (err as Error).message;
+            log('ERROR', `Telegram polling reconnect attempt failed: ${message}`);
+            reconnecting = false;
+            scheduleReconnect(message);
+            return;
+        }
+
+        reconnecting = false;
+    }, delay);
+}
+
 // Bot ready
 bot.getMe().then(async (me: TelegramBot.User) => {
     log('INFO', `Telegram bot connected as @${me.username}`);
@@ -584,7 +645,28 @@ setInterval(() => {
 
 // Handle polling errors
 bot.on('polling_error', (error: Error) => {
-    log('ERROR', `Polling error: ${error.message}`);
+    const message = error.message || 'Unknown polling error';
+    log('ERROR', `Polling error: ${message}`);
+
+    if (isFatalPollingError(message)) {
+        log('ERROR', 'Fatal Telegram polling error detected, exiting process');
+        process.exit(1);
+    }
+
+    scheduleReconnect(message);
+});
+
+// Handle general bot errors that are not surfaced as polling_error
+bot.on('error', (error: Error) => {
+    const message = error.message || 'Unknown bot error';
+    log('ERROR', `Telegram bot error: ${message}`);
+
+    if (isFatalPollingError(message)) {
+        log('ERROR', 'Fatal Telegram bot error detected, exiting process');
+        process.exit(1);
+    }
+
+    scheduleReconnect(message);
 });
 
 // Graceful shutdown
