@@ -1,9 +1,12 @@
 import fs from 'fs';
 import path from 'path';
-import { spawn } from 'child_process';
+import http from 'http';
+import https from 'https';
+import { spawn, spawnSync } from 'child_process';
 import { jsonrepair } from 'jsonrepair';
 import {
     LOG_FILE,
+    TINYCLAW_HOME,
     resolveClaudeModel,
     resolveCodexModel,
     resolveOpenCodeModel,
@@ -75,6 +78,14 @@ type OpenVikingPluginState = {
 
 type OpenVikingSettingsInput = {
     enabled?: boolean;
+    auto_start?: boolean;
+    host?: string;
+    port?: number;
+    base_url?: string;
+    config_path?: string;
+    project?: string;
+    api_key?: string;
+    binary?: string;
     context_plugin_enabled?: boolean;
     native_session?: boolean;
     native_search?: boolean;
@@ -102,6 +113,14 @@ type OpenVikingSettingsInput = {
 
 type OpenVikingContextConfig = {
     enabled: boolean;
+    autoStart: boolean;
+    baseUrl: string;
+    host: string;
+    port: number;
+    configPath?: string;
+    binary: string;
+    project?: string;
+    apiKey?: string;
     autosyncFallbackEnabled: boolean;
     prefetchEnabled: boolean;
     sessionNativeEnabled: boolean;
@@ -136,9 +155,21 @@ type PrefetchGateDecision = {
     reason: string;
 };
 
+type ManagedOpenVikingProcessState = {
+    pid: number;
+    baseUrl: string;
+    startedAt: string;
+    binary: string;
+    args: string[];
+};
+
 const OPENVIKING_SESSION_ROOT = '/tinyclaw/sessions';
 const OPENVIKING_NATIVE_PREFETCH_DUMP_FILE = path.join(path.dirname(LOG_FILE), 'prefetch_dump_native_latest.txt');
+const OPENVIKING_SERVICE_LOG_FILE = path.join(path.dirname(LOG_FILE), 'openviking.log');
+const OPENVIKING_PLUGIN_RUNTIME_DIR = path.join(TINYCLAW_HOME, 'runtime', 'openviking');
+const OPENVIKING_MANAGED_PROCESS_FILE = path.join(OPENVIKING_PLUGIN_RUNTIME_DIR, 'managed-process.json');
 const openVikingSyncChains = new Map<string, Promise<void>>();
+let startupRecoveryScheduled = false;
 
 async function runCommand(command: string, args: string[], cwd?: string, timeoutMs?: number): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -274,6 +305,31 @@ function resolveStringListFlag(
     return fallback;
 }
 
+function resolveStringFlag(envName: string, settingValue: string | undefined, fallback: string): string {
+    const env = process.env[envName];
+    if (typeof env === 'string' && env.trim()) return env.trim();
+    if (typeof settingValue === 'string' && settingValue.trim()) return settingValue.trim();
+    return fallback;
+}
+
+function resolveOptionalStringFlag(envName: string, settingValue: string | undefined): string | undefined {
+    const env = process.env[envName];
+    if (typeof env === 'string' && env.trim()) return env.trim();
+    if (typeof settingValue === 'string' && settingValue.trim()) return settingValue.trim();
+    return undefined;
+}
+
+function resolveOpenVikingBaseUrl(ov: OpenVikingSettingsInput, host: string, port: number): string {
+    const envBaseUrl = process.env.OPENVIKING_BASE_URL;
+    if (typeof envBaseUrl === 'string' && envBaseUrl.trim()) {
+        return envBaseUrl.trim();
+    }
+    if (typeof ov.base_url === 'string' && ov.base_url.trim()) {
+        return ov.base_url.trim();
+    }
+    return `http://${host}:${port}`;
+}
+
 function getOpenVikingSettings(settings: Settings): OpenVikingSettingsInput {
     const candidate = (settings as Settings & { openviking?: OpenVikingSettingsInput }).openviking;
     if (!candidate || typeof candidate !== 'object') {
@@ -284,11 +340,22 @@ function getOpenVikingSettings(settings: Settings): OpenVikingSettingsInput {
 
 function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextConfig {
     const ov = getOpenVikingSettings(settings);
+    const host = resolveStringFlag('OPENVIKING_HOST', ov.host, '127.0.0.1');
+    const port = resolveNumberFlag('OPENVIKING_PORT', ov.port, 8320, 1);
+    const autoStartEnv = parseBoolean(process.env.TINYCLAW_OPENVIKING_AUTO_START ?? process.env.OPENVIKING_AUTO_START);
     const enabled = resolveBooleanFlag(
         'TINYCLAW_OPENVIKING_CONTEXT_PLUGIN',
         ov.context_plugin_enabled ?? ov.enabled,
         true
     );
+    const autoStart = autoStartEnv !== undefined
+        ? autoStartEnv
+        : (typeof ov.auto_start === 'boolean' ? ov.auto_start : false);
+    const baseUrl = resolveOpenVikingBaseUrl(ov, host, port);
+    const configPath = resolveOptionalStringFlag('OPENVIKING_CONFIG_PATH', ov.config_path);
+    const project = resolveOptionalStringFlag('OPENVIKING_PROJECT', ov.project);
+    const apiKey = resolveOptionalStringFlag('OPENVIKING_API_KEY', ov.api_key);
+    const binary = resolveStringFlag('OPENVIKING_BIN', ov.binary, 'openviking');
     const autosyncFallbackEnabled = resolveBooleanFlag('TINYCLAW_OPENVIKING_AUTOSYNC', ov.autosync, true);
     const prefetchEnabled = resolveBooleanFlag('TINYCLAW_OPENVIKING_PREFETCH', ov.prefetch, true);
     const sessionNativeEnabled = resolveBooleanFlag('TINYCLAW_OPENVIKING_SESSION_NATIVE', ov.native_session, false);
@@ -323,6 +390,14 @@ function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextCo
 
     return {
         enabled,
+        autoStart,
+        baseUrl,
+        host,
+        port,
+        configPath,
+        binary,
+        project,
+        apiKey,
         autosyncFallbackEnabled,
         prefetchEnabled,
         sessionNativeEnabled,
@@ -384,6 +459,212 @@ function resolveOpenVikingContextConfig(settings: Settings): OpenVikingContextCo
         sessionRoot: OPENVIKING_SESSION_ROOT,
         nativePrefetchDumpFile: OPENVIKING_NATIVE_PREFETCH_DUMP_FILE,
     };
+}
+
+function applyOpenVikingToolEnv(config: OpenVikingContextConfig): void {
+    process.env.OPENVIKING_BASE_URL = config.baseUrl;
+    if (config.project) process.env.OPENVIKING_PROJECT = config.project;
+    if (config.apiKey) process.env.OPENVIKING_API_KEY = config.apiKey;
+}
+
+function isProcessAlive(pid: number): boolean {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function readManagedOpenVikingProcessState(): ManagedOpenVikingProcessState | null {
+    try {
+        if (!fs.existsSync(OPENVIKING_MANAGED_PROCESS_FILE)) return null;
+        const raw = fs.readFileSync(OPENVIKING_MANAGED_PROCESS_FILE, 'utf8');
+        const parsed = safeParseJSON<ManagedOpenVikingProcessState>(raw, 'openviking-managed-process');
+        if (!parsed || !Number.isInteger(parsed.pid)) return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function writeManagedOpenVikingProcessState(state: ManagedOpenVikingProcessState): void {
+    fs.mkdirSync(OPENVIKING_PLUGIN_RUNTIME_DIR, { recursive: true });
+    fs.writeFileSync(OPENVIKING_MANAGED_PROCESS_FILE, JSON.stringify(state, null, 2) + '\n', 'utf8');
+}
+
+function clearManagedOpenVikingProcessState(): void {
+    try {
+        if (fs.existsSync(OPENVIKING_MANAGED_PROCESS_FILE)) {
+            fs.unlinkSync(OPENVIKING_MANAGED_PROCESS_FILE);
+        }
+    } catch {
+        // noop
+    }
+}
+
+function buildOpenVikingHealthUrl(baseUrl: string): string {
+    try {
+        const url = new URL(baseUrl);
+        url.pathname = '/health';
+        url.search = '';
+        return url.toString();
+    } catch {
+        const normalized = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+        return `${normalized}/health`;
+    }
+}
+
+function isOpenVikingHealthy(baseUrl: string, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+        const healthUrl = buildOpenVikingHealthUrl(baseUrl);
+        let url: URL;
+        try {
+            url = new URL(healthUrl);
+        } catch {
+            resolve(false);
+            return;
+        }
+        const transport = url.protocol === 'https:' ? https : http;
+        const request = transport.request(
+            {
+                method: 'GET',
+                protocol: url.protocol,
+                hostname: url.hostname,
+                port: url.port || undefined,
+                path: `${url.pathname}${url.search}`,
+                timeout: timeoutMs,
+            },
+            (response) => {
+                const ok = (response.statusCode || 500) >= 200 && (response.statusCode || 500) < 300;
+                response.resume();
+                resolve(ok);
+            }
+        );
+        request.on('timeout', () => {
+            request.destroy(new Error('timeout'));
+            resolve(false);
+        });
+        request.on('error', () => resolve(false));
+        request.end();
+    });
+}
+
+async function waitForOpenVikingHealthy(baseUrl: string, timeoutMs: number): Promise<boolean> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+        // eslint-disable-next-line no-await-in-loop
+        if (await isOpenVikingHealthy(baseUrl, 1000)) return true;
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 250));
+    }
+    return false;
+}
+
+async function startOpenVikingIfNeeded(config: OpenVikingContextConfig): Promise<void> {
+    if (!config.autoStart) return;
+    applyOpenVikingToolEnv(config);
+
+    if (await isOpenVikingHealthy(config.baseUrl, 1200)) {
+        const managed = readManagedOpenVikingProcessState();
+        if (managed && !isProcessAlive(managed.pid)) {
+            clearManagedOpenVikingProcessState();
+        }
+        log('INFO', `OpenViking auto-start skipped: already reachable at ${config.baseUrl}`);
+        return;
+    }
+
+    if (config.configPath && !fs.existsSync(config.configPath)) {
+        log('WARN', `OpenViking auto-start skipped: config file not found at ${config.configPath}`);
+        return;
+    }
+
+    const probe = spawnSync(config.binary, ['--help'], { stdio: 'ignore', timeout: 1000 });
+    if (probe.error && (probe.error as NodeJS.ErrnoException).code === 'ENOENT') {
+        log('WARN', `OpenViking auto-start skipped: binary not found (${config.binary})`);
+        return;
+    }
+
+    const previous = readManagedOpenVikingProcessState();
+    if (previous && isProcessAlive(previous.pid)) {
+        log('INFO', `OpenViking auto-start waiting for managed process pid=${previous.pid}`);
+        const healthy = await waitForOpenVikingHealthy(config.baseUrl, 3000);
+        if (healthy) {
+            log('INFO', `OpenViking auto-start detected healthy managed process at ${config.baseUrl}`);
+            return;
+        }
+        log('WARN', `OpenViking managed process pid=${previous.pid} is not healthy, starting a new one`);
+    } else if (previous) {
+        clearManagedOpenVikingProcessState();
+    }
+
+    const args = ['serve', '--host', config.host, '--port', String(config.port)];
+    if (config.configPath) {
+        args.push('--config', config.configPath);
+    }
+
+    fs.mkdirSync(path.dirname(OPENVIKING_SERVICE_LOG_FILE), { recursive: true });
+    const logFd = fs.openSync(OPENVIKING_SERVICE_LOG_FILE, 'a');
+    try {
+        const child = spawn(config.binary, args, {
+            detached: true,
+            stdio: ['ignore', logFd, logFd],
+            env: { ...process.env },
+        });
+        child.unref();
+
+        writeManagedOpenVikingProcessState({
+            pid: child.pid ?? -1,
+            baseUrl: config.baseUrl,
+            startedAt: new Date().toISOString(),
+            binary: config.binary,
+            args,
+        });
+        log('INFO', `OpenViking auto-start launched: pid=${child.pid} base_url=${config.baseUrl}`);
+    } finally {
+        fs.closeSync(logFd);
+    }
+}
+
+async function stopManagedOpenVikingIfNeeded(config: OpenVikingContextConfig): Promise<void> {
+    const managed = readManagedOpenVikingProcessState();
+    if (!managed) return;
+
+    if (!isProcessAlive(managed.pid)) {
+        clearManagedOpenVikingProcessState();
+        return;
+    }
+
+    try {
+        process.kill(managed.pid, 'SIGTERM');
+        log('INFO', `OpenViking managed process stopping: pid=${managed.pid} signal=SIGTERM`);
+    } catch (error) {
+        const message = (error as Error).message || 'unknown';
+        log('WARN', `OpenViking managed process stop failed: pid=${managed.pid} error=${message}`);
+        clearManagedOpenVikingProcessState();
+        return;
+    }
+
+    const graceDeadline = Date.now() + Math.min(5000, Math.max(1000, config.commitTimeoutMs / 4));
+    while (Date.now() < graceDeadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 200));
+        if (!isProcessAlive(managed.pid)) {
+            clearManagedOpenVikingProcessState();
+            log('INFO', `OpenViking managed process stopped: pid=${managed.pid}`);
+            return;
+        }
+    }
+
+    try {
+        process.kill(managed.pid, 'SIGKILL');
+        log('WARN', `OpenViking managed process force-killed: pid=${managed.pid}`);
+    } catch {
+        // noop
+    } finally {
+        clearManagedOpenVikingProcessState();
+    }
 }
 
 /** Parse JSON with automatic repair for malformed content (e.g. bad escapes). */
@@ -744,13 +1025,47 @@ async function commitMappedNativeSessionAndClear(
 
     try {
         await commitNativeOpenVikingSession(config, workspacePath, sessionKey.agentId, existingSessionId);
-    } catch (error) {
-        log('WARN', `OpenViking session commit failed for @${sessionKey.agentId}: session_id=${existingSessionId} reason=${reason} error=${(error as Error).message}`);
-    } finally {
         deleteOpenVikingSessionId(sessionKey);
         log('INFO', `OpenViking session map cleared for @${sessionKey.agentId}: session_id=${existingSessionId} reason=${reason}`);
+        return true;
+    } catch (error) {
+        log('WARN', `OpenViking session commit failed for @${sessionKey.agentId}: session_id=${existingSessionId} reason=${reason} error=${(error as Error).message}`);
+        return false;
     }
-    return true;
+}
+
+function scheduleStartupRecoveryCommit(config: OpenVikingContextConfig, settings: Settings): void {
+    if (startupRecoveryScheduled) return;
+    if (!config.enabled || !config.sessionNativeEnabled || !config.commitOnShutdown) return;
+
+    const entries = listOpenVikingSessionEntries();
+    if (entries.length === 0) return;
+
+    startupRecoveryScheduled = true;
+    const workspacePath = resolveWorkspacePathFromSettings(settings);
+    log('INFO', `OpenViking startup recovery scheduled: pending_sessions=${entries.length}`);
+
+    void (async () => {
+        const healthy = await waitForOpenVikingHealthy(config.baseUrl, Math.min(config.commitTimeoutMs, 10000));
+        if (!healthy) {
+            log('WARN', `OpenViking startup recovery proceeding while service health is unavailable: base_url=${config.baseUrl}`);
+        }
+
+        let committed = 0;
+        for (const entry of entries) {
+            // eslint-disable-next-line no-await-in-loop
+            const didCommit = await commitMappedNativeSessionAndClear(
+                config,
+                workspacePath,
+                entry.key,
+                'startup_recovery',
+                'OpenViking startup recovery'
+            );
+            if (didCommit) committed += 1;
+        }
+        log('INFO', `OpenViking startup recovery complete: committed=${committed} pending_at_start=${entries.length}`);
+        startupRecoveryScheduled = false;
+    })();
 }
 
 function scheduleNativeSessionCommitAfterRotation(
@@ -1249,6 +1564,7 @@ async function beforeModel(ctx: BeforeModelContext): Promise<BeforeModelHookResu
     const beforeModelStartedAt = Date.now();
     const config = resolveOpenVikingContextConfig(ctx.settings);
     if (!config.enabled) return;
+    applyOpenVikingToolEnv(config);
 
     let message = ctx.message;
     let sessionUserMessage = ctx.userMessageForSession;
@@ -1399,6 +1715,7 @@ async function beforeModel(ctx: BeforeModelContext): Promise<BeforeModelHookResu
 async function afterModel(ctx: Parameters<NonNullable<Hooks['afterModel']>>[0]): Promise<void> {
     const config = resolveOpenVikingContextConfig(ctx.settings);
     if (!config.enabled) return;
+    applyOpenVikingToolEnv(config);
 
     const pluginState = asPluginState(ctx.state);
     const openVikingSessionId = pluginState.openVikingSessionId;
@@ -1454,16 +1771,19 @@ async function afterModel(ctx: Parameters<NonNullable<Hooks['afterModel']>>[0]):
     }
 }
 
-function onStartup(ctx: StartupContext): void {
+async function onStartup(ctx: StartupContext): Promise<void> {
     const config = resolveOpenVikingContextConfig(ctx.settings);
     if (!config.enabled) {
         log('INFO', '[plugin:openviking-context] disabled');
         return;
     }
 
+    applyOpenVikingToolEnv(config);
+
     log(
         'INFO',
-        `[plugin:openviking-context] enabled prefetch=${config.prefetchEnabled ? 1 : 0} ` +
+        `[plugin:openviking-context] enabled auto_start=${config.autoStart ? 1 : 0} base_url=${config.baseUrl} ` +
+        `host=${config.host} port=${config.port} prefetch=${config.prefetchEnabled ? 1 : 0} ` +
         `session_native=${config.sessionNativeEnabled ? 1 : 0} ` +
         `search_native=${config.searchNativeEnabled ? 1 : 0} autosync=${config.autosyncFallbackEnabled ? 1 : 0} ` +
         `idle_timeout_ms=${config.sessionIdleTimeoutMs} commit_on_shutdown=${config.commitOnShutdown ? 1 : 0} ` +
@@ -1472,6 +1792,9 @@ function onStartup(ctx: StartupContext): void {
         `prefetch_resource_supplement_max=${config.prefetchResourceSupplementMax} ` +
         `closed_session_retention_days=${config.closedSessionRetentionDays}`
     );
+
+    await startOpenVikingIfNeeded(config);
+    scheduleStartupRecoveryCommit(config, ctx.settings);
 }
 
 function onHealth(ctx: HealthContext): HealthResult {
@@ -1491,6 +1814,8 @@ function onHealth(ctx: HealthContext): HealthResult {
         summary: 'ready',
         details: {
             enabled: true,
+            autoStart: config.autoStart,
+            baseUrl: config.baseUrl,
             prefetchEnabled: config.prefetchEnabled,
             sessionNativeEnabled: config.sessionNativeEnabled,
             searchNativeEnabled: config.searchNativeEnabled,
@@ -1511,6 +1836,7 @@ function onHealth(ctx: HealthContext): HealthResult {
 
 async function onSessionEnd(ctx: SessionEndContext): Promise<void> {
     const config = resolveOpenVikingContextConfig(ctx.settings);
+    applyOpenVikingToolEnv(config);
     if (
         config.enabled
         && config.sessionNativeEnabled
@@ -1533,6 +1859,10 @@ async function onSessionEnd(ctx: SessionEndContext): Promise<void> {
             }
             log('INFO', `OpenViking shutdown session drain complete: committed=${committed} scanned=${entries.length}`);
         }
+    }
+
+    if (config.enabled && ctx.reason === 'shutdown') {
+        await stopManagedOpenVikingIfNeeded(config);
     }
 
     if (openVikingSyncChains.size === 0) return;

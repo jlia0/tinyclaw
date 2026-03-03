@@ -32,7 +32,7 @@ export const PLUGIN_HOOK_TIMEOUT_MS = resolveTimeoutFromEnv(
 );
 const PLUGIN_SESSION_END_HOOK_TIMEOUT_MS = resolveTimeoutFromEnv(
     'TINYCLAW_PLUGIN_SESSION_END_HOOK_TIMEOUT_MS',
-    30000,
+    90000,
     1000
 );
 const PLUGIN_ACTIVATE_TIMEOUT_MS = Number(process.env.TINYCLAW_PLUGIN_ACTIVATE_TIMEOUT_MS || 3000);
