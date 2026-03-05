@@ -15,6 +15,7 @@ import https from 'https';
 import http from 'http';
 import { ensureSenderPaired } from '../lib/pairing';
 import { watchChannel, clearSignal } from '../lib/signals';
+import { isHeartbeatStale } from '../lib/heartbeat';
 
 const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
 const API_BASE = `http://localhost:${API_PORT}`;
@@ -582,7 +583,13 @@ const unwatch = watchChannel('telegram', () => {
 });
 
 // Fallback polling every 10 seconds (in case signals are missed)
-setInterval(checkOutgoingQueue, 10000);
+setInterval(() => {
+    // Check if queue-processor is still alive
+    if (isHeartbeatStale()) {
+        log('WARN', 'Queue processor heartbeat stale - may have crashed');
+    }
+    checkOutgoingQueue();
+}, 10000);
 
 // REMOVED: Old polling every 1 second
 // setInterval(checkOutgoingQueue, 1000);

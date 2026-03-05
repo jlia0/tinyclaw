@@ -45,6 +45,7 @@ import { handleLongResponse, collectFiles } from './lib/response';
 import {
     conversations, MAX_CONVERSATION_MESSAGES, enqueueInternalMessage, completeConversation,
 } from './lib/conversation';
+import { startHeartbeat, stopHeartbeat } from './lib/heartbeat';
 
 // Ensure directories exist
 [FILES_DIR, path.dirname(LOG_FILE), CHATS_DIR].forEach(dir => {
@@ -535,6 +536,9 @@ if (recovered > 0) {
     log('INFO', `Recovered ${recovered} stale message(s) from previous session`);
 }
 
+// Start heartbeat monitoring
+startHeartbeat();
+
 // NEW: Recover active conversations from DB
 async function recoverConversations(): Promise<void> {
     const activeConvs = loadActiveConversations();
@@ -639,6 +643,7 @@ setInterval(() => {
 // Graceful shutdown
 process.on('SIGINT', () => {
     log('INFO', 'Shutting down queue processor...');
+    stopHeartbeat();
     closeQueueDb();
     apiServer.close();
     process.exit(0);
@@ -646,6 +651,7 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
     log('INFO', 'Shutting down queue processor...');
+    stopHeartbeat();
     closeQueueDb();
     apiServer.close();
     process.exit(0);
