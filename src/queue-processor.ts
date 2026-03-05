@@ -43,6 +43,7 @@ import {
     // NEW: Outstanding request tracking
     getRequestsNeedingRetry, getRequestsNeedingEscalation, incrementRequestRetry,
     escalateRequest, acknowledgeRequest, respondToRequest, getRequest,
+    getPendingRequestsForConversation,
 } from './lib/db';
 import { handleLongResponse, collectFiles } from './lib/response';
 import {
@@ -164,7 +165,16 @@ async function handleTeamResponse(
             incrementTotalMessages(conv.id);
             removePendingAgent(conv.id, agentId);
 
-            // Check for teammate mentions
+            // Check if this response completes an outstanding request
+            // (i.e., this agent was asked to do something and is now responding)
+            const pendingRequests = getPendingRequestsForConversation(conv.id);
+            const matchingRequest = pendingRequests.find(r => r.to_agent === agentId && r.status === 'acked');
+            if (matchingRequest) {
+                respondToRequest(matchingRequest.request_id, response);
+                log('INFO', `Request ${matchingRequest.request_id} completed by @${agentId}`);
+            }
+
+            // Check for teammate mentions (agent asking other agents to do things)
             const teammateMentions = extractTeammateMentions(
                 response, agentId, conv.teamContext.teamId, teams, agents
             );
