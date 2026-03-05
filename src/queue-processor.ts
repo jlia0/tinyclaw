@@ -42,7 +42,7 @@ import {
     pruneOldConversations,
     // NEW: Outstanding request tracking
     getRequestsNeedingRetry, getRequestsNeedingEscalation, incrementRequestRetry,
-    escalateRequest, acknowledgeRequest, respondToRequest, getRequest,
+    escalateRequest, acknowledgeRequest, respondToRequest,
     getPendingRequestsForConversation, pruneOldRequests, failRequest,
 } from './lib/db';
 import { handleLongResponse, collectFiles } from './lib/response';
@@ -744,12 +744,13 @@ setInterval(() => {
         });
     }
     const convCount = recoverStaleConversations();
-    
-    // Prune old completed requests
+}, 5 * 60 * 1000); // every 5 min
+
+// Prune old requests hourly (consistent with other prune functions)
+setInterval(() => {
     const prunedRequests = pruneOldRequests();
     if (prunedRequests > 0) log('INFO', `Pruned ${prunedRequests} old request(s)`);
-    
-}, 5 * 60 * 1000); // every 5 min
+}, 60 * 60 * 1000); // every 1 hour
 
 // Check request timeouts more frequently (every 30 seconds)
 setInterval(() => {
