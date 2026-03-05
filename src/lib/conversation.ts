@@ -3,7 +3,7 @@ import path from 'path';
 import { Conversation } from './types';
 import { CHATS_DIR, getSettings, getAgents } from './config';
 import { log, emitEvent } from './logging';
-import { enqueueMessage, enqueueResponse } from './db';
+import { enqueueMessage, enqueueResponse, createOutstandingRequest } from './db';
 import { handleLongResponse, collectFiles } from './response';
 
 // Active conversations — tracks in-flight team message passing
@@ -74,6 +74,7 @@ export function decrementPending(conv: Conversation): boolean {
 
 /**
  * Enqueue an internal (agent-to-agent) message into the SQLite queue.
+ * Also creates an outstanding request for tracking with ACK/response timeouts.
  */
 export function enqueueInternalMessage(
     conversationId: string,
@@ -83,17 +84,32 @@ export function enqueueInternalMessage(
     originalData: { channel: string; sender: string; senderId?: string | null; messageId: string }
 ): void {
     const messageId = `internal_${conversationId}_${targetAgent}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+    // Create outstanding request for tracking (this is the key fix)
+    // This ensures we track whether agent B actually responds
+    const requestId = createOutstandingRequest(
+        conversationId,
+        fromAgent,
+        targetAgent,
+        message,
+        5000,   // 5 seconds to ACK
+        300000  // 5 minutes to respond
+    );
+
+    // Include request_id in the message so agent B can acknowledge
+    const messageWithRequestId = `[REQUEST:${requestId}]\n${message}`;
+
     enqueueMessage({
         channel: originalData.channel,
         sender: originalData.sender,
         senderId: originalData.senderId ?? undefined,
-        message,
+        message: messageWithRequestId,
         messageId,
         agent: targetAgent,
         conversationId,
         fromAgent,
     });
-    log('INFO', `Enqueued internal message: @${fromAgent} → @${targetAgent}`);
+    log('INFO', `Enqueued internal message: @${fromAgent} → @${targetAgent} (request: ${requestId})`);
 }
 
 /**
