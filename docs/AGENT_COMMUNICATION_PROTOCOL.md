@@ -215,6 +215,18 @@ function escalateRequest(requestId: string, reason: string): void
 
 Emits `request_escalated` event for monitoring.
 
+### Error Handling
+
+#### `failRequest()`
+
+Marks request as failed when agent errors.
+
+```typescript
+function failRequest(requestId: string, reason: string): void
+```
+
+Called proactively from `handleTeamError()` to mark requests failed instead of letting them escalate via timeout.
+
 ---
 
 ## Integration Points
@@ -292,7 +304,24 @@ for (const req of matchingRequests) {
 }
 ```
 
-### 4. Timeout Checking (`queue-processor.ts`)
+### 4. Error Handling (`queue-processor.ts`)
+
+When agent B errors:
+1. Find all matching requests for this agent
+2. Mark all as failed (proactive cleanup)
+
+```typescript
+// In handleTeamError()
+const pendingRequests = getPendingRequestsForConversation(conv.id);
+const matchingRequests = pendingRequests.filter(
+    r => r.to_agent === agentId && r.status === 'acked'
+);
+for (const req of matchingRequests) {
+    failRequest(req.request_id, error.message);
+}
+```
+
+### 5. Timeout Checking (`queue-processor.ts`)
 
 Runs every 30 seconds:
 
@@ -334,7 +363,7 @@ async function checkRequestTimeouts(): Promise<void> {
 | Check | Interval | Description |
 |-------|----------|-------------|
 | `checkRequestTimeouts()` | 30s | Check for expired ACK/response deadlines |
-| `pruneOldRequests()` | 5min | Clean up completed requests older than 24h |
+| `pruneOldRequests()` | 1 hour | Clean up completed requests older than 24h |
 
 ---
 
