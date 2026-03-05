@@ -24,7 +24,17 @@ import {
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
-import { loadPlugins, runIncomingHooks, runOutgoingHooks } from './lib/plugins';
+import {
+    loadPlugins,
+    runAfterModelHooks,
+    runBeforeModelHooks,
+    runHealthHooks,
+    runIncomingHooks,
+    runOutgoingHooks,
+    runSessionEndHooks,
+    runSessionResetHooks,
+    runStartupHooks,
+} from './lib/plugins';
 import { startApiServer } from './server';
 import {
     initQueueDb, claimNextMessage, completeMessage as dbCompleteMessage,
@@ -160,6 +170,28 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
         // Run incoming hooks
         ({ text: message } = await runIncomingHooks(message, { channel, sender, messageId, originalMessage: rawMessage }));
 
+        const modelHookBaseCtx = {
+            settings,
+            messageData,
+            channel,
+            sender,
+            messageId,
+            originalMessage: rawMessage,
+            agentId,
+            agent,
+            workspacePath,
+            isInternal,
+            shouldReset,
+            userMessageForSession: message,
+        };
+
+        if (shouldReset) {
+            await runSessionResetHooks(modelHookBaseCtx);
+        }
+
+        const beforeModel = await runBeforeModelHooks(message, modelHookBaseCtx);
+        message = beforeModel.message;
+
         // Invoke agent
         emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: messageData.fromAgent || null });
         let response: string;
@@ -171,6 +203,15 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
             response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
         }
+
+        await runAfterModelHooks(
+            response,
+            {
+                ...modelHookBaseCtx,
+                message,
+            },
+            beforeModel.states
+        );
 
         emitEvent('chain_step_done', { agentId, agentName: agent.name, responseLength: response.length, responseText: response });
 
@@ -327,6 +368,8 @@ async function processQueue(): Promise<void> {
                 if (agentProcessingChains.get(agentId) === newChain) {
                     agentProcessingChains.delete(agentId);
                 }
+                // Keep draining backlog without waiting for a new enqueue event.
+                void processQueue();
             });
         }
     } catch (error) {
@@ -369,10 +412,15 @@ if (recovered > 0) {
 // Start the API server (passes conversations for queue status reporting)
 const apiServer = startApiServer(conversations);
 
-// Load plugins (async IIFE to avoid top-level await)
-(async () => {
+async function initializePluginsAndHealth(): Promise<void> {
     await loadPlugins();
-})();
+    const settings = getSettings();
+    await runStartupHooks({ settings });
+    const health = await runHealthHooks({ settings });
+    for (const item of health) {
+        log('INFO', `Plugin health: ${item.plugin} status=${item.result.status} summary=${item.result.summary}`);
+    }
+}
 
 log('INFO', 'Queue processor started (SQLite-backed)');
 logAgentConfig();
@@ -380,6 +428,13 @@ emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), te
 
 // Event-driven: all messages come through the API server (same process)
 queueEvents.on('message:enqueued', () => processQueue());
+
+initializePluginsAndHealth().catch((error) => {
+    log('ERROR', `Plugin initialization failed: ${(error as Error).message}`);
+}).finally(() => {
+    // Drain any pending/recovered messages after plugin initialization.
+    void processQueue();
+});
 
 // Periodic maintenance
 setInterval(() => {
@@ -409,16 +464,29 @@ setInterval(() => {
 }, 60 * 60 * 1000); // every 1 hr
 
 // Graceful shutdown
-process.on('SIGINT', () => {
+let shuttingDown = false;
+async function handleShutdown(signal: string): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log('INFO', 'Shutting down queue processor...');
+    try {
+        await runSessionEndHooks({
+            settings: getSettings(),
+            reason: 'shutdown',
+            signal,
+        });
+    } catch (error) {
+        log('ERROR', `Plugin shutdown hooks failed: ${(error as Error).message}`);
+    }
     closeQueueDb();
     apiServer.close();
     process.exit(0);
+}
+
+process.on('SIGINT', () => {
+    void handleShutdown('SIGINT');
 });
 
 process.on('SIGTERM', () => {
-    log('INFO', 'Shutting down queue processor...');
-    closeQueueDb();
-    apiServer.close();
-    process.exit(0);
+    void handleShutdown('SIGTERM');
 });
