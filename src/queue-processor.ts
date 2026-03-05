@@ -40,6 +40,9 @@ import {
     incrementTotalMessages, markConversationCompleted, loadActiveConversations,
     loadConversationResponses, loadPendingAgents, addPendingAgent, removePendingAgent,
     pruneOldConversations,
+    // NEW: Outstanding request tracking
+    getRequestsNeedingRetry, getRequestsNeedingEscalation, incrementRequestRetry,
+    escalateRequest, acknowledgeRequest, respondToRequest, getRequest,
 } from './lib/db';
 import { handleLongResponse, collectFiles } from './lib/response';
 import {
@@ -362,6 +365,19 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
         }
 
         const agent = agents[agentId];
+        
+        // Extract and acknowledge request_id if present (for agent handoff tracking)
+        const requestMatch = message.match(/^\[REQUEST:([^\]]+)\]\n?/);
+        if (requestMatch) {
+            const requestId = requestMatch[1];
+            if (acknowledgeRequest(requestId)) {
+                log('INFO', `Request ${requestId} acknowledged by @${agentId}`);
+            }
+            // Remove request prefix from message before sending to agent
+            message = message.replace(requestMatch[0], '');
+        }
+        
+        log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
         log('INFO', `Routing to agent: ${agent.name} (${agentId}) [${agent.provider}/${agent.model}]`);
         if (!isInternal) {
             emitEvent('agent_routed', { agentId, agentName: agent.name, provider: agent.provider, model: agent.model, isTeamRouted });
@@ -661,6 +677,38 @@ const apiServer = startApiServer(conversations);
 // Event-driven: all messages come through the API server (same process)
 queueEvents.on('message:enqueued', () => processQueue());
 
+// Check outstanding request timeouts (ACK and response deadlines)
+async function checkRequestTimeouts(): Promise<void> {
+    // Find requests that need retry (no ACK within deadline)
+    const needsRetry = getRequestsNeedingRetry();
+    for (const req of needsRetry) {
+        log('WARN', `Request ${req.request_id} to @${req.to_agent} not acknowledged, retry ${req.retry_count + 1}/${req.max_retries}`);
+        
+        // Increment retry and extend deadline
+        const newDeadline = Date.now() + 5000; // 5 more seconds
+        incrementRequestRetry(req.request_id, newDeadline);
+        
+        // Could resend message here if needed
+        // For now, just log and extend deadline
+    }
+    
+    // Find requests that need escalation (acked but no response within deadline)
+    const needsEscalation = getRequestsNeedingEscalation();
+    for (const req of needsEscalation) {
+        log('ERROR', `Request ${req.request_id} to @${req.to_agent} timed out after ACK - no response received`);
+        
+        escalateRequest(req.request_id, `No response within ${req.response_deadline - req.acked_at!}ms`);
+        
+        emitEvent('request_escalated', {
+            requestId: req.request_id,
+            conversationId: req.conversation_id,
+            fromAgent: req.from_agent,
+            toAgent: req.to_agent,
+            reason: 'response_timeout',
+        });
+    }
+}
+
 // Periodic maintenance
 setInterval(() => {
     const msgCount = recoverStaleMessages();
@@ -679,6 +727,11 @@ setInterval(() => {
         });
     }
     const convCount = recoverStaleConversations();
+    
+    // Check request timeouts
+    checkRequestTimeouts().catch(err => {
+        log('ERROR', `Error checking request timeouts: ${err.message}`);
+    });
 }, 5 * 60 * 1000); // every 5 min
 
 setInterval(() => {
