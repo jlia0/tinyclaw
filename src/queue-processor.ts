@@ -44,6 +44,7 @@ import {
 import { handleLongResponse, collectFiles } from './lib/response';
 import {
     conversations, MAX_CONVERSATION_MESSAGES, enqueueInternalMessage, completeConversation,
+    withConversationLock,
 } from './lib/conversation';
 import { startHeartbeat, stopHeartbeat } from './lib/heartbeat';
 
@@ -144,69 +145,73 @@ async function handleTeamResponse(
     agents: Record<string, AgentConfig>
 ): Promise<void> {
     try {
-        // Persist response to DB first (for restart recovery)
-        persistResponse(conv.id, agentId, response);
+        // Use conversation lock to prevent race conditions when multiple agents finish simultaneously
+        // This prevents: lost updates to conv.totalMessages/pending, duplicate conversation completion
+        await withConversationLock(conv.id, async () => {
+            // Persist response to DB first (for restart recovery)
+            persistResponse(conv.id, agentId, response);
 
-        // Update in-memory conversation
-        conv.responses.push({ agentId, response });
-        conv.totalMessages++;
-        conv.pendingAgents.delete(agentId);
-        collectFiles(response, conv.files);
+            // Update in-memory conversation
+            conv.responses.push({ agentId, response });
+            conv.totalMessages++;
+            conv.pendingAgents.delete(agentId);
+            collectFiles(response, conv.files);
 
-        // Update DB counters
-        incrementTotalMessages(conv.id);
-        removePendingAgent(conv.id, agentId);
+            // Update DB counters
+            incrementTotalMessages(conv.id);
+            removePendingAgent(conv.id, agentId);
 
-        // Check for teammate mentions
-        const teammateMentions = extractTeammateMentions(
-            response, agentId, conv.teamContext.teamId, teams, agents
-        );
+            // Check for teammate mentions
+            const teammateMentions = extractTeammateMentions(
+                response, agentId, conv.teamContext.teamId, teams, agents
+            );
 
-        if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
-            // Enqueue internal messages
-            incrementPendingInDb(conv.id, teammateMentions.length);
-            conv.pending += teammateMentions.length;
+            if (teammateMentions.length > 0 && conv.totalMessages < conv.maxMessages) {
+                // Enqueue internal messages
+                incrementPendingInDb(conv.id, teammateMentions.length);
+                conv.pending += teammateMentions.length;
 
-            for (const mention of teammateMentions) {
-                conv.pendingAgents.add(mention.teammateId);
-                addPendingAgent(conv.id, mention.teammateId);
+                for (const mention of teammateMentions) {
+                    conv.pendingAgents.add(mention.teammateId);
+                    addPendingAgent(conv.id, mention.teammateId);
 
-                log('INFO', `@${agentId} → @${mention.teammateId}`);
-                await emitEvent('chain_handoff', {
-                    teamId: conv.teamContext.teamId,
-                    fromAgent: agentId,
-                    toAgent: mention.teammateId
-                });
+                    log('INFO', `@${agentId} → @${mention.teammateId}`);
+                    await emitEvent('chain_handoff', {
+                        teamId: conv.teamContext.teamId,
+                        fromAgent: agentId,
+                        toAgent: mention.teammateId
+                    });
 
-                const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
-                enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, {
-                    channel: dbMsg.channel,
-                    sender: dbMsg.sender,
-                    senderId: dbMsg.sender_id ?? undefined,
-                    messageId: dbMsg.message_id,
-                });
+                    const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
+                    enqueueInternalMessage(conv.id, agentId, mention.teammateId, internalMsg, {
+                        channel: dbMsg.channel,
+                        sender: dbMsg.sender,
+                        senderId: dbMsg.sender_id ?? undefined,
+                        messageId: dbMsg.message_id,
+                    });
+                }
+            } else if (teammateMentions.length > 0) {
+                log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing further mentions`);
             }
-        } else if (teammateMentions.length > 0) {
-            log('WARN', `Conversation ${conv.id} hit max messages (${conv.maxMessages}) — not enqueuing further mentions`);
-        }
 
-        // Decrement pending and check completion
-        const newPending = decrementPendingInDb(conv.id);
-        conv.pending = newPending;
+            // Decrement pending and check completion
+            const newPending = decrementPendingInDb(conv.id);
+            conv.pending = newPending;
 
-        if (newPending === 0) {
-            // Load all responses from DB for completeness
-            const dbResponses = loadConversationResponses(conv.id);
-            conv.responses = dbResponses.map(r => ({ agentId: r.agent_id, response: r.response }));
+            if (newPending === 0) {
+                // Load all responses from DB for completeness
+                const dbResponses = loadConversationResponses(conv.id);
+                conv.responses = dbResponses.map(r => ({ agentId: r.agent_id, response: r.response }));
 
-            await completeConversation(conv);
-            markConversationCompleted(conv.id);
-            conversations.delete(conv.id);
-        } else {
-            // Persist updated conversation state
-            persistConversation(conv);
-            log('INFO', `Conversation ${conv.id}: ${newPending} branch(es) still pending`);
-        }
+                await completeConversation(conv);
+                markConversationCompleted(conv.id);
+                conversations.delete(conv.id);
+            } else {
+                // Persist updated conversation state
+                persistConversation(conv);
+                log('INFO', `Conversation ${conv.id}: ${newPending} branch(es) still pending`);
+            }
+        });
 
         // Mark message completed
         dbCompleteMessage(dbMsg.id);
@@ -230,29 +235,32 @@ async function handleTeamError(
     log('ERROR', `Agent ${agentId} error in conversation ${conv.id}: ${error.message}`);
 
     try {
-        // Record error as response
-        const errorResponse = `Error: ${error.message}`;
-        persistResponse(conv.id, agentId, errorResponse);
-        conv.responses.push({ agentId, response: errorResponse });
+        // Use conversation lock to prevent race conditions (same reason as handleTeamResponse)
+        await withConversationLock(conv.id, async () => {
+            // Record error as response
+            const errorResponse = `Error: ${error.message}`;
+            persistResponse(conv.id, agentId, errorResponse);
+            conv.responses.push({ agentId, response: errorResponse });
 
-        // Update counters
-        removePendingAgent(conv.id, agentId);
-        conv.pendingAgents.delete(agentId);
+            // Update counters
+            removePendingAgent(conv.id, agentId);
+            conv.pendingAgents.delete(agentId);
 
-        // Decrement and check completion
-        const newPending = decrementPendingInDb(conv.id);
-        conv.pending = newPending;
+            // Decrement and check completion
+            const newPending = decrementPendingInDb(conv.id);
+            conv.pending = newPending;
 
-        if (newPending === 0) {
-            const dbResponses = loadConversationResponses(conv.id);
-            conv.responses = dbResponses.map(r => ({ agentId: r.agent_id, response: r.response }));
+            if (newPending === 0) {
+                const dbResponses = loadConversationResponses(conv.id);
+                conv.responses = dbResponses.map(r => ({ agentId: r.agent_id, response: r.response }));
 
-            await completeConversation(conv);
-            markConversationCompleted(conv.id);
-            conversations.delete(conv.id);
-        } else {
-            persistConversation(conv);
-        }
+                await completeConversation(conv);
+                markConversationCompleted(conv.id);
+                conversations.delete(conv.id);
+            } else {
+                persistConversation(conv);
+            }
+        });
 
         dbCompleteMessage(dbMsg.id);
 
