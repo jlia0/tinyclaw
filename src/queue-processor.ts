@@ -43,7 +43,7 @@ import {
     // NEW: Outstanding request tracking
     getRequestsNeedingRetry, getRequestsNeedingEscalation, incrementRequestRetry,
     escalateRequest, acknowledgeRequest, respondToRequest, getRequest,
-    getPendingRequestsForConversation, pruneOldRequests,
+    getPendingRequestsForConversation, pruneOldRequests, failRequest,
 } from './lib/db';
 import { handleLongResponse, collectFiles } from './lib/response';
 import {
@@ -259,6 +259,13 @@ async function handleTeamError(
             // Update counters
             removePendingAgent(conv.id, agentId);
             conv.pendingAgents.delete(agentId);
+
+            // Mark outstanding requests as failed
+            const pendingRequests = getPendingRequestsForConversation(conv.id);
+            const matchingRequests = pendingRequests.filter(r => r.to_agent === agentId && r.status === 'acked');
+            for (const req of matchingRequests) {
+                failRequest(req.request_id, error.message);
+            }
 
             // Decrement and check completion
             const newPending = decrementPendingInDb(conv.id);
