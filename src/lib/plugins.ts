@@ -10,6 +10,10 @@ import path from 'path';
 import { TINYCLAW_HOME } from './config';
 import { log, onEvent } from './logging';
 
+const PLUGINS_ENABLED = process.env.TINYCLAW_PLUGINS_ENABLED === '1';
+const PLUGIN_HOOK_TIMEOUT_MS = Number(process.env.TINYCLAW_PLUGIN_HOOK_TIMEOUT_MS || 1500);
+const PLUGIN_ACTIVATE_TIMEOUT_MS = Number(process.env.TINYCLAW_PLUGIN_ACTIVATE_TIMEOUT_MS || 3000);
+
 // Types
 export interface PluginEvent {
     type: string;
@@ -54,6 +58,20 @@ interface LoadedPlugin {
 const loadedPlugins: LoadedPlugin[] = [];
 const eventHandlers = new Map<string, Array<(event: PluginEvent) => void>>();
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+            reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+    });
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+}
+
 /**
  * Create the plugin context passed to activate() functions.
  */
@@ -80,6 +98,11 @@ function createPluginContext(pluginName: string): PluginContext {
  *   - hooks: Hooks                        (optional)
  */
 export async function loadPlugins(): Promise<void> {
+    if (!PLUGINS_ENABLED) {
+        log('INFO', 'Plugins disabled (set TINYCLAW_PLUGINS_ENABLED=1 to enable)');
+        return;
+    }
+
     const pluginsDir = path.join(TINYCLAW_HOME, 'plugins');
 
     if (!fs.existsSync(pluginsDir)) {
@@ -119,7 +142,11 @@ export async function loadPlugins(): Promise<void> {
             // Call activate() if present
             if (typeof pluginModule.activate === 'function') {
                 const ctx = createPluginContext(pluginName);
-                await pluginModule.activate(ctx);
+                await withTimeout(
+                    Promise.resolve(pluginModule.activate(ctx)),
+                    PLUGIN_ACTIVATE_TIMEOUT_MS,
+                    `plugin '${pluginName}' activate`
+                );
             }
 
             // Store hooks if present
@@ -151,10 +178,18 @@ export async function runOutgoingHooks(message: string, ctx: HookContext): Promi
     let text = message;
     let metadata: HookMetadata = {};
 
+    if (!PLUGINS_ENABLED || loadedPlugins.length === 0) {
+        return { text, metadata };
+    }
+
     for (const plugin of loadedPlugins) {
         if (plugin.hooks?.transformOutgoing) {
             try {
-                const result = await plugin.hooks.transformOutgoing(text, ctx);
+                const result = await withTimeout(
+                    Promise.resolve(plugin.hooks.transformOutgoing(text, ctx)),
+                    PLUGIN_HOOK_TIMEOUT_MS,
+                    `plugin '${plugin.name}' transformOutgoing`
+                );
                 if (typeof result === 'string') {
                     text = result;
                 } else {
@@ -177,10 +212,18 @@ export async function runIncomingHooks(message: string, ctx: HookContext): Promi
     let text = message;
     let metadata: HookMetadata = {};
 
+    if (!PLUGINS_ENABLED || loadedPlugins.length === 0) {
+        return { text, metadata };
+    }
+
     for (const plugin of loadedPlugins) {
         if (plugin.hooks?.transformIncoming) {
             try {
-                const result = await plugin.hooks.transformIncoming(text, ctx);
+                const result = await withTimeout(
+                    Promise.resolve(plugin.hooks.transformIncoming(text, ctx)),
+                    PLUGIN_HOOK_TIMEOUT_MS,
+                    `plugin '${plugin.name}' transformIncoming`
+                );
                 if (typeof result === 'string') {
                     text = result;
                 } else {
