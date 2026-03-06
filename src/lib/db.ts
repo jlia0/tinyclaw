@@ -23,6 +23,7 @@ export interface DbMessage {
     files: string | null;         // JSON array
     conversation_id: string | null;
     from_agent: string | null;
+    thread_id: string | null;
     status: 'pending' | 'processing' | 'completed' | 'dead';
     retry_count: number;
     last_error: string | null;
@@ -57,6 +58,7 @@ export interface EnqueueMessageData {
     files?: string[];
     conversationId?: string;
     fromAgent?: string;
+    threadId?: string;
 }
 
 export interface EnqueueResponseData {
@@ -128,6 +130,16 @@ export function initQueueDb(): void {
         CREATE INDEX IF NOT EXISTS idx_messages_status_agent_created
             ON messages(status, agent, created_at);
         CREATE INDEX IF NOT EXISTS idx_responses_channel_status ON responses(channel, status);
+
+        CREATE TABLE IF NOT EXISTS thread_sessions (
+            agent_id   TEXT NOT NULL,
+            thread_id  TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            provider   TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (agent_id, thread_id)
+        );
     `);
 
     // Drop legacy indexes/tables
@@ -139,6 +151,12 @@ export function initQueueDb(): void {
     const cols = db.prepare("PRAGMA table_info(responses)").all() as { name: string }[];
     if (!cols.some(c => c.name === 'metadata')) {
         db.exec('ALTER TABLE responses ADD COLUMN metadata TEXT');
+    }
+
+    // Migrate: add thread_id column to messages if missing
+    const msgCols = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
+    if (!msgCols.some(c => c.name === 'thread_id')) {
+        db.exec('ALTER TABLE messages ADD COLUMN thread_id TEXT');
     }
 }
 
@@ -153,8 +171,8 @@ export function enqueueMessage(data: EnqueueMessageData): number {
     const d = getDb();
     const now = Date.now();
     const result = d.prepare(`
-        INSERT INTO messages (message_id, channel, sender, sender_id, message, agent, files, conversation_id, from_agent, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        INSERT INTO messages (message_id, channel, sender, sender_id, message, agent, files, conversation_id, from_agent, thread_id, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
     `).run(
         data.messageId,
         data.channel,
@@ -165,6 +183,7 @@ export function enqueueMessage(data: EnqueueMessageData): number {
         data.files ? JSON.stringify(data.files) : null,
         data.conversationId ?? null,
         data.fromAgent ?? null,
+        data.threadId ?? null,
         now,
         now,
     );
@@ -349,6 +368,29 @@ export function getPendingAgents(): string[] {
         SELECT DISTINCT COALESCE(agent, 'default') as agent FROM messages WHERE status = 'pending'
     `).all() as { agent: string }[];
     return rows.map(r => r.agent);
+}
+
+// ── Thread sessions ──────────────────────────────────────────────────────────
+
+export function getThreadSession(agentId: string, threadId: string): { session_id: string; provider: string } | null {
+    const row = getDb().prepare(`
+        SELECT session_id, provider FROM thread_sessions WHERE agent_id = ? AND thread_id = ?
+    `).get(agentId, threadId) as { session_id: string; provider: string } | undefined;
+    return row ?? null;
+}
+
+export function saveThreadSession(agentId: string, threadId: string, sessionId: string, provider: string): void {
+    const now = Date.now();
+    getDb().prepare(`
+        INSERT OR REPLACE INTO thread_sessions (agent_id, thread_id, session_id, provider, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(agentId, threadId, sessionId, provider, now, now);
+}
+
+export function deleteThreadSession(agentId: string, threadId: string): void {
+    getDb().prepare(`
+        DELETE FROM thread_sessions WHERE agent_id = ? AND thread_id = ?
+    `).run(agentId, threadId);
 }
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────

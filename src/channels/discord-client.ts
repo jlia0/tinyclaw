@@ -350,6 +350,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 message: fullMessage,
                 messageId,
                 files: downloadedFiles.length > 0 ? downloadedFiles : undefined,
+                threadId: `discord:${message.author.id}`,
             }),
         });
 
