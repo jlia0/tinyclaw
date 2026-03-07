@@ -240,6 +240,12 @@ agent_add() {
             8) read -rp "Enter model name (e.g. provider/model): " AGENT_MODEL ;;
             *) AGENT_MODEL="opencode/claude-sonnet-4-5" ;;
         esac
+    elif [ "$AGENT_PROVIDER" = "kimi" ]; then
+        echo "Model: kimi2.5"
+        AGENT_MODEL="kimi2.5"
+    elif [ "$AGENT_PROVIDER" = "minimax" ]; then
+        echo "Model: MiniMax-M2.5"
+        AGENT_MODEL="MiniMax-M2.5"
     else
         echo "Model:"
         echo "  1) GPT-5.3 Codex"
@@ -251,12 +257,6 @@ agent_add() {
             3) read -rp "Enter model name: " AGENT_MODEL ;;
             *) AGENT_MODEL="gpt-5.3-codex" ;;
         esac
-    elif [ "$AGENT_PROVIDER" = "kimi" ]; then
-        echo "Model: kimi2.5"
-        AGENT_MODEL="kimi2.5"
-    elif [ "$AGENT_PROVIDER" = "minimax" ]; then
-        echo "Model: MiniMax-M2.5"
-        AGENT_MODEL="MiniMax-M2.5"
     fi
 
     # Working directory - automatically set to agent directory
