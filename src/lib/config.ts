@@ -48,6 +48,12 @@ export function getSettings(): Settings {
             } else if (settings?.models?.opencode) {
                 if (!settings.models) settings.models = {};
                 settings.models.provider = 'opencode';
+            } else if (settings?.models?.kimi) {
+                if (!settings.models) settings.models = {};
+                settings.models.provider = 'kimi';
+            } else if (settings?.models?.minimax) {
+                if (!settings.models) settings.models = {};
+                settings.models.provider = 'minimax';
             } else if (settings?.models?.anthropic) {
                 if (!settings.models) settings.models = {};
                 settings.models.provider = 'anthropic';
@@ -71,6 +77,10 @@ export function getDefaultAgentFromModels(settings: Settings): AgentConfig {
         model = settings?.models?.openai?.model || 'gpt-5.3-codex';
     } else if (provider === 'opencode') {
         model = settings?.models?.opencode?.model || 'sonnet';
+    } else if (provider === 'kimi') {
+        model = settings?.models?.kimi?.model || 'kimi2.5';
+    } else if (provider === 'minimax') {
+        model = settings?.models?.minimax?.model || 'MiniMax-M2.5';
     } else {
         model = settings?.models?.anthropic?.model || 'sonnet';
     }
@@ -126,4 +136,52 @@ export function resolveCodexModel(model: string): string {
  */
 export function resolveOpenCodeModel(model: string): string {
     return OPENCODE_MODEL_IDS[model] || model || '';
+}
+
+/**
+ * Resolve API key for a provider with two-level fallback:
+ * 1. Agent-specific apiKey
+ * 2. Global provider apiKey from settings
+ * 3. Empty string (caller should handle error)
+ */
+export function resolveApiKey(agent: AgentConfig, settings: Settings): string {
+    const provider = agent.provider;
+
+    // 1. Check agent-specific key
+    if (agent.apiKey) {
+        return agent.apiKey;
+    }
+
+    // 2. Check global key from settings
+    if (provider === 'kimi') {
+        return settings.models?.kimi?.apiKey || '';
+    } else if (provider === 'minimax') {
+        return settings.models?.minimax?.apiKey || '';
+    }
+
+    // 3. No key found (anthropic/openai/opencode don't need this)
+    return '';
+}
+
+/**
+ * Get the base URL for a provider.
+ * Kimi and MiniMax use custom endpoints compatible with Claude Code.
+ */
+export function getProviderBaseUrl(provider: string): string {
+    switch (provider) {
+        case 'kimi':
+            return 'https://api.kimi.com/v1';
+        case 'minimax':
+            return 'https://api.minimax.io/anthropic';
+        default:
+            // Anthropic default (Claude Code handles this)
+            return '';
+    }
+}
+
+/**
+ * Validate that a provider requires an API key.
+ */
+export function providerRequiresApiKey(provider: string): boolean {
+    return provider === 'kimi' || provider === 'minimax';
 }
