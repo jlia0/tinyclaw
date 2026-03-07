@@ -192,7 +192,7 @@ agent_add() {
         if [ -n "$AGENT_API_KEY" ]; then
             echo "Validating API key..."
             local VALIDATION_URL=""
-            [ "$AGENT_PROVIDER" = "kimi" ] && VALIDATION_URL="https://api.kimi.com/v1/models"
+            [ "$AGENT_PROVIDER" = "kimi" ] && VALIDATION_URL="https://api.kimi.com/coding/models"
             [ "$AGENT_PROVIDER" = "minimax" ] && VALIDATION_URL="https://api.minimax.io/anthropic/v1/models"
 
             if command -v curl > /dev/null 2>&1; then
@@ -252,14 +252,10 @@ agent_add() {
             *) AGENT_MODEL="gpt-5.3-codex" ;;
         esac
     elif [ "$AGENT_PROVIDER" = "kimi" ]; then
-        echo "Model:"
-        echo "  1) kimi2.5"
-        read -rp "Choose [1]: " AGENT_MODEL_CHOICE
+        echo "Model: kimi2.5"
         AGENT_MODEL="kimi2.5"
     elif [ "$AGENT_PROVIDER" = "minimax" ]; then
-        echo "Model:"
-        echo "  1) MiniMax-M2.5"
-        read -rp "Choose [1]: " AGENT_MODEL_CHOICE
+        echo "Model: MiniMax-M2.5"
         AGENT_MODEL="MiniMax-M2.5"
     fi
 
