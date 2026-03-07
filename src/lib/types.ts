@@ -1,6 +1,6 @@
 export interface AgentConfig {
     name: string;
-    provider: string;       // 'anthropic', 'openai', or 'opencode'
+    provider: string;       // 'anthropic', 'openai', 'opencode', or 'cursor'
     model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
     working_directory: string;
     system_prompt?: string;
@@ -43,7 +43,7 @@ export interface Settings {
         whatsapp?: {};
     };
     models?: {
-        provider?: string; // 'anthropic', 'openai', or 'opencode'
+        provider?: string; // 'anthropic', 'openai', 'opencode', or 'cursor'
         anthropic?: {
             model?: string;
         };
@@ -51,6 +51,9 @@ export interface Settings {
             model?: string;
         };
         opencode?: {
+            model?: string;
+        };
+        cursor?: {
             model?: string;
         };
     };
@@ -139,4 +142,15 @@ export const OPENCODE_MODEL_IDS: Record<string, string> = {
     // Shorthand aliases
     'sonnet': 'opencode/claude-sonnet-4-5',
     'opus': 'opencode/claude-opus-4-6',
+};
+
+// Cursor CLI model IDs. Available models depend on the user's subscription;
+// run `agent models` to list them. Falls back to the raw model string.
+export const CURSOR_MODEL_IDS: Record<string, string> = {
+    'sonnet': 'claude-sonnet-4-5',
+    'opus': 'claude-opus-4-6',
+    'claude-sonnet-4-5': 'claude-sonnet-4-5',
+    'claude-opus-4-6': 'claude-opus-4-6',
+    'gpt-5.2': 'gpt-5.2',
+    'auto': 'auto',
 };

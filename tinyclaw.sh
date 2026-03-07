@@ -96,6 +96,10 @@ case "${1:-}" in
                 CURRENT_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
                 if [ "$CURRENT_PROVIDER" = "openai" ]; then
                     CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                elif [ "$CURRENT_PROVIDER" = "cursor" ]; then
+                    CURRENT_MODEL=$(jq -r '.models.cursor.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                elif [ "$CURRENT_PROVIDER" = "opencode" ]; then
+                    CURRENT_MODEL=$(jq -r '.models.opencode.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 else
                     CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 fi
@@ -197,16 +201,49 @@ case "${1:-}" in
                         echo "Note: Make sure you have the 'codex' CLI installed and authenticated."
                     fi
                     ;;
+                cursor)
+                    if [ ! -f "$SETTINGS_FILE" ]; then
+                        echo -e "${RED}No settings file found. Run setup first.${NC}"
+                        exit 1
+                    fi
+
+                    # Switch to Cursor provider (using Cursor CLI `agent`)
+                    tmp_file="$SETTINGS_FILE.tmp"
+                    if [ -n "$MODEL_ARG" ]; then
+                        UPDATED_COUNT=$(jq --arg old_provider "$OLD_PROVIDER" '[.agents // {} | to_entries[] | select(.value.provider == $old_provider)] | length' "$SETTINGS_FILE" 2>/dev/null)
+                        jq --arg model "$MODEL_ARG" --arg old_provider "$OLD_PROVIDER" '
+                            .models.provider = "cursor" |
+                            .models.cursor.model = $model |
+                            .agents //= {} |
+                            .agents |= with_entries(
+                                if .value.provider == $old_provider then .value.provider = "cursor" | .value.model = $model else . end
+                            )
+                        ' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to Cursor provider with model: $MODEL_ARG${NC}"
+                        if [ "$UPDATED_COUNT" -gt 0 ] 2>/dev/null; then
+                            echo -e "${BLUE}  Updated $UPDATED_COUNT agent(s) from $OLD_PROVIDER to cursor/$MODEL_ARG${NC}"
+                        fi
+                        echo ""
+                        echo "Note: Make sure you have the 'agent' CLI installed (curl https://cursor.com/install -fsS | bash) and authenticated (agent login)."
+                    else
+                        jq '.models.provider = "cursor"' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to Cursor provider${NC}"
+                        echo ""
+                        echo "Use 'tinyclaw model {sonnet|opus|auto}' to set the model."
+                        echo "Note: Make sure you have the 'agent' CLI installed (curl https://cursor.com/install -fsS | bash) and authenticated (agent login)."
+                    fi
+                    ;;
                 *)
-                    echo "Usage: $0 provider {anthropic|openai} [--model MODEL_NAME]"
+                    echo "Usage: $0 provider {anthropic|openai|cursor} [--model MODEL_NAME]"
                     echo ""
                     echo "Examples:"
                     echo "  $0 provider                                    # Show current provider and model"
                     echo "  $0 provider anthropic                          # Switch to Anthropic"
                     echo "  $0 provider openai                             # Switch to OpenAI"
+                    echo "  $0 provider cursor                             # Switch to Cursor"
                     echo "  $0 provider anthropic --model sonnet           # Switch to Anthropic with Sonnet"
                     echo "  $0 provider openai --model gpt-5.3-codex       # Switch to OpenAI with GPT-5.3 Codex"
-                    echo "  $0 provider openai --model gpt-4o              # Switch to OpenAI with custom model"
+                    echo "  $0 provider cursor --model auto                # Switch to Cursor with auto model"
                     exit 1
                     ;;
             esac
@@ -218,6 +255,10 @@ case "${1:-}" in
                 CURRENT_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
                 if [ "$CURRENT_PROVIDER" = "openai" ]; then
                     CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                elif [ "$CURRENT_PROVIDER" = "cursor" ]; then
+                    CURRENT_MODEL=$(jq -r '.models.cursor.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                elif [ "$CURRENT_PROVIDER" = "opencode" ]; then
+                    CURRENT_MODEL=$(jq -r '.models.opencode.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 else
                     CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 fi

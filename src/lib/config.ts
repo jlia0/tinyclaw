@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
-import { Settings, AgentConfig, TeamConfig, CLAUDE_MODEL_IDS, CODEX_MODEL_IDS, OPENCODE_MODEL_IDS } from './types';
+import { Settings, AgentConfig, TeamConfig, CLAUDE_MODEL_IDS, CODEX_MODEL_IDS, OPENCODE_MODEL_IDS, CURSOR_MODEL_IDS } from './types';
 
 export const SCRIPT_DIR = path.resolve(__dirname, '../..');
 const _localTinyclaw = path.join(SCRIPT_DIR, '.tinyclaw');
@@ -45,6 +45,9 @@ export function getSettings(): Settings {
             if (settings?.models?.openai) {
                 if (!settings.models) settings.models = {};
                 settings.models.provider = 'openai';
+            } else if (settings?.models?.cursor) {
+                if (!settings.models) settings.models = {};
+                settings.models.provider = 'cursor';
             } else if (settings?.models?.opencode) {
                 if (!settings.models) settings.models = {};
                 settings.models.provider = 'opencode';
@@ -71,6 +74,8 @@ export function getDefaultAgentFromModels(settings: Settings): AgentConfig {
         model = settings?.models?.openai?.model || 'gpt-5.3-codex';
     } else if (provider === 'opencode') {
         model = settings?.models?.opencode?.model || 'sonnet';
+    } else if (provider === 'cursor') {
+        model = settings?.models?.cursor?.model || 'auto';
     } else {
         model = settings?.models?.anthropic?.model || 'sonnet';
     }
@@ -126,4 +131,12 @@ export function resolveCodexModel(model: string): string {
  */
 export function resolveOpenCodeModel(model: string): string {
     return OPENCODE_MODEL_IDS[model] || model || '';
+}
+
+/**
+ * Resolve the model ID for Cursor CLI (passed via --model flag).
+ * Falls back to the raw model string from settings if no mapping is found.
+ */
+export function resolveCursorModel(model: string): string {
+    return CURSOR_MODEL_IDS[model] || model || '';
 }

@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
-import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel } from './config';
+import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel, resolveCursorModel } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, updateAgentTeammates } from './agent';
 
@@ -156,6 +156,59 @@ export async function invokeAgent(
         }
 
         return response || 'Sorry, I could not generate a response from OpenCode.';
+    } else if (provider === 'cursor') {
+        // Cursor CLI — non-interactive mode via `agent -p`.
+        // Uses --output-format json for structured output; single JSON object with .result field.
+        // Supports --continue for session continuation and --force for auto-approving tool calls.
+        const modelId = resolveCursorModel(agent.model);
+        log('INFO', `Using Cursor CLI (agent: ${agentId}, model: ${modelId || 'auto'})`);
+
+        const continueConversation = !shouldReset;
+
+        if (shouldReset) {
+            log('INFO', `🔄 Resetting Cursor conversation for agent: ${agentId}`);
+        }
+
+        const buildCursorArgs = (withContinue: boolean) => {
+            const args = ['-p', message, '--output-format', 'json', '--force'];
+            if (modelId) {
+                args.push('--model', modelId);
+            }
+            if (withContinue) {
+                args.push('--continue');
+            }
+            args.push('--workspace', workingDir);
+            return args;
+        };
+
+        const parseCursorOutput = (output: string): string | null => {
+            try {
+                const json = JSON.parse(output.trim());
+                if (json.type === 'result' && json.subtype === 'success' && json.result) {
+                    return json.result;
+                }
+            } catch (e) {
+                if (output.trim()) {
+                    return output.trim();
+                }
+            }
+            return null;
+        };
+
+        let cursorOutput: string;
+        try {
+            cursorOutput = await runCommand('agent', buildCursorArgs(continueConversation), workingDir);
+        } catch (err: any) {
+            // --continue fails when no previous session exists; retry without it
+            if (continueConversation && err?.message?.includes('No previous chats found')) {
+                log('INFO', `No previous Cursor session for agent ${agentId}, starting fresh`);
+                cursorOutput = await runCommand('agent', buildCursorArgs(false), workingDir);
+            } else {
+                throw err;
+            }
+        }
+
+        return parseCursorOutput(cursorOutput) || 'Sorry, I could not generate a response from Cursor.';
     } else {
         // Default to Claude (Anthropic)
         log('INFO', `Using Claude provider (agent: ${agentId})`);

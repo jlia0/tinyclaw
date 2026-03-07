@@ -73,6 +73,13 @@ export function ensureAgentDirectory(agentDir: string): void {
         copyDirSync(targetAgentsSkills, targetClaudeSkills);
     }
 
+    // Copy AGENTS.md as .cursor/rules/agents.mdc for Cursor CLI
+    if (fs.existsSync(sourceAgents)) {
+        const targetCursorRules = path.join(agentDir, '.cursor', 'rules');
+        fs.mkdirSync(targetCursorRules, { recursive: true });
+        fs.copyFileSync(sourceAgents, path.join(targetCursorRules, 'agents.mdc'));
+    }
+
     // Create .tinyclaw directory and copy SOUL.md
     const targetTinyclaw = path.join(agentDir, '.tinyclaw');
     fs.mkdirSync(targetTinyclaw, { recursive: true });
@@ -144,4 +151,19 @@ export function updateAgentTeammates(agentDir: string, agentId: string, agents: 
         claudeContent = claudeContent.trimEnd() + '\n\n' + startMarker + block + endMarker + '\n';
     }
     fs.writeFileSync(claudeMdPath, claudeContent);
+
+    // Also write to .cursor/rules/agents.mdc for Cursor CLI
+    const cursorRulesDir = path.join(agentDir, '.cursor', 'rules');
+    const cursorRulePath = path.join(cursorRulesDir, 'agents.mdc');
+    if (fs.existsSync(cursorRulePath)) {
+        let cursorContent = fs.readFileSync(cursorRulePath, 'utf8');
+        const crStartIdx = cursorContent.indexOf(startMarker);
+        const crEndIdx = cursorContent.indexOf(endMarker);
+        if (crStartIdx !== -1 && crEndIdx !== -1) {
+            cursorContent = cursorContent.substring(0, crStartIdx + startMarker.length) + block + cursorContent.substring(crEndIdx);
+        } else {
+            cursorContent = cursorContent.trimEnd() + '\n\n' + startMarker + block + endMarker + '\n';
+        }
+        fs.writeFileSync(cursorRulePath, cursorContent);
+    }
 }
