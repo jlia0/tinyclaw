@@ -470,8 +470,8 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
         // --- No team context: simple response to user ---
         if (!teamContext) {
 
-            // Fire-and-forget: don't await invokeAgent
-            invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams)
+            // Fire-and-forget: don't await invokeAgentSerial
+            invokeAgentSerial(agent, agentId, message, workspacePath, shouldReset, agents, teams)
                 .then(response => {
                     return handleSimpleResponse(dbMsg, agentId, response);
                 })
@@ -534,8 +534,8 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             await emitEvent('team_chain_start', { teamId: teamContext.teamId, teamName: teamContext.team.name, agents: teamContext.team.agents, leader: teamContext.team.leader_agent });
         }
 
-        // Fire-and-forget: don't await invokeAgent
-        invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams)
+        // Fire-and-forget: don't await invokeAgentSerial
+        invokeAgentSerial(agent, agentId, message, workspacePath, shouldReset, agents, teams)
             .then(response => {
                 return handleTeamResponse(dbMsg, conv, agentId, response, teams, agents);
             })
@@ -554,6 +554,29 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
 // REMOVED: agentProcessingChains - no longer needed with parallel processing
 // Previously this enforced sequential processing per agent, causing "freezes"
 // when one message took a long time.
+
+// Per-agent invocation lock to prevent concurrent `claude -c` corruption
+// Each agent can only have one invokeAgent call at a time, but responses
+// are still handled asynchronously (parallel response processing)
+const agentInvocationLocks = new Map<string, Promise<unknown>>();
+
+function invokeAgentSerial(
+    agent: AgentConfig,
+    agentId: string,
+    message: string,
+    workspacePath: string,
+    shouldReset: boolean,
+    agents: Record<string, AgentConfig>,
+    teams: Record<string, TeamConfig>
+): Promise<string> {
+    const prev = agentInvocationLocks.get(agentId) ?? Promise.resolve();
+    const next = prev
+        .then(() => invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams))
+        .catch(e => { throw e; });
+    // Store the chain (catch to prevent unhandled rejection from breaking the lock)
+    agentInvocationLocks.set(agentId, next.catch(() => {}));
+    return next;
+}
 
 // Main processing loop
 async function processQueue(): Promise<void> {
