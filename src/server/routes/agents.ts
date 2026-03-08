@@ -6,6 +6,8 @@ import { log } from '../../lib/logging';
 import { ensureAgentDirectory } from '../../lib/agent';
 import { mutateSettings } from './settings';
 
+const app = new Hono();
+
 // GET /api/agents
 app.get('/api/agents', (c) => {
     return c.json(getAgents(getSettings()));
