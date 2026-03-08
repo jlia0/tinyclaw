@@ -45,7 +45,7 @@ export interface Settings {
         whatsapp?: {};
     };
     models?: {
-        provider?: string; // 'anthropic', 'openai', or 'opencode'
+        provider?: string; // 'anthropic' | 'openai' | 'opencode' | 'custom' // 'anthropic', 'openai', or 'opencode'
         anthropic?: {
             model?: string;
         };
