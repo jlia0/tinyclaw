@@ -173,7 +173,7 @@ export async function invokeAgent(
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
+                    ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {})
                 },
                 body: JSON.stringify({
                     model: agent.model,
@@ -188,7 +188,12 @@ export async function invokeAgent(
             throw new Error(`Custom provider HTTP error: ${response.status} ${response.statusText}`);
         }
 
-        const data = await response.json() as any;
+        let data: any;
+        try {
+            data = await response.json();
+        } catch (err) {
+            throw new Error(`Custom provider returned non-JSON response: ${(err as Error).message}`);
+        }
         const content = data.choices?.[0]?.message?.content || 'No response';
         // Only strip <think> blocks for models known to emit them (e.g. Qwen)
         const stripsThinkBlocks = agent.model?.toLowerCase().includes('qwen');

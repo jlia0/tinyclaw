@@ -542,8 +542,19 @@ agent_provider() {
                 echo "Use 'tinyclaw agent provider ${agent_id} openai --model {gpt-5.3-codex|gpt-5.2}' to also set the model."
             fi
             ;;
+        custom)
+            read -rp "Enter base URL (e.g. http://localhost:30000/v1): " new_base_url
+            if [ -z "$new_base_url" ]; then
+                echo -e "${RED}base_url is required for custom provider.${NC}"
+                exit 1
+            fi
+            jq --arg id "$agent_id" --arg model "$model_arg" --arg base_url "$new_base_url" \
+                '.agents[$id].provider = "custom" | .agents[$id].base_url = $base_url | if $model != "" then .agents[$id].model = $model else . end' \
+                "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+            echo -e "${GREEN}✓ Agent '${agent_id}' switched to custom provider.${NC}"
+            ;;
         *)
-            echo "Usage: tinyclaw agent provider <agent_id> {anthropic|openai} [--model MODEL_NAME]"
+            echo "Usage: tinyclaw agent provider <agent_id> {anthropic|openai|custom} [--model MODEL_NAME]"
             echo ""
             echo "Examples:"
             echo "  tinyclaw agent provider coder                                    # Show current provider/model"
@@ -551,6 +562,7 @@ agent_provider() {
             echo "  tinyclaw agent provider coder openai                              # Switch to OpenAI"
             echo "  tinyclaw agent provider coder anthropic --model opus              # Switch to Anthropic Opus"
             echo "  tinyclaw agent provider coder openai --model gpt-5.3-codex        # Switch to OpenAI GPT-5.3 Codex"
+            echo "  tinyclaw agent provider coder custom                              # Switch to custom provider"
             exit 1
             ;;
     esac
