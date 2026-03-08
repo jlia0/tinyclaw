@@ -214,6 +214,10 @@ agent_add() {
     if [ "$AGENT_PROVIDER" = "custom" ]; then
         read -rp "Enter model name (e.g. Qwen/Qwen3-32B): " AGENT_MODEL
         read -rp "Enter base URL (e.g. http://localhost:30000/v1): " AGENT_BASE_URL
+        if [ -z "$AGENT_BASE_URL" ]; then
+            echo -e "${RED}base_url is required for the custom provider.${NC}"
+            exit 1
+        fi
         read -rp "Enter API key (or press Enter for 'none'): " AGENT_API_KEY
         AGENT_API_KEY="${AGENT_API_KEY:-none}"
     fi
