@@ -40,6 +40,7 @@ export interface DbResponse {
     message: string;
     original_message: string;
     agent: string | null;
+    conversation_id: string | null;
     files: string | null;         // JSON array
     metadata: string | null;      // JSON object (plugin hook metadata)
     status: 'pending' | 'acked';
@@ -67,6 +68,7 @@ export interface EnqueueResponseData {
     originalMessage: string;
     messageId: string;
     agent?: string;
+    conversationId?: string;
     files?: string[];
     metadata?: Record<string, unknown>;
 }
@@ -100,6 +102,7 @@ export interface QueueResponseRow {
     sender: string;
     senderId: string | null;
     agent: string | null;
+    conversationId: string | null;
     message: string;
     originalMessage: string | null;
     files: string[];
@@ -187,6 +190,7 @@ export function initQueueDb(): void {
             message TEXT NOT NULL,
             original_message TEXT NOT NULL,
             agent TEXT,
+            conversation_id TEXT,
             files TEXT,
             metadata TEXT,
             status TEXT NOT NULL DEFAULT 'pending',
@@ -208,6 +212,9 @@ export function initQueueDb(): void {
     const cols = db.prepare("PRAGMA table_info(responses)").all() as { name: string }[];
     if (!cols.some(c => c.name === 'metadata')) {
         db.exec('ALTER TABLE responses ADD COLUMN metadata TEXT');
+    }
+    if (!cols.some(c => c.name === 'conversation_id')) {
+        db.exec('ALTER TABLE responses ADD COLUMN conversation_id TEXT');
     }
 }
 
@@ -268,6 +275,7 @@ function mapQueueResponseRow(row: DbResponse): QueueResponseRow {
         sender: row.sender,
         senderId: row.sender_id,
         agent: row.agent,
+        conversationId: row.conversation_id,
         message: row.message,
         originalMessage: row.original_message ?? null,
         files: safeParseStringArray(row.files),
@@ -366,8 +374,8 @@ export function enqueueResponse(data: EnqueueResponseData): number {
     const d = getDb();
     const now = Date.now();
     const result = d.prepare(`
-        INSERT INTO responses (message_id, channel, sender, sender_id, message, original_message, agent, files, metadata, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+        INSERT INTO responses (message_id, channel, sender, sender_id, message, original_message, agent, conversation_id, files, metadata, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
     `).run(
         data.messageId,
         data.channel,
@@ -376,6 +384,7 @@ export function enqueueResponse(data: EnqueueResponseData): number {
         data.message,
         data.originalMessage,
         data.agent ?? null,
+        data.conversationId ?? null,
         data.files ? JSON.stringify(data.files) : null,
         data.metadata ? JSON.stringify(data.metadata) : null,
         now,
@@ -475,6 +484,10 @@ export function getQueueResponses(options: GetQueueResponsesOptions): QueueRespo
         clauses.push('message_id = ?');
         params.push(options.messageId);
     }
+    if (options.conversationId) {
+        clauses.push('conversation_id = ?');
+        params.push(options.conversationId);
+    }
     const searchTerm = normalizeSearchTerm(options.search);
     if (searchTerm) {
         clauses.push(`(
@@ -483,8 +496,9 @@ export function getQueueResponses(options: GetQueueResponsesOptions): QueueRespo
             OR LOWER(sender) LIKE ?
             OR LOWER(message_id) LIKE ?
             OR LOWER(COALESCE(agent, '')) LIKE ?
+            OR LOWER(COALESCE(conversation_id, '')) LIKE ?
         )`);
-        params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
+        params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
     }
 
     params.push(options.limit);

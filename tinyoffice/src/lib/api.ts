@@ -95,6 +95,7 @@ export interface QueueResponseRow {
   sender: string;
   senderId: string | null;
   agent: string | null;
+  conversationId: string | null;
   message: string;
   originalMessage: string | null;
   files: string[];

@@ -199,6 +199,7 @@ export function completeConversation(conv: Conversation): void {
         message: responseMessage,
         originalMessage: conv.originalMessage,
         messageId: conv.messageId,
+        conversationId: conv.id,
         files: allFiles.length > 0 ? allFiles : undefined,
     });
 

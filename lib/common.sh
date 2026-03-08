@@ -144,7 +144,6 @@ write_structured_log() {
         node -e 'const [time, level, source, component, msg] = process.argv.slice(1); console.log(JSON.stringify({ time, level, source, component, msg }));' \
             "$timestamp" "$level" "$source" "$component" "$msg" >> "$file"
     fi
-    printf '\n' >> "$file"
 }
 
 normalize_log_level() {

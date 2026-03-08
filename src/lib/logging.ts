@@ -388,7 +388,8 @@ function includesSearch(entry: LogEntry, search: string): boolean {
 
 export async function readLogEntries(options: ReadLogsOptions = {}): Promise<LogEntry[]> {
     const sourceFilter = (options.source ?? []).map(item => item.trim()).filter(Boolean);
-    const limit = options.limit ?? 100;
+    const rawLimit = options.limit ?? 100;
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
     if (limit <= 0) {
         return [];
     }

@@ -146,7 +146,7 @@ export function createQueueRoutes(conversations: Map<string, Conversation>) {
             });
             const counts = getQueueRowCounts();
 
-            logger.info({
+            logger.debug({
                 messageStatuses,
                 responseStatuses,
                 channel,

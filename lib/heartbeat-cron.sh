@@ -126,7 +126,6 @@ log() {
         node -e 'const [time, level, source, component, msg] = process.argv.slice(1); console.log(JSON.stringify({ time, level, source, component, msg }));' \
             "$timestamp" "$level" "heartbeat" "heartbeat" "$msg" >> "$LOG_FILE"
     fi
-    printf '\n' >> "$LOG_FILE"
 }
 
 log "Heartbeat started (interval: ${INTERVAL}s, API: ${API_URL})"

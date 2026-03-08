@@ -492,7 +492,6 @@ function shutdownDiscord(exitCode: number): void {
 // Catch unhandled errors so we can see what kills the bot
 process.on('unhandledRejection', (reason) => {
     logError(logger, reason, 'Unhandled rejection');
-    shutdownDiscord(1);
 });
 process.on('uncaughtException', (error) => {
     logError(logger, error, 'Uncaught exception');

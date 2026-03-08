@@ -5,7 +5,8 @@ const app = new Hono();
 
 // GET /api/logs
 app.get('/api/logs', async (c) => {
-    const limit = parseInt(c.req.query('limit') || '100', 10);
+    const rawLimit = parseInt(c.req.query('limit') || '100', 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 1000) : 100;
     const source = c.req.query('source')?.split(',').map(item => item.trim()).filter(Boolean) ?? [];
     const level = c.req.query('level') || undefined;
     const channel = c.req.query('channel') || undefined;

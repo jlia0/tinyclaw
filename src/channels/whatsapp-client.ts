@@ -505,7 +505,6 @@ async function shutdownWhatsApp(exitCode: number): Promise<void> {
 // Catch unhandled errors so we can see what kills the bot
 process.on('unhandledRejection', (reason) => {
     logError(logger, reason, 'Unhandled rejection');
-    void shutdownWhatsApp(1);
 });
 process.on('uncaughtException', (error) => {
     logError(logger, error, 'Uncaught exception');
