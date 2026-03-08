@@ -7,6 +7,7 @@ export interface AgentConfig {
     prompt_file?: string;
     base_url?: string;
     api_key?: string;
+    timeout_ms?: number;   // Optional request timeout in ms (default: 120000). Custom provider only.
 }
 
 export interface TeamConfig {

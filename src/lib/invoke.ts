@@ -169,7 +169,7 @@ export async function invokeAgent(
 
         let response: Response;
         const controller = new AbortController();
-        const timeoutMs = (agent as any).timeout_ms ?? 120000;
+        const timeoutMs = agent.timeout_ms ?? 120000;
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
         try {
             response = await fetch(`${baseUrl}/chat/completions`, {
