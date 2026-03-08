@@ -330,18 +330,10 @@ case "${1:-}" in
     model)
         if [ -z "$2" ]; then
             if [ -f "$SETTINGS_FILE" ]; then
-                CURRENT_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
-                if [ "$CURRENT_PROVIDER" = "openai" ]; then
-                    CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
-                elif [ "$CURRENT_PROVIDER" = "opencode" ]; then
-                    CURRENT_MODEL=$(jq -r '.models.opencode.model // empty' "$SETTINGS_FILE" 2>/dev/null)
-                elif [ "$CURRENT_PROVIDER" = "kimi" ]; then
-                    CURRENT_MODEL=$(jq -r '.models.kimi.model // empty' "$SETTINGS_FILE" 2>/dev/null)
-                elif [ "$CURRENT_PROVIDER" = "minimax" ]; then
-                    CURRENT_MODEL=$(jq -r '.models.minimax.model // empty' "$SETTINGS_FILE" 2>/dev/null)
-                else
-                    CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
-                fi
+                read -r CURRENT_PROVIDER CURRENT_MODEL < <(jq -r '
+                    (.models.provider // "anthropic") as $p |
+                    [$p, (.models[$p].model // empty)] | @tsv
+                ' "$SETTINGS_FILE" 2>/dev/null)
                 if [ -n "$CURRENT_MODEL" ]; then
                     echo -e "${BLUE}Global default: ${GREEN}${CURRENT_PROVIDER}/${CURRENT_MODEL}${NC}"
                 else
