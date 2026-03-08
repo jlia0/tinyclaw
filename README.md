@@ -35,6 +35,7 @@
 - ✅ **SQLite queue** - Atomic transactions, retry logic, dead-letter management
 - ✅ **Plugin system** - Extend TinyClaw with custom plugins for message hooks and event listeners
 - ✅ **24/7 operation** - Runs in tmux for always-on availability
+- ✅ **Reliable agent handoffs** - Request-reply protocol with ACKs, timeouts, and escalation (see [Agent Communication Protocol](docs/AGENT_COMMUNICATION_PROTOCOL.md))
 
 ## Community
 

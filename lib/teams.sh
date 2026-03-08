@@ -4,10 +4,7 @@
 
 # List all configured teams
 team_list() {
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found. Run setup first.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     local teams_count
     teams_count=$(jq -r '(.teams // {}) | length' "$SETTINGS_FILE" 2>/dev/null)
@@ -39,10 +36,7 @@ team_list() {
 team_show() {
     local team_id="$1"
 
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     local team_json
     team_json=$(jq -r "(.teams // {}).\"${team_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
@@ -64,10 +58,7 @@ team_show() {
 
 # Add a new team interactively
 team_add() {
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found. Run setup first.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     # Load settings to get workspace path
     load_settings
@@ -93,7 +84,7 @@ team_add() {
 
     # Check collision with existing agent IDs
     local existing_agent
-    existing_agent=$(jq -r "(.agents // {}).\"${TEAM_ID}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
+    existing_agent=$(get_agent_json "${TEAM_ID}")
     if [ -n "$existing_agent" ]; then
         echo -e "${RED}'${TEAM_ID}' is already used as an agent ID. Team and agent IDs share the same namespace.${NC}"
         exit 1
@@ -223,10 +214,7 @@ team_add() {
 team_remove() {
     local team_id="$1"
 
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     # Load settings for workspace path
     load_settings
@@ -278,10 +266,7 @@ team_add_agent() {
     team_id=$(echo "$team_id" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
     agent_id=$(echo "$agent_id" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
 
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     local team_json
     team_json=$(jq -r "(.teams // {}).\"${team_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
@@ -291,7 +276,7 @@ team_add_agent() {
     fi
 
     local agent_json
-    agent_json=$(jq -r "(.agents // {}).\"${agent_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
+    agent_json=$(get_agent_json "${agent_id}")
     if [ -z "$agent_json" ]; then
         echo -e "${RED}Agent '${agent_id}' not found.${NC}"
         exit 1
@@ -335,10 +320,7 @@ team_remove_agent() {
     team_id=$(echo "$team_id" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
     agent_id=$(echo "$agent_id" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
 
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     local team_json
     team_json=$(jq -r "(.teams // {}).\"${team_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)

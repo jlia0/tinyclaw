@@ -48,10 +48,7 @@ ensure_agent_skills_links() {
 
 # List all configured agents
 agent_list() {
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found. Run setup first.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     local agents_count
     agents_count=$(jq -r '(.agents // {}) | length' "$SETTINGS_FILE" 2>/dev/null)
@@ -85,13 +82,10 @@ agent_list() {
 agent_show() {
     local agent_id="$1"
 
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     local agent_json
-    agent_json=$(jq -r "(.agents // {}).\"${agent_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
+    agent_json=$(get_agent_json "${agent_id}")
 
     if [ -z "$agent_json" ]; then
         echo -e "${RED}Agent '${agent_id}' not found.${NC}"
@@ -110,10 +104,7 @@ agent_show() {
 
 # Add a new agent interactively
 agent_add() {
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found. Run setup first.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     # Load settings to get workspace path
     load_settings
@@ -132,7 +123,7 @@ agent_add() {
 
     # Check if exists
     local existing
-    existing=$(jq -r "(.agents // {}).\"${AGENT_ID}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
+    existing=$(get_agent_json "${AGENT_ID}")
     if [ -n "$existing" ]; then
         echo -e "${RED}Agent '${AGENT_ID}' already exists. Use 'agent remove ${AGENT_ID}' first.${NC}"
         exit 1
@@ -150,12 +141,61 @@ agent_add() {
     echo "  1) Anthropic (Claude)"
     echo "  2) OpenAI (Codex)"
     echo "  3) OpenCode"
-    read -rp "Choose [1-3, default: 1]: " AGENT_PROVIDER_CHOICE
+    echo "  4) Kimi"
+    echo "  5) MiniMax"
+    read -rp "Choose [1-5, default: 1]: " AGENT_PROVIDER_CHOICE
     case "$AGENT_PROVIDER_CHOICE" in
         2) AGENT_PROVIDER="openai" ;;
         3) AGENT_PROVIDER="opencode" ;;
+        4) AGENT_PROVIDER="kimi" ;;
+        5) AGENT_PROVIDER="minimax" ;;
         *) AGENT_PROVIDER="anthropic" ;;
     esac
+
+    # API Key for kimi/minimax
+    AGENT_API_KEY=""
+    if [ "$AGENT_PROVIDER" = "kimi" ] || [ "$AGENT_PROVIDER" = "minimax" ]; then
+        local PROVIDER_DISPLAY="$AGENT_PROVIDER"
+        [ "$AGENT_PROVIDER" = "kimi" ] && PROVIDER_DISPLAY="Kimi"
+        [ "$AGENT_PROVIDER" = "minimax" ] && PROVIDER_DISPLAY="MiniMax"
+
+        # Check for global key
+        local GLOBAL_KEY=""
+        if [ "$AGENT_PROVIDER" = "kimi" ]; then
+            GLOBAL_KEY=$(jq -r '.models.kimi.apiKey // empty' "$SETTINGS_FILE" 2>/dev/null)
+        else
+            GLOBAL_KEY=$(jq -r '.models.minimax.apiKey // empty' "$SETTINGS_FILE" 2>/dev/null)
+        fi
+
+        if [ -n "$GLOBAL_KEY" ]; then
+            local MASKED_KEY="${GLOBAL_KEY:0:4}...${GLOBAL_KEY: -4}"
+            echo ""
+            echo "Global $PROVIDER_DISPLAY API key found: $MASKED_KEY"
+            read -rp "Use global key? [Y/n]: " USE_GLOBAL
+            if [[ "$USE_GLOBAL" =~ ^[nN] ]]; then
+                read -rp "Enter different API key for this agent: " AGENT_API_KEY
+            fi
+        else
+            echo ""
+            read -rp "Enter $PROVIDER_DISPLAY API key for this agent: " AGENT_API_KEY
+        fi
+
+        if [ -n "$AGENT_API_KEY" ]; then
+            echo "Validating API key..."
+            local VALIDATION_URL=""
+            [ "$AGENT_PROVIDER" = "kimi" ] && VALIDATION_URL="https://api.kimi.com/coding/models"
+            [ "$AGENT_PROVIDER" = "minimax" ] && VALIDATION_URL="https://api.minimax.io/anthropic/v1/models"
+
+            if command -v curl > /dev/null 2>&1; then
+                local HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $AGENT_API_KEY" "$VALIDATION_URL" 2>/dev/null || echo "000")
+                if [ "$HTTP_STATUS" = "200" ]; then
+                    echo -e "${GREEN}✓ API key validated${NC}"
+                else
+                    echo -e "${YELLOW}⚠ Warning: API key validation failed (HTTP $HTTP_STATUS)${NC}"
+                fi
+            fi
+        fi
+    fi
 
     # Model
     echo ""
@@ -191,6 +231,12 @@ agent_add() {
             8) read -rp "Enter model name (e.g. provider/model): " AGENT_MODEL ;;
             *) AGENT_MODEL="opencode/claude-sonnet-4-5" ;;
         esac
+    elif [ "$AGENT_PROVIDER" = "kimi" ]; then
+        echo "Model: kimi2.5"
+        AGENT_MODEL="kimi2.5"
+    elif [ "$AGENT_PROVIDER" = "minimax" ]; then
+        echo "Model: MiniMax-M2.5"
+        AGENT_MODEL="MiniMax-M2.5"
     else
         echo "Model:"
         echo "  1) GPT-5.3 Codex"
@@ -212,17 +258,33 @@ agent_add() {
 
     # Build the agent JSON object
     local agent_json
-    agent_json=$(jq -n \
-        --arg name "$AGENT_NAME" \
-        --arg provider "$AGENT_PROVIDER" \
-        --arg model "$AGENT_MODEL" \
-        --arg workdir "$AGENT_WORKDIR" \
-        '{
-            name: $name,
-            provider: $provider,
-            model: $model,
-            working_directory: $workdir
-        }')
+    if [ -n "$AGENT_API_KEY" ]; then
+        agent_json=$(jq -n \
+            --arg name "$AGENT_NAME" \
+            --arg provider "$AGENT_PROVIDER" \
+            --arg model "$AGENT_MODEL" \
+            --arg workdir "$AGENT_WORKDIR" \
+            --arg apiKey "$AGENT_API_KEY" \
+            '{
+                name: $name,
+                provider: $provider,
+                model: $model,
+                working_directory: $workdir,
+                apiKey: $apiKey
+            }')
+    else
+        agent_json=$(jq -n \
+            --arg name "$AGENT_NAME" \
+            --arg provider "$AGENT_PROVIDER" \
+            --arg model "$AGENT_MODEL" \
+            --arg workdir "$AGENT_WORKDIR" \
+            '{
+                name: $name,
+                provider: $provider,
+                model: $model,
+                working_directory: $workdir
+            }')
+    fi
 
     # Ensure agents section exists and add the new agent
     jq --arg id "$AGENT_ID" --argjson agent "$agent_json" \
@@ -301,17 +363,14 @@ agent_add() {
 agent_remove() {
     local agent_id="$1"
 
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     # Load settings to get workspace path for cleanup.
     load_settings
     AGENTS_DIR="$WORKSPACE_PATH"
 
     local agent_json
-    agent_json=$(jq -r "(.agents // {}).\"${agent_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
+    agent_json=$(get_agent_json "${agent_id}")
 
     if [ -z "$agent_json" ]; then
         echo -e "${RED}Agent '${agent_id}' not found.${NC}"
@@ -446,19 +505,30 @@ agent_provider() {
     local agent_id="$1"
     local provider_arg="$2"
     local model_arg=""
+    local api_key_arg=""
 
-    # Parse optional --model flag
-    if [ "$3" = "--model" ] && [ -n "$4" ]; then
-        model_arg="$4"
-    fi
+    # Parse optional --model and --api-key flags
+    shift 2
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --model)
+                model_arg="$2"
+                shift 2
+                ;;
+            --api-key)
+                api_key_arg="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
 
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     local agent_json
-    agent_json=$(jq -r "(.agents // {}).\"${agent_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
+    agent_json=$(get_agent_json "${agent_id}")
 
     if [ -z "$agent_json" ]; then
         echo -e "${RED}Agent '${agent_id}' not found.${NC}"
@@ -517,13 +587,59 @@ agent_provider() {
                 echo "Use 'tinyclaw agent provider ${agent_id} openai --model {gpt-5.3-codex|gpt-5.2}' to also set the model."
             fi
             ;;
+        kimi)
+            if [ -z "$api_key_arg" ]; then
+                echo -e "${RED}API key required for Kimi provider.${NC}"
+                echo "Usage: tinyclaw agent provider ${agent_id} kimi --api-key <key> [--model kimi2.5]"
+                exit 1
+            fi
+            if [ -n "$model_arg" ]; then
+                jq --arg id "$agent_id" --arg model "$model_arg" --arg apiKey "$api_key_arg" \
+                    '.agents[$id].provider = "kimi" | .agents[$id].model = $model | .agents[$id].apiKey = $apiKey' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to Kimi with model: ${model_arg}${NC}"
+            else
+                jq --arg id "$agent_id" --arg apiKey "$api_key_arg" \
+                    '.agents[$id].provider = "kimi" | .agents[$id].apiKey = $apiKey' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to Kimi${NC}"
+                echo ""
+                echo "Use 'tinyclaw agent provider ${agent_id} kimi --api-key <key> --model kimi2.5' to also set the model."
+            fi
+            echo ""
+            echo -e "${BLUE}API key saved to agent config${NC}"
+            ;;
+        minimax)
+            if [ -z "$api_key_arg" ]; then
+                echo -e "${RED}API key required for MiniMax provider.${NC}"
+                echo "Usage: tinyclaw agent provider ${agent_id} minimax --api-key <key> [--model MiniMax-M2.5]"
+                exit 1
+            fi
+            if [ -n "$model_arg" ]; then
+                jq --arg id "$agent_id" --arg model "$model_arg" --arg apiKey "$api_key_arg" \
+                    '.agents[$id].provider = "minimax" | .agents[$id].model = $model | .agents[$id].apiKey = $apiKey' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to MiniMax with model: ${model_arg}${NC}"
+            else
+                jq --arg id "$agent_id" --arg apiKey "$api_key_arg" \
+                    '.agents[$id].provider = "minimax" | .agents[$id].apiKey = $apiKey' \
+                    "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                echo -e "${GREEN}✓ Agent '${agent_id}' switched to MiniMax${NC}"
+                echo ""
+                echo "Use 'tinyclaw agent provider ${agent_id} minimax --api-key <key> --model MiniMax-M2.5' to also set the model."
+            fi
+            echo ""
+            echo -e "${BLUE}API key saved to agent config${NC}"
+            ;;
         *)
-            echo "Usage: tinyclaw agent provider <agent_id> {anthropic|openai} [--model MODEL_NAME]"
+            echo "Usage: tinyclaw agent provider <agent_id> {anthropic|openai|kimi|minimax} [--model MODEL_NAME] [--api-key KEY]"
             echo ""
             echo "Examples:"
             echo "  tinyclaw agent provider coder                                    # Show current provider/model"
             echo "  tinyclaw agent provider coder anthropic                           # Switch to Anthropic"
             echo "  tinyclaw agent provider coder openai                              # Switch to OpenAI"
+            echo "  tinyclaw agent provider coder kimi --api-key <key>                # Switch to Kimi"
+            echo "  tinyclaw agent provider coder minimax --api-key <key>             # Switch to MiniMax"
             echo "  tinyclaw agent provider coder anthropic --model opus              # Switch to Anthropic Opus"
             echo "  tinyclaw agent provider coder openai --model gpt-5.3-codex        # Switch to OpenAI GPT-5.3 Codex"
             exit 1
@@ -538,10 +654,7 @@ agent_provider() {
 agent_reset() {
     local agent_id="$1"
 
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     # Load settings if not already loaded
     if [ -z "$AGENTS_DIR" ] || [ "$AGENTS_DIR" = "" ]; then
@@ -550,7 +663,7 @@ agent_reset() {
     fi
 
     local agent_json
-    agent_json=$(jq -r "(.agents // {}).\"${agent_id}\" // empty" "$SETTINGS_FILE" 2>/dev/null)
+    agent_json=$(get_agent_json "${agent_id}")
 
     if [ -z "$agent_json" ]; then
         echo -e "${RED}Agent '${agent_id}' not found.${NC}"
@@ -574,10 +687,7 @@ agent_reset() {
 
 # Reset multiple agents' conversations
 agent_reset_multiple() {
-    if [ ! -f "$SETTINGS_FILE" ]; then
-        echo -e "${RED}No settings file found.${NC}"
-        exit 1
-    fi
+    require_settings_file
 
     load_settings
     AGENTS_DIR="$WORKSPACE_PATH"

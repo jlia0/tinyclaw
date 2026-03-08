@@ -96,6 +96,10 @@ case "${1:-}" in
                 CURRENT_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
                 if [ "$CURRENT_PROVIDER" = "openai" ]; then
                     CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                elif [ "$CURRENT_PROVIDER" = "kimi" ]; then
+                    CURRENT_MODEL=$(jq -r '.models.kimi.model // empty' "$SETTINGS_FILE" 2>/dev/null)
+                elif [ "$CURRENT_PROVIDER" = "minimax" ]; then
+                    CURRENT_MODEL=$(jq -r '.models.minimax.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 else
                     CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
                 fi
@@ -103,6 +107,16 @@ case "${1:-}" in
                     echo -e "${BLUE}Global default: ${GREEN}${CURRENT_PROVIDER}/${CURRENT_MODEL}${NC}"
                 else
                     echo -e "${BLUE}Global default: ${GREEN}$CURRENT_PROVIDER${NC}"
+                fi
+
+                # Show API key status for kimi/minimax
+                KIMI_KEY=$(jq -r '.models.kimi.apiKey // empty' "$SETTINGS_FILE" 2>/dev/null)
+                MINIMAX_KEY=$(jq -r '.models.minimax.apiKey // empty' "$SETTINGS_FILE" 2>/dev/null)
+                if [ -n "$KIMI_KEY" ]; then
+                    echo -e "${BLUE}Kimi API key: ${GREEN}configured${NC}"
+                fi
+                if [ -n "$MINIMAX_KEY" ]; then
+                    echo -e "${BLUE}MiniMax API key: ${GREEN}configured${NC}"
                 fi
 
                 # Show per-agent breakdown if agents exist
@@ -119,12 +133,28 @@ case "${1:-}" in
                 exit 1
             fi
         else
-            # Parse optional --model flag
+            # Parse optional --model and --api-key flags
             PROVIDER_ARG="$2"
             MODEL_ARG=""
-            if [ "$3" = "--model" ] && [ -n "$4" ]; then
-                MODEL_ARG="$4"
-            fi
+            API_KEY_ARG=""
+            
+            # Parse flags in any order
+            shift 2
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --model)
+                        MODEL_ARG="$2"
+                        shift 2
+                        ;;
+                    --api-key)
+                        API_KEY_ARG="$2"
+                        shift 2
+                        ;;
+                    *)
+                        shift
+                        ;;
+                esac
+            done
 
             # Capture old provider before switching (for agent propagation)
             OLD_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
@@ -197,16 +227,101 @@ case "${1:-}" in
                         echo "Note: Make sure you have the 'codex' CLI installed and authenticated."
                     fi
                     ;;
+                kimi)
+                    if [ ! -f "$SETTINGS_FILE" ]; then
+                        echo -e "${RED}No settings file found. Run setup first.${NC}"
+                        exit 1
+                    fi
+
+                    # API key is required for kimi
+                    if [ -z "$API_KEY_ARG" ]; then
+                        echo -e "${RED}API key required for Kimi provider.${NC}"
+                        echo "Usage: tinyclaw provider kimi --api-key <key> [--model kimi2.5]"
+                        exit 1
+                    fi
+
+                    tmp_file="$SETTINGS_FILE.tmp"
+                    if [ -n "$MODEL_ARG" ]; then
+                        UPDATED_COUNT=$(jq --arg old_provider "$OLD_PROVIDER" '[.agents // {} | to_entries[] | select(.value.provider == $old_provider)] | length' "$SETTINGS_FILE" 2>/dev/null)
+                        jq --arg model "$MODEL_ARG" --arg old_provider "$OLD_PROVIDER" --arg api_key "$API_KEY_ARG" '
+                            .models.provider = "kimi" |
+                            .models.kimi.model = $model |
+                            .models.kimi.apiKey = $api_key |
+                            .agents //= {} |
+                            .agents |= with_entries(
+                                if .value.provider == $old_provider then .value.provider = "kimi" | .value.model = $model else . end
+                            )
+                        ' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to Kimi provider with model: $MODEL_ARG${NC}"
+                        if [ "$UPDATED_COUNT" -gt 0 ] 2>/dev/null; then
+                            echo -e "${BLUE}  Updated $UPDATED_COUNT agent(s) from $OLD_PROVIDER to kimi/$MODEL_ARG${NC}"
+                        fi
+                    else
+                        jq --arg api_key "$API_KEY_ARG" '
+                            .models.provider = "kimi" |
+                            .models.kimi.apiKey = $api_key
+                        ' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to Kimi provider${NC}"
+                        echo ""
+                        echo "Use 'tinyclaw model kimi2.5' to set the model."
+                    fi
+                    echo ""
+                    echo -e "${BLUE}API key saved to settings${NC}"
+                    ;;
+                minimax)
+                    if [ ! -f "$SETTINGS_FILE" ]; then
+                        echo -e "${RED}No settings file found. Run setup first.${NC}"
+                        exit 1
+                    fi
+
+                    # API key is required for minimax
+                    if [ -z "$API_KEY_ARG" ]; then
+                        echo -e "${RED}API key required for MiniMax provider.${NC}"
+                        echo "Usage: tinyclaw provider minimax --api-key <key> [--model MiniMax-M2.5]"
+                        exit 1
+                    fi
+
+                    tmp_file="$SETTINGS_FILE.tmp"
+                    if [ -n "$MODEL_ARG" ]; then
+                        UPDATED_COUNT=$(jq --arg old_provider "$OLD_PROVIDER" '[.agents // {} | to_entries[] | select(.value.provider == $old_provider)] | length' "$SETTINGS_FILE" 2>/dev/null)
+                        jq --arg model "$MODEL_ARG" --arg old_provider "$OLD_PROVIDER" --arg api_key "$API_KEY_ARG" '
+                            .models.provider = "minimax" |
+                            .models.minimax.model = $model |
+                            .models.minimax.apiKey = $api_key |
+                            .agents //= {} |
+                            .agents |= with_entries(
+                                if .value.provider == $old_provider then .value.provider = "minimax" | .value.model = $model else . end
+                            )
+                        ' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to MiniMax provider with model: $MODEL_ARG${NC}"
+                        if [ "$UPDATED_COUNT" -gt 0 ] 2>/dev/null; then
+                            echo -e "${BLUE}  Updated $UPDATED_COUNT agent(s) from $OLD_PROVIDER to minimax/$MODEL_ARG${NC}"
+                        fi
+                    else
+                        jq --arg api_key "$API_KEY_ARG" '
+                            .models.provider = "minimax" |
+                            .models.minimax.apiKey = $api_key
+                        ' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+                        echo -e "${GREEN}✓ Switched to MiniMax provider${NC}"
+                        echo ""
+                        echo "Use 'tinyclaw model MiniMax-M2.5' to set the model."
+                    fi
+                    echo ""
+                    echo -e "${BLUE}API key saved to settings${NC}"
+                    ;;
                 *)
-                    echo "Usage: $0 provider {anthropic|openai} [--model MODEL_NAME]"
+                    echo "Usage: $0 provider {anthropic|openai|kimi|minimax} [--model MODEL_NAME] [--api-key KEY]"
                     echo ""
                     echo "Examples:"
                     echo "  $0 provider                                    # Show current provider and model"
                     echo "  $0 provider anthropic                          # Switch to Anthropic"
                     echo "  $0 provider openai                             # Switch to OpenAI"
+                    echo "  $0 provider kimi --api-key <key>               # Switch to Kimi"
+                    echo "  $0 provider minimax --api-key <key>            # Switch to MiniMax"
                     echo "  $0 provider anthropic --model sonnet           # Switch to Anthropic with Sonnet"
                     echo "  $0 provider openai --model gpt-5.3-codex       # Switch to OpenAI with GPT-5.3 Codex"
-                    echo "  $0 provider openai --model gpt-4o              # Switch to OpenAI with custom model"
+                    echo "  $0 provider kimi --api-key <key> --model kimi2.5"
+                    echo "  $0 provider minimax --api-key <key> --model MiniMax-M2.5"
                     exit 1
                     ;;
             esac
@@ -215,12 +330,10 @@ case "${1:-}" in
     model)
         if [ -z "$2" ]; then
             if [ -f "$SETTINGS_FILE" ]; then
-                CURRENT_PROVIDER=$(jq -r '.models.provider // "anthropic"' "$SETTINGS_FILE" 2>/dev/null)
-                if [ "$CURRENT_PROVIDER" = "openai" ]; then
-                    CURRENT_MODEL=$(jq -r '.models.openai.model // empty' "$SETTINGS_FILE" 2>/dev/null)
-                else
-                    CURRENT_MODEL=$(jq -r '.models.anthropic.model // empty' "$SETTINGS_FILE" 2>/dev/null)
-                fi
+                read -r CURRENT_PROVIDER CURRENT_MODEL < <(jq -r '
+                    (.models.provider // "anthropic") as $p |
+                    [$p, (.models[$p].model // empty)] | @tsv
+                ' "$SETTINGS_FILE" 2>/dev/null)
                 if [ -n "$CURRENT_MODEL" ]; then
                     echo -e "${BLUE}Global default: ${GREEN}${CURRENT_PROVIDER}/${CURRENT_MODEL}${NC}"
                 else
@@ -291,8 +404,54 @@ case "${1:-}" in
                     echo ""
                     echo "Note: Changes take effect on next message."
                     ;;
+                kimi2.5)
+                    if [ ! -f "$SETTINGS_FILE" ]; then
+                        echo -e "${RED}No settings file found. Run setup first.${NC}"
+                        exit 1
+                    fi
+
+                    tmp_file="$SETTINGS_FILE.tmp"
+                    jq --arg model "$2" '
+                        .models.kimi.model = $model |
+                        .agents //= {} |
+                        .agents |= with_entries(
+                            if .value.provider == "kimi" then .value.model = $model else . end
+                        )
+                    ' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+
+                    UPDATED_COUNT=$(jq --arg model "$2" '[.agents // {} | to_entries[] | select(.value.provider == "kimi")] | length' "$SETTINGS_FILE" 2>/dev/null)
+                    echo -e "${GREEN}✓ Model switched to: $2${NC}"
+                    if [ "$UPDATED_COUNT" -gt 0 ] 2>/dev/null; then
+                        echo -e "${BLUE}  Updated $UPDATED_COUNT kimi agent(s)${NC}"
+                    fi
+                    echo ""
+                    echo "Note: Changes take effect on next message."
+                    ;;
+                MiniMax-M2.5)
+                    if [ ! -f "$SETTINGS_FILE" ]; then
+                        echo -e "${RED}No settings file found. Run setup first.${NC}"
+                        exit 1
+                    fi
+
+                    tmp_file="$SETTINGS_FILE.tmp"
+                    jq --arg model "$2" '
+                        .models.minimax.model = $model |
+                        .agents //= {} |
+                        .agents |= with_entries(
+                            if .value.provider == "minimax" then .value.model = $model else . end
+                        )
+                    ' "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
+
+                    UPDATED_COUNT=$(jq --arg model "$2" '[.agents // {} | to_entries[] | select(.value.provider == "minimax")] | length' "$SETTINGS_FILE" 2>/dev/null)
+                    echo -e "${GREEN}✓ Model switched to: $2${NC}"
+                    if [ "$UPDATED_COUNT" -gt 0 ] 2>/dev/null; then
+                        echo -e "${BLUE}  Updated $UPDATED_COUNT minimax agent(s)${NC}"
+                    fi
+                    echo ""
+                    echo "Note: Changes take effect on next message."
+                    ;;
                 *)
-                    echo "Usage: $0 model {sonnet|opus|gpt-5.2|gpt-5.3-codex}"
+                    echo "Usage: $0 model {sonnet|opus|gpt-5.2|gpt-5.3-codex|kimi2.5|MiniMax-M2.5}"
                     echo ""
                     echo "Anthropic models:"
                     echo "  sonnet            # Claude Sonnet (fast)"
@@ -302,10 +461,18 @@ case "${1:-}" in
                     echo "  gpt-5.3-codex     # GPT-5.3 Codex"
                     echo "  gpt-5.2           # GPT-5.2"
                     echo ""
+                    echo "Kimi models:"
+                    echo "  kimi2.5           # Kimi 2.5"
+                    echo ""
+                    echo "MiniMax models:"
+                    echo "  MiniMax-M2.5      # MiniMax M2.5"
+                    echo ""
                     echo "Examples:"
                     echo "  $0 model                # Show current model"
                     echo "  $0 model sonnet         # Switch to Claude Sonnet"
                     echo "  $0 model gpt-5.3-codex  # Switch to GPT-5.3 Codex"
+                    echo "  $0 model kimi2.5        # Switch to Kimi 2.5"
+                    echo "  $0 model MiniMax-M2.5   # Switch to MiniMax M2.5"
                     exit 1
                     ;;
             esac
@@ -343,17 +510,19 @@ case "${1:-}" in
                 ;;
             provider)
                 if [ -z "$3" ]; then
-                    echo "Usage: $0 agent provider <agent_id> [provider] [--model MODEL_NAME]"
+                    echo "Usage: $0 agent provider <agent_id> [provider] [--model MODEL_NAME] [--api-key KEY]"
                     echo ""
                     echo "Examples:"
                     echo "  $0 agent provider coder                                    # Show current provider/model"
                     echo "  $0 agent provider coder anthropic                           # Switch to Anthropic"
                     echo "  $0 agent provider coder openai                              # Switch to OpenAI"
+                    echo "  $0 agent provider coder kimi --api-key <key>                # Switch to Kimi"
+                    echo "  $0 agent provider coder minimax --api-key <key>             # Switch to MiniMax"
                     echo "  $0 agent provider coder anthropic --model opus              # Switch to Anthropic Opus"
                     echo "  $0 agent provider coder openai --model gpt-5.3-codex        # Switch to OpenAI GPT-5.3 Codex"
                     exit 1
                 fi
-                agent_provider "$3" "$4" "$5" "$6"
+                agent_provider "$3" "$4" "$5" "$6" "$7" "$8"
                 ;;
             *)
                 echo "Usage: $0 agent {list|add|remove|show|reset|provider}"

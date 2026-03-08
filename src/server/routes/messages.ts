@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { generateId } from '../../lib/config';
 import { log, emitEvent } from '../../lib/logging';
 import { enqueueMessage } from '../../lib/db';
 
@@ -18,7 +19,7 @@ app.post('/api/message', async (c) => {
 
     const resolvedChannel = channel || 'api';
     const resolvedSender = sender || 'API';
-    const messageId = clientMessageId || `api_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const messageId = clientMessageId || generateId('api_');
 
     // Append channel and sender context as a signature
     const fullMessage = (channel && sender) ? `${message}\n\n— ${sender} via ${channel}` : message;

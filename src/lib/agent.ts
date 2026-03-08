@@ -70,7 +70,7 @@ export function ensureAgentDirectory(agentDir: string): void {
         // Mirror into .claude/skills for Claude Code
         const targetClaudeSkills = path.join(agentDir, '.claude', 'skills');
         fs.mkdirSync(targetClaudeSkills, { recursive: true });
-        copyDirSync(targetAgentsSkills, targetClaudeSkills);
+        copyDirSync(sourceSkills, targetClaudeSkills);
     }
 
     // Create .tinyclaw directory and copy SOUL.md

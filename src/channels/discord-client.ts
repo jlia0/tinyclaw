@@ -11,7 +11,10 @@ import fs from 'fs';
 import path from 'path';
 import https from 'https';
 import http from 'http';
+import { WORKSPACE_DEFAULT_PATH, generateId } from '../lib/config';
 import { ensureSenderPaired } from '../lib/pairing';
+import { watchChannel, clearSignal } from '../lib/signals';
+import { isHeartbeatStale } from '../lib/heartbeat';
 
 const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
 const API_BASE = `http://localhost:${API_PORT}`;
@@ -237,7 +240,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
         const sender = message.author.username;
 
         // Generate unique message ID
-        const messageId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        const messageId = generateId();
 
         // Download any attachments
         const downloadedFiles: string[] = [];
@@ -301,7 +304,7 @@ client.on(Events.MessageCreate, async (message: Message) => {
                 const settingsData = fs.readFileSync(SETTINGS_FILE, 'utf8');
                 const settings = JSON.parse(settingsData);
                 const agents = settings.agents || {};
-                const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyclaw-workspace');
+                const workspacePath = settings?.workspace?.path || WORKSPACE_DEFAULT_PATH;
                 const resetResults: string[] = [];
                 for (const agentId of agentArgs) {
                     if (!agents[agentId]) {
@@ -463,8 +466,24 @@ async function checkOutgoingQueue(): Promise<void> {
     }
 }
 
-// Check outgoing queue every second
-setInterval(checkOutgoingQueue, 1000);
+// Watch for signals (push notifications) instead of polling
+const unwatch = watchChannel('discord', () => {
+    checkOutgoingQueue().then(() => {
+        clearSignal('discord');
+    });
+});
+
+// Fallback polling every 10 seconds (in case signals are missed)
+setInterval(() => {
+    // Check if queue-processor is still alive
+    if (isHeartbeatStale()) {
+        log('WARN', 'Queue processor heartbeat stale - may have crashed');
+    }
+    checkOutgoingQueue();
+}, 10000);
+
+// REMOVED: Old polling every 1 second
+// setInterval(checkOutgoingQueue, 1000);
 
 // Refresh typing indicator every 8 seconds (Discord typing expires after ~10s)
 setInterval(() => {
@@ -486,12 +505,14 @@ process.on('uncaughtException', (error) => {
 // Graceful shutdown
 process.on('SIGINT', () => {
     log('INFO', 'Shutting down Discord client...');
+    unwatch();  // Stop watching for signals
     client.destroy();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
     log('INFO', 'Shutting down Discord client...');
+    unwatch();  // Stop watching for signals
     client.destroy();
     process.exit(0);
 });

@@ -145,6 +145,20 @@ load_settings() {
     return 0
 }
 
+# Guard: exit with error if SETTINGS_FILE does not exist.
+# Call at the top of any function that needs settings.
+require_settings_file() {
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        echo -e "${RED}No settings file found. Run 'tinyclaw setup' first.${NC}"
+        exit 1
+    fi
+}
+
+# Return the JSON object for an agent by ID, or empty string if not found.
+get_agent_json() {
+    jq -r "(.agents // {}).\"$1\" // empty" "$SETTINGS_FILE" 2>/dev/null
+}
+
 # Check if a channel is active (enabled in settings)
 is_active() {
     local channel="$1"

@@ -13,7 +13,7 @@ export function log(level: string, message: string): void {
  * every event emitted by the queue processor is also broadcast over SSE.
  * The plugin system also registers a listener for plugin event handlers.
  */
-type EventListener = (type: string, data: Record<string, unknown>) => void;
+type EventListener = (type: string, data: Record<string, unknown>) => void | Promise<void>;
 const eventListeners: EventListener[] = [];
 
 /** Register a listener that is called on every emitEvent. */
@@ -23,9 +23,12 @@ export function onEvent(listener: EventListener): void {
 
 /**
  * Emit a structured event — dispatched to in-memory listeners (e.g. SSE broadcast, plugins).
+ * Now async to allow listeners to complete before continuing.
  */
-export function emitEvent(type: string, data: Record<string, unknown>): void {
-    for (const listener of eventListeners) {
-        try { listener(type, data); } catch { /* never break the queue processor */ }
-    }
+export async function emitEvent(type: string, data: Record<string, unknown>): Promise<void> {
+    await Promise.allSettled(
+        eventListeners.map(listener => {
+            try { return Promise.resolve(listener(type, data)); } catch { return Promise.resolve(); }
+        })
+    );
 }

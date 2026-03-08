@@ -69,9 +69,18 @@ Please reply with: (1) status (2) blockers (3) next step.
 
 Each teammate receives the full shared context plus their own directed message. Keep shared context concise — it's prepended to every teammate's message.
 
-### Back-and-forth
+### Responding to teammates
 
-You can communicate back and forth by mentioning your teammate in your response and the system will route the messages in real-time.
+When you receive a message from a teammate like:
+> [Message from teammate @sam — respond using [@sam: your reply]]:
+
+You MUST wrap your response in `[@sam: your response here]` so it routes back to them. If you don't, your response goes directly to the user and the requesting agent never sees it.
+
+Example:
+- Teammate asks: `[Message from teammate @sam]: What is 2+2?`
+- Your response: `[@sam: 2 + 2 = 4]`
+
+Only skip the `[@agent: ...]` wrapper if you're intentionally responding to the user instead of the teammate.
 
 ### Guidelines
 

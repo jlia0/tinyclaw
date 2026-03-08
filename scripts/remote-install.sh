@@ -142,7 +142,7 @@ else
     fi
 
     echo "Cloning repository..."
-    git clone --depth 1 "https://github.com/$GITHUB_REPO.git" "$INSTALL_DIR"
+    git clone --depth 1 --branch "$DEFAULT_BRANCH" "https://github.com/$GITHUB_REPO.git" "$INSTALL_DIR"
     echo -e "${GREEN}✓ Repository cloned${NC}"
 fi
 echo ""

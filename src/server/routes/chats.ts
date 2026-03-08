@@ -9,13 +9,13 @@ const app = new Hono();
 app.get('/api/chats', (c) => {
     const chats: { teamId: string; file: string; time: number }[] = [];
     if (fs.existsSync(CHATS_DIR)) {
-        for (const teamDir of fs.readdirSync(CHATS_DIR)) {
-            const teamPath = path.join(CHATS_DIR, teamDir);
-            if (fs.statSync(teamPath).isDirectory()) {
-                for (const file of fs.readdirSync(teamPath).filter(f => f.endsWith('.md'))) {
-                    const time = fs.statSync(path.join(teamPath, file)).mtimeMs;
-                    chats.push({ teamId: teamDir, file, time });
-                }
+        for (const teamDirent of fs.readdirSync(CHATS_DIR, { withFileTypes: true })) {
+            if (!teamDirent.isDirectory()) continue;
+            const teamPath = path.join(CHATS_DIR, teamDirent.name);
+            for (const fileDirent of fs.readdirSync(teamPath, { withFileTypes: true })) {
+                if (!fileDirent.isFile() || !fileDirent.name.endsWith('.md')) continue;
+                const time = fs.statSync(path.join(teamPath, fileDirent.name)).mtimeMs;
+                chats.push({ teamId: teamDirent.name, file: fileDirent.name, time });
             }
         }
     }

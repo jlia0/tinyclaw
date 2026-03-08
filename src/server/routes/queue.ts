@@ -1,10 +1,13 @@
 import { Hono } from 'hono';
 import { Conversation } from '../../lib/types';
+import { generateId } from '../../lib/config';
 import { log } from '../../lib/logging';
 import {
     getQueueStatus, getRecentResponses, getResponsesForChannel, ackResponse,
     enqueueResponse, getDeadMessages, retryDeadMessage, deleteDeadMessage,
 } from '../../lib/db';
+
+const parseJsonField = (s: string | null | undefined): unknown => s ? JSON.parse(s) : undefined;
 
 export function createQueueRoutes(conversations: Map<string, Conversation>) {
     const app = new Hono();
@@ -34,7 +37,7 @@ export function createQueueRoutes(conversations: Map<string, Conversation>) {
             timestamp: r.created_at,
             messageId: r.message_id,
             agent: r.agent,
-            files: r.files ? JSON.parse(r.files) : undefined,
+            files: parseJsonField(r.files),
         })));
     });
 
@@ -52,8 +55,8 @@ export function createQueueRoutes(conversations: Map<string, Conversation>) {
             originalMessage: r.original_message,
             messageId: r.message_id,
             agent: r.agent,
-            files: r.files ? JSON.parse(r.files) : undefined,
-            metadata: r.metadata ? JSON.parse(r.metadata) : undefined,
+            files: parseJsonField(r.files),
+            metadata: parseJsonField(r.metadata),
         })));
     });
 
@@ -69,7 +72,7 @@ export function createQueueRoutes(conversations: Map<string, Conversation>) {
             return c.json({ error: 'channel, sender, and message are required' }, 400);
         }
 
-        const messageId = `proactive_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const messageId = generateId('proactive_');
         enqueueResponse({
             channel,
             sender,

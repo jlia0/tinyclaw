@@ -99,18 +99,19 @@ start_daemon() {
         fi
     done
 
-    # Write tokens to .env for the Node.js clients
+    # Write tokens to .env for the Node.js clients (single write)
     local env_file="$SCRIPT_DIR/.env"
-    : > "$env_file"
+    local env_content=""
     for ch in "${ACTIVE_CHANNELS[@]}"; do
         local env_var
         env_var="$(channel_token_env "$ch")"
         local token_val
         token_val="$(get_channel_token "$ch")"
         if [ -n "$env_var" ] && [ -n "$token_val" ]; then
-            echo "${env_var}=${token_val}" >> "$env_file"
+            env_content="${env_content}${env_var}=${token_val}"$'\n'
         fi
     done
+    printf '%s' "$env_content" > "$env_file"
 
     # Check for updates (non-blocking)
     local update_info
