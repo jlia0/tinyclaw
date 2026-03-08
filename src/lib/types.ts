@@ -45,7 +45,7 @@ export interface Settings {
         whatsapp?: {};
     };
     models?: {
-        provider?: string; // 'anthropic' | 'openai' | 'opencode' | 'custom'
+        provider?: string; // 'anthropic' | 'openai' | 'opencode' (global default only — 'custom' is per-agent only)
         anthropic?: {
             model?: string;
         };
