@@ -515,12 +515,12 @@ agent_provider() {
         anthropic)
             if [ -n "$model_arg" ]; then
                 jq --arg id "$agent_id" --arg model "$model_arg" \
-                    'del(.agents[$id].base_url) | del(.agents[$id].api_key) | .agents[$id].provider = "anthropic" | .agents[$id].model = $model' \
+                    'del(.agents[$id].base_url) | del(.agents[$id].api_key) | del(.agents[$id].timeout_ms) | .agents[$id].provider = "anthropic" | .agents[$id].model = $model' \
                     "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                 echo -e "${GREEN}✓ Agent '${agent_id}' switched to Anthropic with model: ${model_arg}${NC}"
             else
                 jq --arg id "$agent_id" \
-                    'del(.agents[$id].base_url) | del(.agents[$id].api_key) | .agents[$id].provider = "anthropic"' \
+                    'del(.agents[$id].base_url) | del(.agents[$id].api_key) | del(.agents[$id].timeout_ms) | .agents[$id].provider = "anthropic"' \
                     "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                 echo -e "${GREEN}✓ Agent '${agent_id}' switched to Anthropic${NC}"
                 echo ""
@@ -530,12 +530,12 @@ agent_provider() {
         openai)
             if [ -n "$model_arg" ]; then
                 jq --arg id "$agent_id" --arg model "$model_arg" \
-                    'del(.agents[$id].base_url) | del(.agents[$id].api_key) | .agents[$id].provider = "openai" | .agents[$id].model = $model' \
+                    'del(.agents[$id].base_url) | del(.agents[$id].api_key) | del(.agents[$id].timeout_ms) | .agents[$id].provider = "openai" | .agents[$id].model = $model' \
                     "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                 echo -e "${GREEN}✓ Agent '${agent_id}' switched to OpenAI with model: ${model_arg}${NC}"
             else
                 jq --arg id "$agent_id" \
-                    'del(.agents[$id].base_url) | del(.agents[$id].api_key) | .agents[$id].provider = "openai"' \
+                    'del(.agents[$id].base_url) | del(.agents[$id].api_key) | del(.agents[$id].timeout_ms) | .agents[$id].provider = "openai"' \
                     "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
                 echo -e "${GREEN}✓ Agent '${agent_id}' switched to OpenAI${NC}"
                 echo ""
@@ -558,7 +558,7 @@ agent_provider() {
             fi
             read -rp "Enter API key (leave blank if not required): " new_api_key
             jq --arg id "$agent_id" --arg model "$model_arg" --arg base_url "$new_base_url" --arg api_key "$new_api_key" \
-                '.agents[$id].provider = "custom" | .agents[$id].base_url = $base_url | if $model != "" then .agents[$id].model = $model else . end | if $api_key != "" then .agents[$id].api_key = $api_key else del(.agents[$id].api_key) end' \
+                '.agents[$id].provider = "custom" | .agents[$id].base_url = $base_url | if $model != "" then .agents[$id].model = $model else . end | if ($api_key != "" and $api_key != "none") then .agents[$id].api_key = $api_key else del(.agents[$id].api_key) end' \
                 "$SETTINGS_FILE" > "$tmp_file" && mv "$tmp_file" "$SETTINGS_FILE"
             echo -e "${GREEN}✓ Agent '${agent_id}' switched to custom provider.${NC}"
             ;;
