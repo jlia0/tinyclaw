@@ -5,7 +5,7 @@
  * as the default for the chat. Subsequent messages without an @-prefix are
  * automatically routed to the stored default agent.
  *
- * Defaults persist in settings.json under the `channel_defaults` key.
+ * Defaults persist in settings.json under `channels.defaults`.
  */
 
 import fs from 'fs';
@@ -25,14 +25,15 @@ function readSettings(settingsFile: string): any {
 }
 
 function getDefaults(settingsFile: string): Record<string, string> {
-    return readSettings(settingsFile).channel_defaults || {};
+    return readSettings(settingsFile).channels?.defaults || {};
 }
 
 function saveDefault(settingsFile: string, chatKey: string, agentId: string): void {
     try {
         const settings = readSettings(settingsFile);
-        if (!settings.channel_defaults) settings.channel_defaults = {};
-        settings.channel_defaults[chatKey] = agentId;
+        if (!settings.channels) settings.channels = {};
+        if (!settings.channels.defaults) settings.channels.defaults = {};
+        settings.channels.defaults[chatKey] = agentId;
         fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
     } catch {
         // Best-effort
@@ -42,8 +43,8 @@ function saveDefault(settingsFile: string, chatKey: string, agentId: string): vo
 function deleteDefault(settingsFile: string, chatKey: string): void {
     try {
         const settings = readSettings(settingsFile);
-        if (settings.channel_defaults) {
-            delete settings.channel_defaults[chatKey];
+        if (settings.channels?.defaults) {
+            delete settings.channels.defaults[chatKey];
             fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
         }
     } catch {
