@@ -2,7 +2,7 @@
 # Update management for TinyClaw
 
 # GitHub repository info
-GITHUB_REPO="TinyAGI/tinyclaw"
+GITHUB_REPO="dpbmaverick98/tinyclaw"
 UPDATE_CHECK_CACHE="$HOME/.tinyclaw/.update_check"
 UPDATE_CHECK_TTL=3600  # Check once per hour
 

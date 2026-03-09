@@ -59,13 +59,13 @@ We are actively looking for contributors. Please reach out.
 **Option 1: One-line Install (Recommended)**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TinyAGI/tinyclaw/main/scripts/remote-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dpbmaverick98/tinyclaw/main/scripts/remote-install.sh | bash
 ```
 
 **Option 2: From Release**
 
 ```bash
-wget https://github.com/TinyAGI/tinyclaw/releases/latest/download/tinyclaw-bundle.tar.gz
+wget https://github.com/dpbmaverick98/tinyclaw/releases/latest/download/tinyclaw-bundle.tar.gz
 tar -xzf tinyclaw-bundle.tar.gz
 cd tinyclaw && ./scripts/install.sh
 ```
@@ -73,7 +73,7 @@ cd tinyclaw && ./scripts/install.sh
 **Option 3: From Source**
 
 ```bash
-git clone https://github.com/TinyAGI/tinyclaw.git
+git clone https://github.com/dpbmaverick98/tinyclaw.git
 cd tinyclaw && npm install && ./scripts/install.sh
 ```
 
@@ -242,7 +242,7 @@ Pairing behavior:
 > **Note:** If you are on v0.0.1 or v0.0.2, the update script was broken. Please re-install instead:
 >
 > ```bash
-> curl -fsSL https://raw.githubusercontent.com/TinyAGI/tinyclaw/main/scripts/remote-install.sh | bash
+> curl -fsSL https://raw.githubusercontent.com/dpbmaverick98/tinyclaw/main/scripts/remote-install.sh | bash
 > ```
 >
 > Your settings and user data will be preserved.
