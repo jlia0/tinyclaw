@@ -10,6 +10,7 @@ import qrcode from 'qrcode-terminal';
 import fs from 'fs';
 import path from 'path';
 import { ensureSenderPaired } from '../lib/pairing';
+import { createSSEClient } from './sse-client';
 import { applyDefaultAgent } from './default-agent';
 
 const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
@@ -466,8 +467,19 @@ async function checkOutgoingQueue(): Promise<void> {
     }
 }
 
-// Check outgoing queue every second
-setInterval(checkOutgoingQueue, 1000);
+// SSE-driven response delivery (replaces 1s polling)
+createSSEClient({
+    port: API_PORT,
+    onEvent: (eventType, data) => {
+        if (eventType === 'response_ready' && data.channel === 'whatsapp') {
+            checkOutgoingQueue();
+        }
+    },
+    onConnect: () => {
+        log('INFO', 'SSE connected — listening for responses');
+        checkOutgoingQueue();
+    },
+});
 
 // Error handlers
 client.on('auth_failure', (msg: string) => {
