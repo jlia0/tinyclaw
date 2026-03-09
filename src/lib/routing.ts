@@ -88,6 +88,35 @@ export function extractTeammateMentions(
 }
 
 /**
+ * Extract [#team_id: message] chat room broadcast tags from a response.
+ * Returns array of { teamId, message } for each valid chat room tag.
+ */
+export function extractChatRoomMessages(
+    response: string,
+    currentAgentId: string,
+    teams: Record<string, TeamConfig>
+): { teamId: string; message: string }[] {
+    const results: { teamId: string; message: string }[] = [];
+    const tagRegex = /\[#([^\]]+?):\s*([\s\S]*?)\]/g;
+
+    let match: RegExpExecArray | null;
+    while ((match = tagRegex.exec(response)) !== null) {
+        const candidateId = match[1].trim().toLowerCase();
+        const message = match[2].trim();
+
+        if (!message) continue;
+
+        // Validate team exists and agent is a member
+        const team = teams[candidateId];
+        if (team && team.agents.includes(currentAgentId)) {
+            results.push({ teamId: candidateId, message });
+        }
+    }
+
+    return results;
+}
+
+/**
  * Get the reset flag path for a specific agent.
  */
 export function getAgentResetFlag(agentId: string, workspacePath: string): string {

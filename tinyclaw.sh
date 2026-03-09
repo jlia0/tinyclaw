@@ -460,6 +460,23 @@ case "${1:-}" in
                 ;;
         esac
         ;;
+    chatroom)
+        CHATROOM_TEAM="${2:-}"
+        if [ -z "$CHATROOM_TEAM" ]; then
+            echo -e "${RED}Usage: $0 chatroom <team_id>${NC}"
+            exit 1
+        fi
+        # Build if needed
+        if [ ! -f "$SCRIPT_DIR/dist/visualizer/chatroom-viewer.js" ] || \
+           [ "$SCRIPT_DIR/src/visualizer/chatroom-viewer.tsx" -nt "$SCRIPT_DIR/dist/visualizer/chatroom-viewer.js" ]; then
+            echo -e "${BLUE}Building chatroom viewer...${NC}"
+            if ! (cd "$SCRIPT_DIR" && npm run build:visualizer 2>/dev/null); then
+                echo -e "${RED}Failed to build chatroom viewer.${NC}"
+                exit 1
+            fi
+        fi
+        node "$SCRIPT_DIR/dist/visualizer/chatroom-viewer.js" --team "$CHATROOM_TEAM"
+        ;;
     pairing)
         pairing_command "${2:-}" "${3:-}"
         ;;
@@ -476,7 +493,7 @@ case "${1:-}" in
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
         echo -e "${BLUE}TinyClaw - Claude Code + Messaging Channels${NC}"
         echo ""
-        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channels|provider|model|agent|team|pairing|update|attach}"
+        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channels|provider|model|agent|team|chatroom|pairing|update|attach}"
         echo ""
         echo "Commands:"
         echo "  start                    Start TinyClaw"
@@ -492,6 +509,7 @@ case "${1:-}" in
         echo "  model [name]             Show or switch AI model"
         echo "  agent {list|add|remove|show|reset|provider}  Manage agents"
         echo "  team {list|add|remove|show|add-agent|remove-agent|visualize}  Manage teams"
+        echo "  chatroom <team_id>       Live chat room viewer for a team"
         echo "  pairing {pending|approved|list|approve <code>|unpair <channel> <sender_id>}  Manage sender approvals"
         echo "  update                   Update TinyClaw to latest version"
         echo "  attach                   Attach to tmux session"
@@ -507,6 +525,7 @@ case "${1:-}" in
         echo "  $0 agent add"
         echo "  $0 team list"
         echo "  $0 team visualize dev"
+        echo "  $0 chatroom dev"
         echo "  $0 pairing pending"
         echo "  $0 pairing approve ABCD1234"
         echo "  $0 pairing unpair telegram 123456789"

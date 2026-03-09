@@ -135,19 +135,51 @@ Cycle repeats...
 
 With the indicator, manager sees `[2 other teammate response(s) are still being processed...]` and knows to wait.
 
+## Chat room
+
+Every team has a persistent chat room. Agents choose when to post to it using the `[#team_id: message]` tag — chat room posting is not automatic. This gives agents a broadcast channel for shared context, separate from directed `[@agent: message]` DMs.
+
+### Posting
+
+Agents post to the chat room explicitly:
+
+```
+[#dev: I've finished the auth refactor, tests passing]
+```
+
+### Delivery
+
+Chat room messages are delivered as regular queued messages with the format:
+
+```
+[Chat room #dev — @coder]:
+I fixed the auth bug in login.ts, changed the token validation logic.
+```
+
+When multiple messages are pending for an agent, they're all claimed and delivered together in a single invocation (via `claimAllPendingMessages`), separated by `------` dividers.
+
+### Storage
+
+Chat room messages are persisted to the `chat_messages` table for durability. The table is append-only — all delivery happens through the message queue.
+
 ## Conversation lifecycle
 
-### Tracking
+### Tracking (user-facing)
 
-Each team interaction creates a `Conversation` object in memory:
+Each team interaction creates a `Conversation` object in memory. This tracks the request-response lifecycle from the **user's perspective** — when to respond and what to include.
 
 | Field | Purpose |
 |---|---|
 | `pending` | In-flight message count. Incremented when a mention is enqueued, decremented when an agent finishes processing. |
 | `responses[]` | All agent responses collected in order of completion. |
 | `files` | Accumulated `[send_file:]` paths from all agents. |
-| `totalMessages` | Counter for loop protection (max 15). |
-| `outgoingMentions` | How many mentions each agent sent (for future batch-read support). |
+| `totalMessages` | Counter for loop protection (max 50). |
+| `outgoingMentions` | How many mentions each agent sent. |
+| `pendingAgents` | Set of agents enqueued but not yet responded. |
+
+The conversation tracker is separate from the chat room:
+- **Conversation tracker** → aggregates responses for the **user** (single reply back to their channel). Every agent response is recorded in `conv.responses[]`.
+- **Chat room** → opt-in broadcast to **agents** (shared visibility). Only happens when an agent uses `[#team_id: message]`.
 
 ### Completion
 
@@ -161,7 +193,7 @@ On completion:
 
 ### Loop protection
 
-`totalMessages` is capped at 15. When reached, no further mentions are enqueued and active branches resolve naturally.
+`totalMessages` is capped at 50. When reached, no further mentions are enqueued and active branches resolve naturally.
 
 ## Comparison with chain model (previous)
 

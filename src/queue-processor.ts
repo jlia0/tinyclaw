@@ -22,12 +22,12 @@ import {
     getSettings, getAgents, getTeams
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
-import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions } from './lib/routing';
+import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions, extractChatRoomMessages } from './lib/routing';
 import { invokeAgent } from './lib/invoke';
 import { loadPlugins, runIncomingHooks, runOutgoingHooks } from './lib/plugins';
 import { startApiServer } from './server';
 import {
-    initQueueDb, claimNextMessage, completeMessage as dbCompleteMessage,
+    initQueueDb, claimAllPendingMessages, completeMessage as dbCompleteMessage,
     failMessage, enqueueResponse, getPendingAgents, recoverStaleMessages,
     pruneAckedResponses, pruneCompletedMessages, closeQueueDb, queueEvents, DbMessage,
 } from './lib/db';
@@ -35,6 +35,7 @@ import { handleLongResponse, collectFiles } from './lib/response';
 import {
     conversations, MAX_CONVERSATION_MESSAGES, enqueueInternalMessage, completeConversation,
     withConversationLock, incrementPending, decrementPending,
+    postToChatRoom,
 } from './lib/conversation';
 
 // Ensure directories exist
@@ -44,8 +45,8 @@ import {
     }
 });
 
-// Process a single message from the DB
-async function processMessage(dbMsg: DbMessage): Promise<void> {
+// Process one or more batched messages for an agent
+async function processMessage(dbMsg: DbMessage, additionalMsgs: DbMessage[] = []): Promise<void> {
     try {
         const channel = dbMsg.channel;
         const sender = dbMsg.sender;
@@ -157,6 +158,13 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             }
         }
 
+        // Prepend additional batched messages (chat room messages, etc.)
+        if (additionalMsgs.length > 0) {
+            const batchedTexts = additionalMsgs.map(m => m.message);
+            message = `${batchedTexts.join('\n\n------\n\n')}\n\n------\n\n${message}`;
+            log('INFO', `Batched ${additionalMsgs.length} additional message(s) for agent ${agentId}`);
+        }
+
         // Run incoming hooks
         ({ text: message } = await runIncomingHooks(message, { channel, sender, messageId, originalMessage: rawMessage }));
 
@@ -173,6 +181,14 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
         }
 
         emitEvent('chain_step_done', { agentId, agentName: agent.name, responseLength: response.length, responseText: response });
+
+        // Extract and post [#team_id: message] chat room broadcasts
+        const chatRoomMsgs = extractChatRoomMessages(response, agentId, teams);
+        for (const crMsg of chatRoomMsgs) {
+            postToChatRoom(crMsg.teamId, agentId, crMsg.message, teams[crMsg.teamId].agents, {
+                channel, sender, senderId: dbMsg.sender_id, messageId,
+            });
+        }
 
         // --- No team context: simple response to user ---
         if (!teamContext) {
@@ -284,8 +300,11 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
             }
         });
 
-        // Mark message as completed in DB
+        // Mark all messages as completed in DB (primary + batched)
         dbCompleteMessage(dbMsg.id);
+        for (const extra of additionalMsgs) {
+            dbCompleteMessage(extra.id);
+        }
 
     } catch (error) {
         log('ERROR', `Processing error: ${(error as Error).message}`);
@@ -305,16 +324,19 @@ async function processQueue(): Promise<void> {
         if (pendingAgents.length === 0) return;
 
         for (const agentId of pendingAgents) {
-            // Claim next message for this agent
-            const dbMsg = claimNextMessage(agentId);
-            if (!dbMsg) continue;
+            // Claim ALL pending messages for this agent (batching)
+            const allMsgs = claimAllPendingMessages(agentId);
+            if (allMsgs.length === 0) continue;
+
+            // First message is the primary; rest are batched as context
+            const [primaryMsg, ...additionalMsgs] = allMsgs;
 
             // Get or create promise chain for this agent
             const currentChain = agentProcessingChains.get(agentId) || Promise.resolve();
 
-            // Chain this message to the agent's promise
+            // Chain this batch to the agent's promise
             const newChain = currentChain
-                .then(() => processMessage(dbMsg))
+                .then(() => processMessage(primaryMsg, additionalMsgs))
                 .catch(error => {
                     log('ERROR', `Error processing message for agent ${agentId}: ${error.message}`);
                 });

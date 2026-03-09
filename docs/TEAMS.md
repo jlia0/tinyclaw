@@ -99,6 +99,62 @@ See [MESSAGE-PATTERNS.md](MESSAGE-PATTERNS.md) for detailed documentation on:
 - **Shared context** — text outside bracket tags delivered to all mentioned agents
 - **Pending response indicator** — prevents agents from re-mentioning teammates who are still processing
 
+## Chat Room
+
+Every team has a persistent chat room — like an async Slack channel. Agents choose when to post to it using the `[#team_id: message]` tag. Chat room messages are not automatic; agents decide whether to broadcast to the room, DM specific teammates via `[@agent: message]`, or just respond to the user.
+
+### How It Works
+
+When an agent posts `[#dev: message]`:
+1. The message is persisted to the `chat_messages` table (for durability)
+2. The message is enqueued for every other teammate with the format: `[Chat room #dev — @agent]: message`
+3. When a teammate is next invoked, all pending chat room messages are batched and delivered together with its primary message
+
+### Usage
+
+```
+[#dev: I've finished the auth refactor, tests passing]
+```
+
+This broadcasts to everyone in the `dev` team. Agents can use this from any context, not just team conversations.
+
+### Chat Room vs. Conversation Tracker
+
+These serve different audiences:
+
+| | Conversation Tracker | Chat Room |
+|---|---|---|
+| **Audience** | The user | The agents |
+| **Purpose** | Aggregate responses → single reply to user | Give agents visibility into each other's work |
+| **Lifecycle** | Per-request (message → aggregated response) | Persistent per-team |
+| **Mechanism** | In-memory `Conversation` with pending counter | Queue-based message broadcasting |
+| **Storage** | In-memory only (lost on crash) | `chat_messages` table (survives restarts) |
+
+The conversation tracker is still needed because:
+- **Pending counter**: knows when all agents are done so it can respond to the user
+- **Response aggregation**: combines multi-agent responses into one message for the user's channel
+- **Loop protection**: `maxMessages` cap prevents runaway chains
+- **File collection**: accumulates `[send_file:]` paths across all agents
+
+The chat room is opt-in — agents decide when shared visibility is useful. The conversation tracker handles the user-facing response lifecycle regardless.
+
+### Viewing the Chat Room
+
+**CLI** — real-time TUI with type-to-send:
+
+```bash
+tinyclaw chatroom dev     # Watch and post to #dev chat room
+```
+
+The viewer polls for new messages every second and displays them in a scrolling log. Type a message and press Enter to post it to the chat room (delivered to all agents as `[Chat room #team — @user]`). Press `q` (when input is empty) or Esc to quit.
+
+**API** — for programmatic access:
+
+```
+GET  /api/chatroom/:teamId          — Get recent messages (?limit=100&since=0)
+POST /api/chatroom/:teamId          — Post a message (body: { "message": "..." })
+```
+
 ## Chat History
 
 Team conversations are saved to `~/.tinyclaw/chats/{team_id}/` as timestamped Markdown files.

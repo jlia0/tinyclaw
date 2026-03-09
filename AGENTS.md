@@ -69,9 +69,27 @@ Please reply with: (1) status (2) blockers (3) next step.
 
 Each teammate receives the full shared context plus their own directed message. Keep shared context concise — it's prepended to every teammate's message.
 
-### Back-and-forth
+### Responding to teammates
 
-You can communicate back and forth by mentioning your teammate in your response and the system will route the messages in real-time.
+When you receive a message from a teammate like:
+> [Message from teammate @sam — respond using [@sam: your reply]]:
+
+You MUST wrap your response in `[@sam: your response here]` so it routes back to them. If you don't, your response goes directly to the user and the requesting agent never sees it.
+
+Example:
+- Teammate asks: `[Message from teammate @sam]: What is 2+2?`
+- Your response: `[@sam: 2 + 2 = 4]`
+
+Only skip the `[@agent: ...]` wrapper if you're intentionally responding to the user instead of the teammate.
+
+### Team Chat Room
+
+Every team has a persistent chat room — like a Slack channel. You decide when to post to it using the `[#team_id: message]` tag. Use it to share status, broadcast updates, or provide context that all teammates should see. Messages persist across conversations.
+
+- `[#dev: I've finished the auth refactor, tests passing]` — broadcasts to everyone in the `dev` team
+- You can use this from any context, not just team conversations
+
+Chat room messages arrive as regular messages with a `[Chat room #team_id — @agent]:` prefix. If multiple are pending, they're all delivered together in a single invocation. Read them to stay in sync with what others have done, then respond normally.
 
 ### Guidelines
 

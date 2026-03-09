@@ -128,6 +128,16 @@ export function initQueueDb(): void {
         CREATE INDEX IF NOT EXISTS idx_messages_status_agent_created
             ON messages(status, agent, created_at);
         CREATE INDEX IF NOT EXISTS idx_responses_channel_status ON responses(channel, status);
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id TEXT NOT NULL,
+            from_agent TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_team
+            ON chat_messages(team_id, id);
     `);
 
     // Drop legacy indexes/tables
@@ -195,6 +205,34 @@ export function claimNextMessage(agentId: string): DbMessage | null {
         `).run(agentId, Date.now(), row.id);
 
         return { ...row, status: 'processing' as const, claimed_by: agentId };
+    });
+
+    return claim.immediate();
+}
+
+/**
+ * Atomically claim ALL pending messages for a given agent.
+ * Used for batching multiple messages into a single agent invocation.
+ */
+export function claimAllPendingMessages(agentId: string): DbMessage[] {
+    const d = getDb();
+    const claim = d.transaction(() => {
+        const rows = d.prepare(`
+            SELECT * FROM messages
+            WHERE status = 'pending' AND (agent = ? OR (agent IS NULL AND ? = 'default'))
+            ORDER BY created_at ASC
+        `).all(agentId, agentId) as DbMessage[];
+
+        if (rows.length === 0) return [];
+
+        const now = Date.now();
+        const ids = rows.map(r => r.id);
+        d.prepare(`
+            UPDATE messages SET status = 'processing', claimed_by = ?, updated_at = ?
+            WHERE id IN (${ids.map(() => '?').join(',')})
+        `).run(agentId, now, ...ids);
+
+        return rows.map(r => ({ ...r, status: 'processing' as const, claimed_by: agentId }));
     });
 
     return claim.immediate();
@@ -349,6 +387,33 @@ export function getPendingAgents(): string[] {
         SELECT DISTINCT COALESCE(agent, 'default') as agent FROM messages WHERE status = 'pending'
     `).all() as { agent: string }[];
     return rows.map(r => r.agent);
+}
+
+// ── Chat messages (team chat room persistence) ───────────────────────────────
+
+export interface ChatMessageRow {
+    id: number;
+    team_id: string;
+    from_agent: string;
+    message: string;
+    created_at: number;
+}
+
+export function insertChatMessage(teamId: string, fromAgent: string, message: string): number {
+    const result = getDb().prepare(`
+        INSERT INTO chat_messages (team_id, from_agent, message, created_at)
+        VALUES (?, ?, ?, ?)
+    `).run(teamId, fromAgent, message, Date.now());
+    return result.lastInsertRowid as number;
+}
+
+export function getChatMessages(teamId: string, limit = 100, sinceId = 0): ChatMessageRow[] {
+    return getDb().prepare(`
+        SELECT * FROM chat_messages
+        WHERE team_id = ? AND id > ?
+        ORDER BY created_at ASC
+        LIMIT ?
+    `).all(teamId, sinceId, limit) as ChatMessageRow[];
 }
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────

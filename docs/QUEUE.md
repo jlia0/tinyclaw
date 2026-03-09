@@ -84,6 +84,18 @@ The queue lives in `~/.tinyclaw/tinyclaw.db` (SQLite, WAL mode):
 | `created_at` | INTEGER | Timestamp (ms) |
 | `acked_at` | INTEGER | Timestamp when channel client acknowledged |
 
+### Chat Messages Table (team chat room persistence)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Auto-incrementing primary key |
+| `team_id` | TEXT | Team that owns this chat room |
+| `from_agent` | TEXT | Agent that posted the message |
+| `message` | TEXT | Message content |
+| `created_at` | INTEGER | Timestamp (ms) |
+
+This table is append-only and used purely for persistence. All chat room delivery happens through the messages table via `postToChatRoom()`, which enqueues a copy for each teammate.
+
 ## Message Flow
 
 ### 1. Incoming Message
@@ -111,15 +123,15 @@ The queue processor picks up messages via two mechanisms:
 - **Event-driven**: `queueEvents.on('message:enqueued')` — instant for in-process messages
 - **Polling fallback**: Every 500ms — catches cross-process messages from channel clients
 
-For each pending agent, the processor calls `claimNextMessage(agentId)`:
+For each pending agent, the processor claims all pending messages at once via `claimAllPendingMessages(agentId)`:
 
 ```typescript
 // Atomic claim using BEGIN IMMEDIATE transaction
-const msg = claimNextMessage('coder');
-// Sets status = 'processing', claimed_by = 'coder'
+const msgs = claimAllPendingMessages('coder');
+// Sets status = 'processing', claimed_by = 'coder' for all claimed messages
 ```
 
-This prevents race conditions — only one processor can claim a message.
+The first message becomes the primary message; the rest are batched as additional context and delivered together in a single agent invocation. This prevents redundant invocations when multiple messages (e.g., chat room broadcasts) arrive for the same agent.
 
 ### 3. Agent Processing
 
