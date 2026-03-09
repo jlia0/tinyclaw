@@ -11,18 +11,17 @@ start_daemon() {
 
     log "Starting TinyClaw daemon..."
 
-    # Check if Node.js dependencies are installed
     if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
         echo -e "${YELLOW}Installing Node.js dependencies...${NC}"
         cd "$SCRIPT_DIR"
         PUPPETEER_SKIP_DOWNLOAD=true npm install
     fi
 
-    # Build TypeScript if any src file is newer than its dist counterpart
     local needs_build=false
     if [ ! -d "$SCRIPT_DIR/dist" ]; then
         needs_build=true
     else
+        local ts_file
         for ts_file in "$SCRIPT_DIR"/src/*.ts; do
             local js_file="$SCRIPT_DIR/dist/$(basename "${ts_file%.ts}.js")"
             if [ ! -f "$js_file" ] || [ "$ts_file" -nt "$js_file" ]; then
@@ -37,12 +36,10 @@ start_daemon() {
         npm run build
     fi
 
-    # Load settings or run setup wizard
     load_settings
     local load_rc=$?
 
     if [ $load_rc -eq 2 ]; then
-        # JSON file exists but contains invalid JSON
         echo -e "${RED}Error: settings.json exists but contains invalid JSON${NC}"
         echo ""
         local jq_err
@@ -50,7 +47,6 @@ start_daemon() {
         echo -e "  ${YELLOW}${jq_err}${NC}"
         echo ""
 
-        # Attempt auto-fix using jsonrepair (npm package)
         echo -e "${YELLOW}Attempting to auto-fix...${NC}"
         local repair_output
         repair_output=$(node -e 'const{jsonrepair}=require("jsonrepair");const fs=require("fs");try{const raw=fs.readFileSync(process.argv[1],"utf8");const fixed=jsonrepair(raw);JSON.parse(fixed);fs.copyFileSync(process.argv[1],process.argv[1]+".bak");fs.writeFileSync(process.argv[1],JSON.stringify(JSON.parse(fixed),null,2)+"\n");console.log("ok")}catch(e){console.error(e.message);process.exit(1)}' "$SETTINGS_FILE" 2>&1)
@@ -85,21 +81,29 @@ start_daemon() {
         return 1
     fi
 
-    # Ensure all agent workspaces have .agents/skills symlink
     ensure_agent_skills_links
 
-    # Validate tokens for channels that need them
+    local ch
     for ch in "${ACTIVE_CHANNELS[@]}"; do
+        local display
+        display="$(channel_display "$ch")"
+        [ -z "$display" ] && display="$ch"
+        local script
+        script="$(channel_script "$ch")"
+        if [ -z "$script" ]; then
+            echo -e "${RED}Channel '${display}' is missing a script entry in its manifest${NC}"
+            return 1
+        fi
+
         local token_key
         token_key="$(channel_token_key "$ch")"
         if [ -n "$token_key" ] && [ -z "$(get_channel_token "$ch")" ]; then
-            echo -e "${RED}$(channel_display "$ch") is configured but bot token is missing${NC}"
+            echo -e "${RED}${display} is configured but bot token is missing${NC}"
             echo "Run 'tinyclaw setup' to reconfigure"
             return 1
         fi
     done
 
-    # Write tokens to .env for the Node.js clients
     local env_file="$SCRIPT_DIR/.env"
     : > "$env_file"
     for ch in "${ACTIVE_CHANNELS[@]}"; do
@@ -112,7 +116,6 @@ start_daemon() {
         fi
     done
 
-    # Check for updates (non-blocking)
     local update_info
     update_info=$(check_for_updates 2>/dev/null || true)
     if [ -n "$update_info" ]; then
@@ -120,58 +123,57 @@ start_daemon() {
         show_update_notification "$current" "$latest"
     fi
 
-    # Report channels
     echo -e "${BLUE}Channels:${NC}"
     for ch in "${ACTIVE_CHANNELS[@]}"; do
-        echo -e "  ${GREEN}✓${NC} $(channel_display "$ch")"
+        local display
+        display="$(channel_display "$ch")"
+        [ -z "$display" ] && display="$ch"
+        echo -e "  ${GREEN}✓${NC} ${display}"
     done
     echo ""
 
-    # Build log tail command
     local log_tail_cmd="tail -f $LOG_DIR/queue.log"
     for ch in "${ACTIVE_CHANNELS[@]}"; do
         log_tail_cmd="$log_tail_cmd $LOG_DIR/${ch}.log"
     done
 
-    # --- Build tmux session dynamically ---
-    # Total panes = N channels + 3 (queue, heartbeat, logs)
     local total_panes=$(( ${#ACTIVE_CHANNELS[@]} + 3 ))
 
     tmux new-session -d -s "$TMUX_SESSION" -n "tinyclaw" -c "$SCRIPT_DIR"
 
-    # Detect tmux base indices (user may have base-index or pane-base-index set)
     local win_base
     win_base=$(tmux show-option -gv base-index 2>/dev/null || echo 0)
     local pane_base
     pane_base=$(tmux show-option -gv pane-base-index 2>/dev/null || echo 0)
 
-    # Create remaining panes (first pane already exists)
+    local i
     for ((i=1; i<total_panes; i++)); do
         tmux split-window -t "$TMUX_SESSION" -c "$SCRIPT_DIR"
-        tmux select-layout -t "$TMUX_SESSION" tiled  # rebalance after each split
+        tmux select-layout -t "$TMUX_SESSION" tiled
     done
 
-    # Assign channel panes
     local pane_idx=$pane_base
     local whatsapp_pane=-1
     for ch in "${ACTIVE_CHANNELS[@]}"; do
         [ "$ch" = "whatsapp" ] && whatsapp_pane=$pane_idx
-        tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_idx" "cd '$SCRIPT_DIR' && node $(channel_script "$ch")" C-m
-        tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_idx" -T "$(channel_display "$ch")"
+        local script
+        script="$(channel_script "$ch")"
+        local display
+        display="$(channel_display "$ch")"
+        [ -z "$display" ] && display="$ch"
+        tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_idx" "cd '$SCRIPT_DIR' && node ${script}" C-m
+        tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_idx" -T "${display}"
         pane_idx=$((pane_idx + 1))
     done
 
-    # Queue pane
     tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_idx" "cd '$SCRIPT_DIR' && node dist/queue-processor.js" C-m
     tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_idx" -T "Queue"
     pane_idx=$((pane_idx + 1))
 
-    # Heartbeat pane
     tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_idx" "cd '$SCRIPT_DIR' && ./lib/heartbeat-cron.sh" C-m
     tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_idx" -T "Heartbeat"
     pane_idx=$((pane_idx + 1))
 
-    # Logs pane
     tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_idx" "cd '$SCRIPT_DIR' && $log_tail_cmd" C-m
     tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_idx" -T "Logs"
 
@@ -179,7 +181,6 @@ start_daemon() {
     echo -e "${GREEN}✓ TinyClaw started${NC}"
     echo ""
 
-    # WhatsApp QR code flow — only when WhatsApp is being started
     if [ "$whatsapp_pane" -ge 0 ]; then
         echo -e "${YELLOW}Starting WhatsApp client...${NC}"
         echo ""
@@ -243,7 +244,6 @@ start_daemon() {
         fi
     fi
 
-    # Build channel names for help line
     local channel_names
     channel_names=$(IFS='|'; echo "${ACTIVE_CHANNELS[*]}")
 
@@ -259,7 +259,6 @@ start_daemon() {
     log "Daemon started with $total_panes panes (channels=$ch_list)"
 }
 
-# Stop daemon
 stop_daemon() {
     log "Stopping TinyClaw..."
 
@@ -267,9 +266,13 @@ stop_daemon() {
         tmux kill-session -t "$TMUX_SESSION"
     fi
 
-    # Kill any remaining channel processes
+    local ch
     for ch in "${ALL_CHANNELS[@]}"; do
-        pkill -f "$(channel_script "$ch")" || true
+        local script
+        script="$(channel_script "$ch")"
+        if [ -n "$script" ]; then
+            pkill -f "$script" || true
+        fi
     done
     pkill -f "dist/queue-processor.js" || true
     pkill -f "heartbeat-cron.sh" || true
@@ -278,7 +281,6 @@ stop_daemon() {
     log "Daemon stopped"
 }
 
-# Restart daemon safely even when called from inside TinyClaw's tmux session
 restart_daemon() {
     if session_exists && [ -n "${TMUX:-}" ]; then
         local current_session
@@ -298,7 +300,6 @@ restart_daemon() {
     start_daemon
 }
 
-# Status
 status_daemon() {
     echo -e "${BLUE}TinyClaw Status${NC}"
     echo "==============="
@@ -314,19 +315,18 @@ status_daemon() {
 
     echo ""
 
-    # Channel process status
     local ready_file="$TINYCLAW_HOME/channels/whatsapp_ready"
-
+    local ch
     for ch in "${ALL_CHANNELS[@]}"; do
         local display
         display="$(channel_display "$ch")"
+        [ -z "$display" ] && display="$ch"
         local script
         script="$(channel_script "$ch")"
         local pad=""
-        # Pad display name to align output
         while [ $((${#display} + ${#pad})) -lt 16 ]; do pad="$pad "; done
 
-        if pgrep -f "$script" > /dev/null; then
+        if [ -n "$script" ] && pgrep -f "$script" > /dev/null; then
             if [ "$ch" = "whatsapp" ] && [ -f "$ready_file" ]; then
                 echo -e "${display}:${pad}${GREEN}Running & Ready${NC}"
             elif [ "$ch" = "whatsapp" ]; then
@@ -339,7 +339,6 @@ status_daemon() {
         fi
     done
 
-    # Core processes
     if pgrep -f "dist/queue-processor.js" > /dev/null; then
         echo -e "Queue Processor: ${GREEN}Running${NC}"
     else
@@ -352,11 +351,13 @@ status_daemon() {
         echo -e "Heartbeat:       ${RED}Not Running${NC}"
     fi
 
-    # Recent activity per channel (only show if log file exists)
     for ch in "${ALL_CHANNELS[@]}"; do
         if [ -f "$LOG_DIR/${ch}.log" ]; then
             echo ""
-            echo "Recent $(channel_display "$ch") Activity:"
+            local display
+            display="$(channel_display "$ch")"
+            [ -z "$display" ] && display="$ch"
+            echo "Recent ${display} Activity:"
             printf '%0.s─' {1..24}; echo ""
             tail -n 5 "$LOG_DIR/${ch}.log"
         fi
@@ -372,6 +373,7 @@ status_daemon() {
     for ch in "${ALL_CHANNELS[@]}"; do
         local display
         display="$(channel_display "$ch")"
+        [ -z "$display" ] && display="$ch"
         local pad=""
         while [ $((${#display} + ${#pad})) -lt 10 ]; do pad="$pad "; done
         echo "  ${display}:${pad}tail -f $LOG_DIR/${ch}.log"

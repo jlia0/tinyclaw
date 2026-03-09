@@ -78,6 +78,7 @@ cp -r dist/ "$BUNDLE_DIR/"
 cp -r node_modules/ "$BUNDLE_DIR/"
 cp -r scripts "$BUNDLE_DIR/"
 cp -r lib "$BUNDLE_DIR/"
+cp -r channels "$BUNDLE_DIR/"
 cp -r docs "$BUNDLE_DIR/" 2>/dev/null || true
 cp -r .agents "$BUNDLE_DIR/" 2>/dev/null || true
 

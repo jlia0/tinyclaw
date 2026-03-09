@@ -1,0 +1,12 @@
+{
+  "id": "telegram",
+  "display_name": "Telegram",
+  "alias": "tg",
+  "script": "dist/channels/telegram-client.js",
+  "token": {
+    "settings_key": "bot_token",
+    "env_var": "TELEGRAM_BOT_TOKEN",
+    "prompt": "Enter your Telegram bot token:",
+    "help": "(Create a bot via @BotFather on Telegram to get a token)"
+  }
+}

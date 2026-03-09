@@ -78,6 +78,7 @@ jobs:
           cp -r node_modules/ "$BUNDLE_DIR/"
           cp -r scripts/ "$BUNDLE_DIR/"
           cp -r lib/ "$BUNDLE_DIR/"
+          cp -r channels/ "$BUNDLE_DIR/"
           cp -r docs/ "$BUNDLE_DIR/"
           cp -r .agents/ "$BUNDLE_DIR/"
 

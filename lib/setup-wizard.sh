@@ -3,6 +3,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$PROJECT_ROOT"
 SETTINGS_FILE="$HOME/.tinyclaw/settings.json"
 
 GREEN='\033[0;32m'
@@ -17,41 +18,29 @@ echo -e "${GREEN}  TinyClaw - Setup Wizard${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-# --- Channel registry ---
-ALL_CHANNELS=(telegram discord whatsapp)
+source "$PROJECT_ROOT/lib/common.sh"
+if ! load_channel_registry; then
+    echo -e "${RED}Failed to load channel registry${NC}"
+    exit 1
+fi
 
-_sw_channel_display() {
-    case "$1" in
-        telegram) echo "Telegram" ;; discord) echo "Discord" ;; whatsapp) echo "WhatsApp" ;;
-    esac
-}
-_sw_channel_token_key() {
-    case "$1" in
-        discord) echo "discord_bot_token" ;; telegram) echo "telegram_bot_token" ;;
-    esac
-}
-_sw_channel_token_prompt() {
-    case "$1" in
-        discord) echo "Enter your Discord bot token:" ;; telegram) echo "Enter your Telegram bot token:" ;;
-    esac
-}
-_sw_channel_token_help() {
-    case "$1" in
-        discord) echo "(Get one at: https://discord.com/developers/applications)" ;;
-        telegram) echo "(Create a bot via @BotFather on Telegram to get a token)" ;;
-    esac
-}
+if [ ${#ALL_CHANNELS[@]} -eq 0 ]; then
+    echo -e "${RED}No channels available in registry${NC}"
+    exit 1
+fi
 
-# Channel selection - simple checklist
-echo "Which messaging channels (Telegram, Discord, WhatsApp) do you want to enable?"
+channel_list=$(IFS=', '; echo "${ALL_CHANNELS[*]}")
+echo "Which messaging channels (${channel_list}) do you want to enable?"
 echo ""
 
 ENABLED_CHANNELS=()
 for ch in "${ALL_CHANNELS[@]}"; do
-    read -rp "  Enable $(_sw_channel_display "$ch")? [y/N]: " choice
+    display="$(channel_display "$ch")"
+    [ -z "$display" ] && display="$ch"
+    read -rp "  Enable ${display}? [y/N]: " choice
     if [[ "$choice" =~ ^[yY] ]]; then
         ENABLED_CHANNELS+=("$ch")
-        echo -e "    ${GREEN}✓ $(_sw_channel_display "$ch") enabled${NC}"
+        echo -e "    ${GREEN}✓ ${display} enabled${NC}"
     fi
 done
 echo ""
@@ -61,31 +50,35 @@ if [ ${#ENABLED_CHANNELS[@]} -eq 0 ]; then
     exit 1
 fi
 
-# Collect tokens for channels that need them
-# Use parallel arrays for bash 3.2 compatibility
 _TOKEN_CHANNEL_KEYS=()
 _TOKEN_CHANNEL_VALS=()
 
 for ch in "${ENABLED_CHANNELS[@]}"; do
-    token_key="$(_sw_channel_token_key "$ch")"
+    token_key="$(channel_token_key "$ch")"
     if [ -n "$token_key" ]; then
-        echo "$(_sw_channel_token_prompt "$ch")"
-        echo -e "${YELLOW}$(_sw_channel_token_help "$ch")${NC}"
+        prompt="$(channel_token_prompt "$ch")"
+        help="$(channel_token_help "$ch")"
+        display="$(channel_display "$ch")"
+        [ -z "$display" ] && display="$ch"
+        [ -z "$prompt" ] && prompt="Enter token:"
+        echo "$prompt"
+        if [ -n "$help" ]; then
+            echo -e "${YELLOW}${help}${NC}"
+        fi
         echo ""
         read -rp "Token: " token_value
 
         if [ -z "$token_value" ]; then
-            echo -e "${RED}$(_sw_channel_display "$ch") bot token is required${NC}"
+            echo -e "${RED}${display} bot token is required${NC}"
             exit 1
         fi
         _TOKEN_CHANNEL_KEYS+=("$ch")
         _TOKEN_CHANNEL_VALS+=("$token_value")
-        echo -e "${GREEN}✓ $(_sw_channel_display "$ch") token saved${NC}"
+        echo -e "${GREEN}✓ ${display} token saved${NC}"
         echo ""
     fi
 done
 
-# Helper to look up a collected token
 _get_token() {
     local ch="$1" i
     for i in "${!_TOKEN_CHANNEL_KEYS[@]}"; do
@@ -96,7 +89,6 @@ _get_token() {
     done
 }
 
-# Provider selection
 echo "Which AI provider?"
 echo ""
 echo "  1) Anthropic (Claude)  (recommended)"
@@ -117,7 +109,6 @@ esac
 echo -e "${GREEN}✓ Provider: $PROVIDER${NC}"
 echo ""
 
-# Model selection based on provider
 if [ "$PROVIDER" = "anthropic" ]; then
     echo "Which Claude model?"
     echo ""
@@ -177,7 +168,6 @@ elif [ "$PROVIDER" = "opencode" ]; then
     echo -e "${GREEN}✓ Model: $MODEL${NC}"
     echo ""
 else
-    # OpenAI models
     echo "Which OpenAI model?"
     echo ""
     echo "  1) GPT-5.3 Codex  (recommended)"
@@ -205,7 +195,6 @@ else
     echo ""
 fi
 
-# Heartbeat interval
 echo "Heartbeat interval (seconds)?"
 echo -e "${YELLOW}(How often Claude checks in proactively)${NC}"
 echo ""
@@ -219,13 +208,11 @@ fi
 echo -e "${GREEN}✓ Heartbeat interval: ${HEARTBEAT_INTERVAL}s${NC}"
 echo ""
 
-# Workspace configuration
 echo "Workspace name (where agent directories will be stored)?"
 echo -e "${YELLOW}(Creates ~/your-workspace-name/)${NC}"
 echo ""
 read -rp "Workspace name [default: tinyclaw-workspace]: " WORKSPACE_INPUT
 WORKSPACE_NAME=${WORKSPACE_INPUT:-tinyclaw-workspace}
-# Clean workspace name
 WORKSPACE_NAME=$(echo "$WORKSPACE_NAME" | tr ' ' '-' | tr -cd 'a-zA-Z0-9_/~.-')
 if [[ "$WORKSPACE_NAME" == /* || "$WORKSPACE_NAME" == ~* ]]; then
   WORKSPACE_PATH="${WORKSPACE_NAME/#\~/$HOME}"
@@ -235,18 +222,15 @@ fi
 echo -e "${GREEN}✓ Workspace: $WORKSPACE_PATH${NC}"
 echo ""
 
-# Default agent name
 echo "Name your default agent?"
 echo -e "${YELLOW}(The main AI assistant you'll interact with)${NC}"
 echo ""
 read -rp "Default agent name [default: assistant]: " DEFAULT_AGENT_INPUT
 DEFAULT_AGENT_NAME=${DEFAULT_AGENT_INPUT:-assistant}
-# Clean agent name
 DEFAULT_AGENT_NAME=$(echo "$DEFAULT_AGENT_NAME" | tr ' ' '-' | tr -cd 'a-zA-Z0-9_-' | tr '[:upper:]' '[:lower:]')
 echo -e "${GREEN}✓ Default agent: $DEFAULT_AGENT_NAME${NC}"
 echo ""
 
-# --- Additional Agents (optional) ---
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  Additional Agents (Optional)${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -257,18 +241,14 @@ echo ""
 read -rp "Set up additional agents? [y/N]: " SETUP_AGENTS
 
 AGENTS_JSON=""
-# Always create the default agent
 DEFAULT_AGENT_DIR="$WORKSPACE_PATH/$DEFAULT_AGENT_NAME"
-# Capitalize first letter of agent name (proper bash method)
 DEFAULT_AGENT_DISPLAY="$(tr '[:lower:]' '[:upper:]' <<< "${DEFAULT_AGENT_NAME:0:1}")${DEFAULT_AGENT_NAME:1}"
 AGENTS_JSON='"agents": {'
 AGENTS_JSON="$AGENTS_JSON \"$DEFAULT_AGENT_NAME\": { \"name\": \"$DEFAULT_AGENT_DISPLAY\", \"provider\": \"$PROVIDER\", \"model\": \"$MODEL\", \"working_directory\": \"$DEFAULT_AGENT_DIR\" }"
 
-ADDITIONAL_AGENTS=()  # Track additional agent IDs for directory creation
+ADDITIONAL_AGENTS=()
 
 if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
-
-    # Add more agents
     ADDING_AGENTS=true
     while [ "$ADDING_AGENTS" = true ]; do
         echo ""
@@ -325,10 +305,7 @@ if [[ "$SETUP_AGENTS" =~ ^[yY] ]]; then
         fi
 
         NEW_AGENT_DIR="$WORKSPACE_PATH/$NEW_AGENT_ID"
-
         AGENTS_JSON="$AGENTS_JSON, \"$NEW_AGENT_ID\": { \"name\": \"$NEW_AGENT_NAME\", \"provider\": \"$NEW_PROVIDER\", \"model\": \"$NEW_MODEL\", \"working_directory\": \"$NEW_AGENT_DIR\" }"
-
-        # Track this agent for directory creation later
         ADDITIONAL_AGENTS+=("$NEW_AGENT_ID")
 
         echo -e "  ${GREEN}✓ Agent '${NEW_AGENT_ID}' added${NC}"
@@ -337,7 +314,6 @@ fi
 
 AGENTS_JSON="$AGENTS_JSON },"
 
-# Build enabled channels array JSON
 CHANNELS_JSON="["
 for i in "${!ENABLED_CHANNELS[@]}"; do
     if [ $i -gt 0 ]; then
@@ -347,12 +323,6 @@ for i in "${!ENABLED_CHANNELS[@]}"; do
 done
 CHANNELS_JSON="${CHANNELS_JSON}]"
 
-# Build channel configs with tokens
-DISCORD_TOKEN="$(_get_token discord)"
-TELEGRAM_TOKEN="$(_get_token telegram)"
-
-# Write settings.json with layered structure
-# Use jq to build valid JSON to avoid escaping issues with agent prompts
 if [ "$PROVIDER" = "anthropic" ]; then
     MODELS_SECTION='"models": { "provider": "anthropic", "anthropic": { "model": "'"${MODEL}"'" } }'
 elif [ "$PROVIDER" = "opencode" ]; then
@@ -360,6 +330,18 @@ elif [ "$PROVIDER" = "opencode" ]; then
 else
     MODELS_SECTION='"models": { "provider": "openai", "openai": { "model": "'"${MODEL}"'" } }'
 fi
+
+CHANNEL_CONFIG_JSON=""
+for ch in "${ALL_CHANNELS[@]}"; do
+    token_key="$(channel_token_key "$ch")"
+    if [ -n "$token_key" ]; then
+        token_value="$(_get_token "$ch")"
+        CHANNEL_CONFIG_JSON="$CHANNEL_CONFIG_JSON\"${ch}\": { \"${token_key}\": \"${token_value}\" },"
+    else
+        CHANNEL_CONFIG_JSON="$CHANNEL_CONFIG_JSON\"${ch}\": {},"
+    fi
+done
+CHANNEL_CONFIG_JSON="${CHANNEL_CONFIG_JSON%,}"
 
 cat > "$SETTINGS_FILE" <<EOF
 {
@@ -369,13 +351,7 @@ cat > "$SETTINGS_FILE" <<EOF
   },
   "channels": {
     "enabled": ${CHANNELS_JSON},
-    "discord": {
-      "bot_token": "${DISCORD_TOKEN}"
-    },
-    "telegram": {
-      "bot_token": "${TELEGRAM_TOKEN}"
-    },
-    "whatsapp": {}
+    ${CHANNEL_CONFIG_JSON}
   },
   ${AGENTS_JSON}
   ${MODELS_SECTION},
@@ -385,17 +361,14 @@ cat > "$SETTINGS_FILE" <<EOF
 }
 EOF
 
-# Normalize JSON with jq (fix any formatting issues)
 if command -v jq &> /dev/null; then
     tmp_file="$SETTINGS_FILE.tmp"
     jq '.' "$SETTINGS_FILE" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$SETTINGS_FILE"
 fi
 
-# Create workspace directory
 mkdir -p "$WORKSPACE_PATH"
 echo -e "${GREEN}✓ Created workspace: $WORKSPACE_PATH${NC}"
 
-# Create ~/.tinyclaw with templates
 TINYCLAW_HOME="$HOME/.tinyclaw"
 mkdir -p "$TINYCLAW_HOME"
 mkdir -p "$TINYCLAW_HOME/logs"
@@ -410,7 +383,6 @@ if [ -f "$PROJECT_ROOT/AGENTS.md" ]; then
 fi
 echo -e "${GREEN}✓ Created ~/.tinyclaw with templates${NC}"
 
-# Create default agent directory with config files
 mkdir -p "$DEFAULT_AGENT_DIR"
 if [ -d "$TINYCLAW_HOME/.claude" ]; then
     cp -r "$TINYCLAW_HOME/.claude" "$DEFAULT_AGENT_DIR/"
@@ -423,11 +395,9 @@ if [ -f "$TINYCLAW_HOME/AGENTS.md" ]; then
 fi
 echo -e "${GREEN}✓ Created default agent directory: $DEFAULT_AGENT_DIR${NC}"
 
-# Create ~/.tinyclaw/files directory for file exchange
 mkdir -p "$TINYCLAW_HOME/files"
 echo -e "${GREEN}✓ Created files directory: $TINYCLAW_HOME/files${NC}"
 
-# Create directories for additional agents
 for agent_id in "${ADDITIONAL_AGENTS[@]}"; do
     AGENT_DIR="$WORKSPACE_PATH/$agent_id"
     mkdir -p "$AGENT_DIR"

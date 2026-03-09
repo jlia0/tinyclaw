@@ -1,0 +1,6 @@
+{
+  "id": "tui",
+  "display_name": "TUI (stdin/stdout)",
+  "alias": "tui",
+  "script": "dist/channels/tui-client.js"
+}

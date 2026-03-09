@@ -4,9 +4,8 @@
 #
 # To add a new channel:
 #   1. Create src/channels/<channel>-client.ts
-#   2. Add the channel ID to ALL_CHANNELS in lib/common.sh
-#   3. Fill in the CHANNEL_* registry arrays in lib/common.sh
-#   4. Run setup wizard to enable it
+#   2. Add a manifest at channels/<channel>.json
+#   3. Run setup wizard to enable it
 
 # SCRIPT_DIR = repo root (where bash scripts live)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +35,12 @@ source "$SCRIPT_DIR/lib/agents.sh"
 source "$SCRIPT_DIR/lib/teams.sh"
 source "$SCRIPT_DIR/lib/pairing.sh"
 source "$SCRIPT_DIR/lib/update.sh"
+
+# Load channel registry (channels/*.json)
+if ! load_channel_registry; then
+    echo -e "${RED}Failed to load channel registry${NC}"
+    exit 1
+fi
 
 # --- Main command dispatch ---
 

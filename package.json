@@ -9,6 +9,7 @@
     "whatsapp": "node dist/channels/whatsapp-client.js",
     "discord": "node dist/channels/discord-client.js",
     "telegram": "node dist/channels/telegram-client.js",
+    "tui": "node dist/channels/tui-client.js",
     "queue": "node dist/queue-processor.js",
     "visualize": "node dist/visualizer/team-visualizer.js"
   },

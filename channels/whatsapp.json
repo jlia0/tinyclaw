@@ -1,0 +1,6 @@
+{
+  "id": "whatsapp",
+  "display_name": "WhatsApp",
+  "alias": "wa",
+  "script": "dist/channels/whatsapp-client.js"
+}

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Messaging and logging functions for TinyClaw
 
-# Send message via the API server queue
 send_message() {
     local message="$1"
     local source="${2:-manual}"
@@ -31,11 +30,10 @@ send_message() {
     fi
 }
 
-# View logs
 logs() {
     local target="${1:-}"
+    local ch
 
-    # Check known channels (by id or alias)
     for ch in "${ALL_CHANNELS[@]}"; do
         if [ "$target" = "$ch" ] || [ "$target" = "$(channel_alias "$ch")" ]; then
             tail -f "$LOG_DIR/${ch}.log"
@@ -43,7 +41,6 @@ logs() {
         fi
     done
 
-    # Built-in log types
     case "$target" in
         heartbeat|hb) tail -f "$LOG_DIR/heartbeat.log" ;;
         daemon) tail -f "$LOG_DIR/daemon.log" ;;
@@ -57,7 +54,6 @@ logs() {
     esac
 }
 
-# Reset a channel's authentication
 channels_reset() {
     local ch="$1"
     local display
@@ -72,7 +68,6 @@ channels_reset() {
 
     echo -e "${YELLOW}Resetting ${display} authentication...${NC}"
 
-    # WhatsApp has local session files to clear
     if [ "$ch" = "whatsapp" ]; then
         rm -rf "$SCRIPT_DIR/.tinyclaw/whatsapp-session"
         rm -f "$SCRIPT_DIR/.tinyclaw/channels/whatsapp_ready"
@@ -85,7 +80,6 @@ channels_reset() {
         return
     fi
 
-    # Token-based channels
     local token_key
     token_key="$(channel_token_key "$ch")"
     if [ -n "$token_key" ]; then
