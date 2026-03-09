@@ -14,7 +14,7 @@ import path from 'path';
 import https from 'https';
 import http from 'http';
 import { ensureSenderPaired } from '../lib/pairing';
-import { applyDefaultAgent, initPersistence } from './default-agent';
+import { applyDefaultAgent } from './default-agent';
 
 const API_PORT = parseInt(process.env.TINYCLAW_API_PORT || '3777', 10);
 const API_BASE = `http://localhost:${API_PORT}`;
@@ -36,9 +36,6 @@ const PAIRING_FILE = path.join(TINYCLAW_HOME, 'pairing.json');
         fs.mkdirSync(dir, { recursive: true });
     }
 });
-
-// Load persisted default-agent-per-chat mappings
-initPersistence(TINYCLAW_HOME);
 
 // Validate bot token
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
