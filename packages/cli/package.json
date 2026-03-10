@@ -1,0 +1,12 @@
+{
+  "name": "@tinyclaw/cli",
+  "version": "0.0.10",
+  "main": "dist/shared.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.1.0",
+    "@tinyclaw/core": "*"
+  }
+}

@@ -141,14 +141,14 @@ case "${1:-}" in
                     custom_provider_list
                     ;;
                 add)
-                    node "$SCRIPT_DIR/dist/cli/agent.js" provider-add
+                    node "$SCRIPT_DIR/packages/cli/dist/agent.js" provider-add
                     ;;
                 remove|rm)
                     if [ -z "$PROVIDER_EXTRA_ARG" ]; then
                         echo "Usage: $0 provider remove <provider_id>"
                         exit 1
                     fi
-                    node "$SCRIPT_DIR/dist/cli/agent.js" provider-remove "$PROVIDER_EXTRA_ARG"
+                    node "$SCRIPT_DIR/packages/cli/dist/agent.js" provider-remove "$PROVIDER_EXTRA_ARG"
                     ;;
                 anthropic)
                     if [ ! -f "$SETTINGS_FILE" ]; then
@@ -361,14 +361,14 @@ case "${1:-}" in
                 agent_list
                 ;;
             add)
-                node "$SCRIPT_DIR/dist/cli/agent.js" add
+                node "$SCRIPT_DIR/packages/cli/dist/agent.js" add
                 ;;
             remove|rm)
                 if [ -z "$3" ]; then
                     echo "Usage: $0 agent remove <agent_id>"
                     exit 1
                 fi
-                node "$SCRIPT_DIR/dist/cli/agent.js" remove "$3"
+                node "$SCRIPT_DIR/packages/cli/dist/agent.js" remove "$3"
                 ;;
             show)
                 if [ -z "$3" ]; then
@@ -430,14 +430,14 @@ case "${1:-}" in
                 team_list
                 ;;
             add)
-                node "$SCRIPT_DIR/dist/cli/team.js" add
+                node "$SCRIPT_DIR/packages/cli/dist/team.js" add
                 ;;
             remove|rm)
                 if [ -z "$3" ]; then
                     echo "Usage: $0 team remove <team_id>"
                     exit 1
                 fi
-                node "$SCRIPT_DIR/dist/cli/team.js" remove "$3"
+                node "$SCRIPT_DIR/packages/cli/dist/team.js" remove "$3"
                 ;;
             show)
                 if [ -z "$3" ]; then
@@ -458,7 +458,7 @@ case "${1:-}" in
                     echo "Usage: $0 team remove-agent <team_id> <agent_id>"
                     exit 1
                 fi
-                node "$SCRIPT_DIR/dist/cli/team.js" remove-agent "$3" "$4"
+                node "$SCRIPT_DIR/packages/cli/dist/team.js" remove-agent "$3" "$4"
                 ;;
             visualize|viz)
                 # Build visualizer if needed
@@ -528,10 +528,10 @@ case "${1:-}" in
         tmux attach -t "$TMUX_SESSION"
         ;;
     setup)
-        node "$SCRIPT_DIR/dist/cli/setup-wizard.js"
+        node "$SCRIPT_DIR/packages/cli/dist/setup-wizard.js"
         ;;
     update)
-        node "$SCRIPT_DIR/dist/cli/update.js"
+        node "$SCRIPT_DIR/packages/cli/dist/update.js"
         ;;
     *)
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")

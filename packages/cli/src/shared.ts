@@ -1,8 +1,7 @@
 import * as p from '@clack/prompts';
 import fs from 'fs';
 import path from 'path';
-import { Settings } from '../lib/types';
-import { SETTINGS_FILE, TINYCLAW_HOME, SCRIPT_DIR } from '../lib/config';
+import { Settings, SETTINGS_FILE, TINYCLAW_HOME, SCRIPT_DIR } from '@tinyclaw/core';
 
 // Re-export for convenience
 export { SETTINGS_FILE, TINYCLAW_HOME, SCRIPT_DIR };

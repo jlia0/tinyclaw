@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import * as p from '@clack/prompts';
 import fs from 'fs';
-import { Settings } from '../lib/types';
-import { updateAgentTeammates } from '../lib/agent';
+import { Settings, updateAgentTeammates } from '@tinyclaw/core';
 import {
     unwrap, cleanId, validateId,
     writeSettings, requireSettings,

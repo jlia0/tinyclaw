@@ -2,8 +2,7 @@
 import * as p from '@clack/prompts';
 import fs from 'fs';
 import path from 'path';
-import { CustomProvider } from '../lib/types';
-import { ensureAgentDirectory } from '../lib/agent';
+import { CustomProvider, ensureAgentDirectory } from '@tinyclaw/core';
 import {
     unwrap, cleanId, validateId, required,
     writeSettings, requireSettings, SCRIPT_DIR,

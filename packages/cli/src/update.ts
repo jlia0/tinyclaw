@@ -3,7 +3,7 @@ import * as p from '@clack/prompts';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
-import { SCRIPT_DIR } from '../lib/config';
+import { SCRIPT_DIR } from '@tinyclaw/core';
 import { unwrap } from './shared';
 
 const GITHUB_REPO = 'TinyAGI/tinyclaw';

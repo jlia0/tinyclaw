@@ -2,8 +2,7 @@
 import * as p from '@clack/prompts';
 import fs from 'fs';
 import path from 'path';
-import { Settings, AgentConfig } from '../lib/types';
-import { ensureAgentDirectory, copyDirSync } from '../lib/agent';
+import { Settings, AgentConfig, ensureAgentDirectory, copyDirSync } from '@tinyclaw/core';
 import {
     unwrap, cleanId, validateId, required,
     writeSettings, SETTINGS_FILE, TINYCLAW_HOME, SCRIPT_DIR,
