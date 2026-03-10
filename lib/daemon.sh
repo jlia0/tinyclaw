@@ -271,7 +271,7 @@ stop_daemon() {
     for ch in "${ALL_CHANNELS[@]}"; do
         pkill -f "$(channel_script "$ch")" || true
     done
-    pkill -f "packages/core/dist/index.js" || true
+    pkill -f "packages/main/dist/index.js" || true
     pkill -f "heartbeat-cron.sh" || true
 
     echo -e "${GREEN}✓ TinyClaw stopped${NC}"
@@ -340,7 +340,7 @@ status_daemon() {
     done
 
     # Core processes
-    if pgrep -f "packages/core/dist/index.js" > /dev/null; then
+    if pgrep -f "packages/main/dist/index.js" > /dev/null; then
         echo -e "Queue Processor: ${GREEN}Running${NC}"
     else
         echo -e "Queue Processor: ${RED}Not Running${NC}"
