@@ -5,7 +5,7 @@
  * Does NOT call Claude directly - that's handled by queue-processor
  */
 
-import { Client, Events, GatewayIntentBits, Partials, Message, DMChannel, TextChannel, AttachmentBuilder, REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Partials, Message, DMChannel, TextChannel, ThreadChannel, AttachmentBuilder, REST, Routes, SlashCommandBuilder, ChatInputCommandInteraction, ThreadAutoArchiveDuration } from 'discord.js';
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
@@ -95,6 +95,203 @@ function downloadFile(url: string, destPath: string): Promise<void> {
 // Track pending messages (waiting for response)
 const pendingMessages = new Map<string, PendingMessage>();
 let processingOutgoingQueue = false;
+
+// ─── Stream log thread management ────────────────────────────────────────────
+
+interface ActiveLogThread {
+    thread: ThreadChannel;
+    buffer: string[];
+    flushTimer: ReturnType<typeof setTimeout> | null;
+    lastSendTime: number;
+}
+
+const activeLogThreads = new Map<string, ActiveLogThread>();
+
+const STREAM_FLUSH_INTERVAL_MS = 2000;
+const STREAM_FLUSH_LINE_THRESHOLD = 15;
+const DISCORD_MAX_LENGTH = 2000;
+
+async function flushLogBuffer(messageId: string): Promise<void> {
+    const entry = activeLogThreads.get(messageId);
+    if (!entry || entry.buffer.length === 0) return;
+
+    let text = entry.buffer.join('\n');
+    if (text.length > DISCORD_MAX_LENGTH) {
+        text = text.substring(0, DISCORD_MAX_LENGTH - 4) + '...';
+    }
+    entry.buffer = [];
+    entry.lastSendTime = Date.now();
+
+    try {
+        await entry.thread.send(text);
+    } catch (err) {
+        log('ERROR', `Failed to send log to thread: ${(err as Error).message}`);
+    }
+}
+
+function scheduleFlush(messageId: string): void {
+    const entry = activeLogThreads.get(messageId);
+    if (!entry) return;
+
+    // Force flush if buffer is large
+    if (entry.buffer.length >= STREAM_FLUSH_LINE_THRESHOLD) {
+        if (entry.flushTimer) clearTimeout(entry.flushTimer);
+        entry.flushTimer = null;
+        flushLogBuffer(messageId);
+        return;
+    }
+
+    // Otherwise schedule a timed flush if not already pending
+    if (!entry.flushTimer) {
+        entry.flushTimer = setTimeout(() => {
+            entry.flushTimer = null;
+            flushLogBuffer(messageId);
+        }, STREAM_FLUSH_INTERVAL_MS);
+    }
+}
+
+async function handleStreamStart(data: any): Promise<void> {
+    const { messageId, agentName } = data;
+    const pending = pendingMessages.get(messageId);
+    if (!pending) return;
+
+    // Threads only work in guild (server) channels, not DMs
+    if (!pending.message.guild) return;
+
+    try {
+        const thread = await pending.message.startThread({
+            name: `${agentName || 'Agent'} working...`,
+            autoArchiveDuration: ThreadAutoArchiveDuration.OneHour,
+        });
+        activeLogThreads.set(messageId, {
+            thread,
+            buffer: [],
+            flushTimer: null,
+            lastSendTime: Date.now(),
+        });
+        await thread.send(`Agent **${agentName}** is processing...`);
+        log('INFO', `Created log thread for ${messageId} (${agentName})`);
+    } catch (err) {
+        log('ERROR', `Failed to create log thread: ${(err as Error).message}`);
+    }
+}
+
+function handleStreamLog(data: any): void {
+    const { messageId, content } = data;
+    if (!content) return;
+    const entry = activeLogThreads.get(messageId);
+    if (!entry) return;
+
+    entry.buffer.push(content);
+    scheduleFlush(messageId);
+}
+
+async function handleStreamEnd(data: any): Promise<void> {
+    const { messageId, agentName } = data;
+    const entry = activeLogThreads.get(messageId);
+    if (!entry) return;
+
+    // Flush remaining buffer
+    if (entry.flushTimer) {
+        clearTimeout(entry.flushTimer);
+        entry.flushTimer = null;
+    }
+    await flushLogBuffer(messageId);
+
+    try {
+        await entry.thread.send(`Agent **${agentName || 'Agent'}** finished.`);
+    } catch {
+        // ignore
+    }
+
+    activeLogThreads.delete(messageId);
+}
+
+/**
+ * Connect to the queue processor's SSE endpoint to receive real-time stream events.
+ * Reconnects automatically on disconnect.
+ */
+function connectSSE(): void {
+    let reconnectDelay = 2000;
+
+    function connect(): void {
+        const req = http.get(`${API_BASE}/api/events/stream`, (res) => {
+            if (res.statusCode !== 200) {
+                res.resume();
+                scheduleReconnect();
+                return;
+            }
+
+            reconnectDelay = 2000; // reset on successful connect
+            log('INFO', 'SSE connected to queue processor');
+            res.setEncoding('utf8');
+
+            let eventType = '';
+            let dataLines: string[] = [];
+
+            res.on('data', (chunk: string) => {
+                const lines = chunk.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        eventType = line.slice(7).trim();
+                    } else if (line.startsWith('data: ')) {
+                        dataLines.push(line.slice(6));
+                    } else if (line === '') {
+                        // End of SSE message
+                        if (eventType && dataLines.length > 0) {
+                            try {
+                                const payload = JSON.parse(dataLines.join('\n'));
+                                if (eventType === 'stream_start') {
+                                    log('INFO', `SSE stream_start: messageId=${payload.messageId} agent=${payload.agentName}`);
+                                    handleStreamStart(payload).catch(err => log('ERROR', `handleStreamStart error: ${(err as Error).message}`));
+                                } else if (eventType === 'stream_log') {
+                                    handleStreamLog(payload);
+                                } else if (eventType === 'stream_end') {
+                                    log('INFO', `SSE stream_end: messageId=${payload.messageId}`);
+                                    handleStreamEnd(payload).catch(err => log('ERROR', `handleStreamEnd error: ${(err as Error).message}`));
+                                }
+                            } catch (err) {
+                                log('ERROR', `SSE parse error: ${(err as Error).message}`);
+                            }
+                        }
+                        eventType = '';
+                        dataLines = [];
+                    }
+                }
+            });
+
+            res.on('end', () => {
+                scheduleReconnect();
+            });
+
+            res.on('error', () => {
+                scheduleReconnect();
+            });
+        });
+
+        req.on('error', () => {
+            scheduleReconnect();
+        });
+    }
+
+    function scheduleReconnect(): void {
+        const delay = Math.min(reconnectDelay, 5000);
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 5000);
+        setTimeout(connect, delay);
+    }
+
+    connect();
+}
+
+// Clean up stale log threads every 5 minutes
+setInterval(() => {
+    for (const [messageId, entry] of activeLogThreads.entries()) {
+        if (!pendingMessages.has(messageId) && Date.now() - entry.lastSendTime > 5 * 60 * 1000) {
+            if (entry.flushTimer) clearTimeout(entry.flushTimer);
+            activeLogThreads.delete(messageId);
+        }
+    }
+}, 5 * 60 * 1000);
 
 // Logger
 function log(level: string, message: string): void {
@@ -476,6 +673,13 @@ client.on(Events.MessageCreate, async (message: Message) => {
             }
         }
 
+        // Store pending message BEFORE enqueuing so SSE stream_start can find it
+        pendingMessages.set(messageId, {
+            message: message,
+            channel: message.channel as DMChannel | TextChannel,
+            timestamp: Date.now(),
+        });
+
         // Write to queue via API
         await fetch(`${API_BASE}/api/message`, {
             method: 'POST',
@@ -493,17 +697,10 @@ client.on(Events.MessageCreate, async (message: Message) => {
 
         log('INFO', `Queued message ${messageId}${agent ? ` (default agent: ${agent})` : ''}`);
 
-        // Store pending message for response
-        pendingMessages.set(messageId, {
-            message: message,
-            channel: message.channel as DMChannel | TextChannel,
-            timestamp: Date.now(),
-        });
-
-        // Clean up old pending messages (older than 10 minutes)
-        const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
+        // Clean up old pending messages (older than 60 minutes)
+        const ttlAgo = Date.now() - (60 * 60 * 1000);
         for (const [id, data] of pendingMessages.entries()) {
-            if (data.timestamp < tenMinutesAgo) {
+            if (data.timestamp < ttlAgo) {
                 pendingMessages.delete(id);
             }
         }
@@ -649,4 +846,5 @@ process.on('SIGTERM', () => {
 
 // Start client
 log('INFO', 'Starting Discord client...');
+connectSSE();
 client.login(DISCORD_BOT_TOKEN);

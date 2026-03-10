@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { createInterface } from 'readline';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
@@ -177,4 +178,160 @@ export async function invokeAgent(
 
         return await runCommand('claude', claudeArgs, workingDir);
     }
+}
+
+/**
+ * Run a command and stream stdout line-by-line as data arrives.
+ * Uses `script -qec` to allocate a PTY so the child process flushes
+ * output line-by-line instead of buffering until exit.
+ * Calls onLine(line) for each complete line. Returns full output on close.
+ */
+export async function runCommandStreaming(
+    command: string,
+    args: string[],
+    cwd: string | undefined,
+    onLine: (line: string) => void
+): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const env = { ...process.env };
+        delete env.CLAUDECODE;
+
+        // Build the full command string for script -qec
+        const escapedArgs = args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ');
+        const fullCmd = `${command} ${escapedArgs}`;
+
+        const child = spawn('script', ['-qec', fullCmd, '/dev/null'], {
+            cwd: cwd || SCRIPT_DIR,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env,
+        });
+
+        let allLines = '';
+
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+
+        // With PTY via script, all output comes through stdout
+        const rl = createInterface({ input: child.stdout });
+        rl.on('line', (line) => {
+            // Filter out script control sequences and non-JSON lines
+            const trimmed = line.replace(/\r$/, '').replace(/[\x00-\x09\x0b-\x1f]|\x1b\[[^a-zA-Z]*[a-zA-Z]|\x1b\][^\x07]*\x07/g, '').trim();
+            if (!trimmed || !trimmed.startsWith('{')) return;
+            allLines += trimmed + '\n';
+            onLine(trimmed);
+        });
+
+        let stderr = '';
+        child.stderr.on('data', (chunk: string) => {
+            stderr += chunk;
+        });
+
+        child.on('error', (error) => {
+            rl.close();
+            reject(error);
+        });
+
+        child.on('close', (code) => {
+            rl.close();
+            // stream-json may exit non-zero; check if we got a result line
+            const hasResult = allLines.includes('"type":"result"');
+            if (code === 0 || hasResult) {
+                resolve(allLines);
+                return;
+            }
+            const errorMessage = stderr.trim() || allLines.trim() || `Command exited with code ${code}`;
+            reject(new Error(errorMessage));
+        });
+    });
+}
+
+/**
+ * Invoke a Claude/Anthropic agent with streaming JSON output.
+ * Each stdout line is passed to onStreamLine for real-time processing.
+ * Falls back to invokeAgent for non-Anthropic providers.
+ */
+export async function invokeAgentStreaming(
+    agent: AgentConfig,
+    agentId: string,
+    message: string,
+    workspacePath: string,
+    shouldReset: boolean,
+    agents: Record<string, AgentConfig>,
+    teams: Record<string, TeamConfig>,
+    onStreamLine: (line: string) => void
+): Promise<string> {
+    const provider = agent.provider || 'anthropic';
+
+    // Only Anthropic/Claude supports stream-json; fall back for others
+    if (provider !== 'anthropic') {
+        return invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+    }
+
+    // Ensure agent directory exists with config files
+    const agentDir = path.join(workspacePath, agentId);
+    const isNewAgent = !fs.existsSync(agentDir);
+    ensureAgentDirectory(agentDir);
+    if (isNewAgent) {
+        log('INFO', `Initialized agent directory with config files: ${agentDir}`);
+    }
+
+    // Update AGENTS.md with current teammate info
+    updateAgentTeammates(agentDir, agentId, agents, teams);
+
+    // Resolve working directory
+    const workingDir = agent.working_directory
+        ? (path.isAbsolute(agent.working_directory)
+            ? agent.working_directory
+            : path.join(workspacePath, agent.working_directory))
+        : agentDir;
+
+    log('INFO', `Using Claude provider with streaming (agent: ${agentId})`);
+
+    const continueConversation = !shouldReset;
+    if (shouldReset) {
+        log('INFO', `🔄 Resetting conversation for agent: ${agentId}`);
+    }
+
+    const modelId = resolveClaudeModel(agent.model);
+    const claudeArgs = ['--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'];
+    if (modelId) {
+        claudeArgs.push('--model', modelId);
+    }
+    if (continueConversation) {
+        claudeArgs.push('-c');
+    }
+    claudeArgs.push('-p', message);
+
+    const fullOutput = await runCommandStreaming('claude', claudeArgs, workingDir, onStreamLine);
+
+    // Extract final response from the result line
+    const lines = fullOutput.trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+            const json = JSON.parse(lines[i]);
+            if (json.type === 'result' && json.subtype === 'success' && json.result) {
+                return json.result;
+            }
+        } catch {
+            // not JSON, skip
+        }
+    }
+
+    // Fallback: look for the last assistant text content
+    for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+            const json = JSON.parse(lines[i]);
+            if (json.type === 'assistant' && Array.isArray(json.content)) {
+                for (const block of json.content) {
+                    if (block.type === 'text' && block.text) {
+                        return block.text;
+                    }
+                }
+            }
+        } catch {
+            // not JSON, skip
+        }
+    }
+
+    return fullOutput;
 }

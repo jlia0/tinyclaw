@@ -5,6 +5,14 @@ export interface AgentConfig {
     working_directory: string;
     system_prompt?: string;
     prompt_file?: string;
+    stream_logs?: boolean;
+}
+
+export interface StreamLogEvent {
+    messageId: string;
+    agentId: string;
+    agentName: string;
+    content: string | null;
 }
 
 export interface TeamConfig {

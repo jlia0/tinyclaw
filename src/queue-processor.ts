@@ -23,7 +23,7 @@ import {
 } from './lib/config';
 import { log, emitEvent } from './lib/logging';
 import { parseAgentRouting, findTeamForAgent, getAgentResetFlag, extractTeammateMentions, parseResponseHandoff } from './lib/routing';
-import { invokeAgent } from './lib/invoke';
+import { invokeAgent, invokeAgentStreaming } from './lib/invoke';
 import { startApiServer } from './server';
 import {
     initQueueDb, claimNextMessage, completeMessage as dbCompleteMessage,
@@ -37,6 +37,66 @@ import {
 } from './lib/conversation';
 
 const MAX_HANDOFF_DEPTH = 5;
+
+/**
+ * Parse a stream-json line from Claude CLI and return a human-readable string,
+ * or null to skip the event.
+ */
+function formatStreamEvent(line: string): string | null {
+    let json: any;
+    try {
+        json = JSON.parse(line);
+    } catch {
+        return null;
+    }
+
+    // stream-json wraps content inside json.message.content
+    const content = json.message?.content ?? json.content;
+
+    // Tool use events from assistant
+    if (json.type === 'assistant' && Array.isArray(content)) {
+        const parts: string[] = [];
+        for (const block of content) {
+            if (block.type === 'tool_use') {
+                const name = block.name || 'unknown';
+                const input = block.input || {};
+                // Build a short description from the input
+                let detail = '';
+                if (input.command) {
+                    detail = ` \`${String(input.command).substring(0, 120)}\``;
+                } else if (input.description) {
+                    detail = ` (${String(input.description).substring(0, 120)})`;
+                } else if (input.pattern) {
+                    detail = ` \`${input.pattern}\``;
+                } else if (input.file_path) {
+                    detail = ` \`${input.file_path}\``;
+                }
+                parts.push(`Tool: \`${name}\`${detail}`);
+            }
+        }
+        return parts.length > 0 ? parts.join('\n') : null;
+    }
+
+    // Tool result events from user
+    if (json.type === 'user' && Array.isArray(content)) {
+        for (const block of content) {
+            if (block.type === 'tool_result') {
+                // tool_result content can be a string or nested in the top-level tool_use_result
+                const resultText = typeof block.content === 'string'
+                    ? block.content
+                    : (Array.isArray(block.content)
+                        ? block.content.map((c: any) => c.text || '').join('')
+                        : (json.tool_use_result?.stdout || ''));
+                if (!resultText) return null;
+                const preview = resultText.length > 200 ? resultText.substring(0, 200) + '...' : resultText;
+                // Escape backticks to avoid breaking Discord formatting
+                return `Result: ${preview.replace(/`/g, "'")}`;
+            }
+        }
+    }
+
+    return null;
+}
 
 // Ensure directories exist
 [FILES_DIR, path.dirname(LOG_FILE), CHATS_DIR].forEach(dir => {
@@ -160,10 +220,27 @@ async function processMessage(dbMsg: DbMessage): Promise<void> {
         // Invoke agent
         emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: messageData.fromAgent || null });
         let response: string;
+        const provider = agent.provider || 'anthropic';
+        const useStreaming = agent.stream_logs === true && provider === 'anthropic';
+
         try {
-            response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+            if (useStreaming) {
+                // Streaming path: emit real-time log events
+                emitEvent('stream_start', { messageId, agentId, agentName: agent.name });
+                response = await invokeAgentStreaming(agent, agentId, message, workspacePath, shouldReset, agents, teams, (line) => {
+                    const formatted = formatStreamEvent(line);
+                    if (formatted) {
+                        emitEvent('stream_log', { messageId, agentId, agentName: agent.name, content: formatted });
+                    }
+                });
+                emitEvent('stream_end', { messageId, agentId, agentName: agent.name });
+            } else {
+                response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+            }
         } catch (error) {
-            const provider = agent.provider || 'anthropic';
+            if (useStreaming) {
+                emitEvent('stream_end', { messageId, agentId, agentName: agent.name });
+            }
             const providerLabel = provider === 'openai' ? 'Codex' : provider === 'opencode' ? 'OpenCode' : 'Claude';
             log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
             response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
