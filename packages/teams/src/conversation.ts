@@ -264,7 +264,7 @@ export async function handleTeamResponse(params: {
     await streamResponse(response, {
         channel, sender, senderId: data.senderId ?? undefined,
         messageId, originalMessage: data.message, agentId,
-        transform: convertTagsToReadable,
+        transform: (text) => convertTagsToReadable(text, agentId),
     });
 
     // Check for teammate mentions — forward to teammates if under message limit

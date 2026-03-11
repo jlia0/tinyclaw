@@ -78,18 +78,20 @@ export function stripBracketTags(text: string, prefix: '@' | '#'): string {
 }
 
 /**
- * Convert [@agent: message] tags to readable format (-> @agent: message).
+ * Convert [@agent: message] tags to readable format (@from → @to: message).
  * Uses bracket-depth parsing to handle nested brackets correctly.
+ * When `fromAgent` is provided, formats as `@from → @to: message`.
  */
-export function convertTagsToReadable(text: string): string {
+export function convertTagsToReadable(text: string, fromAgent?: string): string {
     const tags = extractBracketTags(text, '@');
     if (tags.length === 0) return text;
 
+    const prefix = fromAgent ? `@${fromAgent} → ` : '→ ';
     let result = '';
     let lastEnd = 0;
     for (const tag of tags) {
         result += text.substring(lastEnd, tag.start);
-        result += `→ @${tag.id}: ${tag.message}`;
+        result += `${prefix}@${tag.id}: ${tag.message}`;
         lastEnd = tag.end;
     }
     result += text.substring(lastEnd);
