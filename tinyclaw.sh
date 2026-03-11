@@ -12,15 +12,8 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # TINYCLAW_HOME = data directory (settings, queue, logs, etc.)
-# - Installed CLI sets this to ~/.tinyclaw via bin/tinyclaw
-# - Local dev: detect from local .tinyclaw/ or fall back to ~/.tinyclaw
-if [ -z "$TINYCLAW_HOME" ]; then
-    if [ -f "$SCRIPT_DIR/.tinyclaw/settings.json" ]; then
-        TINYCLAW_HOME="$SCRIPT_DIR/.tinyclaw"
-    else
-        TINYCLAW_HOME="$HOME/.tinyclaw"
-    fi
-fi
+# Always defaults to ~/.tinyclaw; override via TINYCLAW_HOME env var.
+TINYCLAW_HOME="${TINYCLAW_HOME:-$HOME/.tinyclaw}"
 
 TMUX_SESSION="tinyclaw"
 LOG_DIR="$TINYCLAW_HOME/logs"
