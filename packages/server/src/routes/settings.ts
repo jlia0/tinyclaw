@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { Hono } from 'hono';
 import { Settings } from '@tinyclaw/core';
@@ -14,6 +15,17 @@ export function mutateSettings(fn: (settings: Settings) => void): Settings {
 }
 
 const app = new Hono();
+
+function expandHomePath(input?: string): string | undefined {
+    if (!input) return input;
+    const home = process.env.HOME || os.homedir();
+    if (!home) return input;
+    if (input === '~') return home;
+    if (input.startsWith('~/')) return path.join(home, input.slice(2));
+    if (input === '$HOME') return home;
+    if (input.startsWith('$HOME/')) return path.join(home, input.slice(6));
+    return input;
+}
 
 // GET /api/settings
 app.get('/api/settings', (c) => {
@@ -33,6 +45,17 @@ app.put('/api/settings', async (c) => {
 // POST /api/setup — run initial setup (write settings + create directories)
 app.post('/api/setup', async (c) => {
     const settings = (await c.req.json()) as Settings;
+
+    if (settings.workspace?.path) {
+        settings.workspace.path = expandHomePath(settings.workspace.path);
+    }
+    if (settings.agents) {
+        for (const agent of Object.values(settings.agents)) {
+            if (agent.working_directory) {
+                agent.working_directory = expandHomePath(agent.working_directory) || agent.working_directory;
+            }
+        }
+    }
 
     // Write settings.json
     fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
