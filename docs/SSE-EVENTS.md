@@ -165,4 +165,4 @@ All agent messages (both user inputs and agent responses) are persisted to the `
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/agent-messages` | All messages across all agents. Query: `?limit=100&since_id=0` |
-| `GET /api/agents/:id/messages` | Messages for a specific agent. Query: `?limit=100&since_id=0&channel=whatsapp` |
+| `GET /api/agents/:id/messages` | Messages for a specific agent. Query: `?limit=100&since_id=0` |

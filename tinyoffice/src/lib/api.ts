@@ -157,14 +157,12 @@ export async function sendMessage(payload: {
 export async function getAgentMessages(
   agentId: string,
   limit = 100,
-  sinceId = 0,
-  channel?: string
+  sinceId = 0
 ): Promise<AgentMessage[]> {
   const params = new URLSearchParams({
     limit: String(limit),
     since_id: String(sinceId),
   });
-  if (channel) params.set("channel", channel);
   return apiFetch(`/api/agents/${encodeURIComponent(agentId)}/messages?${params.toString()}`);
 }
 

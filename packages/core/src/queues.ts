@@ -60,7 +60,6 @@ export function initQueueDb(): void {
         CREATE INDEX IF NOT EXISTS idx_resp_channel ON responses(channel, status);
         CREATE INDEX IF NOT EXISTS idx_chat_team ON chat_messages(team_id, id);
         CREATE INDEX IF NOT EXISTS idx_agent_messages_agent ON agent_messages(agent_id, created_at);
-        CREATE INDEX IF NOT EXISTS idx_agent_messages_channel ON agent_messages(channel, agent_id, created_at);
     `);
 
     // Migrate: add metadata column to responses if missing (for existing databases)
@@ -204,12 +203,6 @@ export function getAgentMessages(agentId: string, limit = 100, sinceId = 0): any
     return getDb().prepare(
         `SELECT * FROM agent_messages WHERE agent_id=? AND id>? ORDER BY created_at DESC LIMIT ?`
     ).all(agentId, sinceId, limit);
-}
-
-export function getAgentMessagesByChannel(agentId: string, channel: string, limit = 100): any[] {
-    return getDb().prepare(
-        `SELECT * FROM agent_messages WHERE agent_id=? AND channel=? ORDER BY created_at DESC LIMIT ?`
-    ).all(agentId, channel, limit);
 }
 
 export function getAllAgentMessages(limit = 100, sinceId = 0): any[] {

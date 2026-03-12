@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { getAgentMessages, getAgentMessagesByChannel, getAllAgentMessages } from '@tinyclaw/core';
+import { getAgentMessages, getAllAgentMessages } from '@tinyclaw/core';
 
 const app = new Hono();
 
@@ -13,13 +13,9 @@ app.get('/api/agent-messages', (c) => {
 // GET /api/agents/:id/messages — messages for a specific agent
 app.get('/api/agents/:id/messages', (c) => {
     const agentId = c.req.param('id');
-    const channel = c.req.query('channel');
     const limit = parseInt(c.req.query('limit') || '100', 10);
     const sinceId = parseInt(c.req.query('since_id') || '0', 10);
 
-    if (channel) {
-        return c.json(getAgentMessagesByChannel(agentId, channel, limit));
-    }
     return c.json(getAgentMessages(agentId, limit, sinceId));
 });
 
