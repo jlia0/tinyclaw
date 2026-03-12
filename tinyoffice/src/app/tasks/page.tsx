@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import type { UniqueIdentifier } from "@dnd-kit/core";
 import { usePolling } from "@/lib/hooks";
 import {
   getTasks, createTask, updateTask, deleteTask, reorderTasks, sendMessage,
-  getAgents, getTeams,
-  type Task, type TaskStatus, type AgentConfig, type TeamConfig,
+  getAgents, getTeams, getProjects,
+  type Task, type TaskStatus, type AgentConfig, type TeamConfig, type Project,
 } from "@/lib/api";
 import {
   Kanban, KanbanBoard, KanbanColumn, KanbanItem, KanbanItemHandle, KanbanOverlay,
@@ -19,7 +20,7 @@ import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
   ClipboardList, Plus, GripVertical, Bot, Users, X, Check, Loader2,
-  Trash2, Send, Clock,
+  Trash2, Send, Clock, FolderKanban,
 } from "lucide-react";
 
 const COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
@@ -34,19 +35,32 @@ interface TaskForm {
   description: string;
   assignee: string;
   assigneeType: "agent" | "team" | "";
+  projectId: string;
 }
 
-const emptyForm: TaskForm = { title: "", description: "", assignee: "", assigneeType: "" };
+const emptyForm: TaskForm = { title: "", description: "", assignee: "", assigneeType: "", projectId: "" };
 
 export default function TasksPage() {
+  const searchParams = useSearchParams();
+  const projectFilter = searchParams.get("project") || "";
+
   const { data: tasks, refresh } = usePolling<Task[]>(getTasks, 3000);
   const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
   const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 5000);
+  const { data: projects } = usePolling<Project[]>(getProjects, 5000);
 
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState<TaskForm>({ ...emptyForm });
+  const [form, setForm] = useState<TaskForm>({ ...emptyForm, projectId: projectFilter });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [activeProjectFilter, setActiveProjectFilter] = useState(projectFilter);
+
+  // Filter tasks by project if filter is active
+  const filteredTasks = useMemo(() => {
+    if (!tasks) return null;
+    if (!activeProjectFilter) return tasks;
+    return tasks.filter(t => t.projectId === activeProjectFilter);
+  }, [tasks, activeProjectFilter]);
 
   // Build kanban value: columns → task items
   const columns = useMemo(() => {
@@ -56,14 +70,14 @@ export default function TasksPage() {
       review: [],
       done: [],
     };
-    if (tasks) {
-      for (const task of tasks) {
+    if (filteredTasks) {
+      for (const task of filteredTasks) {
         const col = cols[task.status];
         if (col) col.push(task);
       }
     }
     return cols;
-  }, [tasks]);
+  }, [filteredTasks]);
 
   const handleValueChange = useCallback(
     async (newColumns: Record<UniqueIdentifier, Task[]>) => {
@@ -108,9 +122,10 @@ export default function TasksPage() {
         description: form.description.trim(),
         assignee: form.assignee,
         assigneeType: form.assigneeType,
+        projectId: form.projectId || undefined,
         status: "backlog",
       });
-      setForm({ ...emptyForm });
+      setForm({ ...emptyForm, projectId: activeProjectFilter });
       setCreating(false);
       refresh();
     } catch (err) {
@@ -118,7 +133,7 @@ export default function TasksPage() {
     } finally {
       setSaving(false);
     }
-  }, [form, refresh]);
+  }, [form, refresh, activeProjectFilter]);
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -161,6 +176,8 @@ export default function TasksPage() {
     }));
   };
 
+  const activeProject = projects?.find(p => p.id === activeProjectFilter);
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -174,16 +191,55 @@ export default function TasksPage() {
             Assign and track work across agents
           </p>
         </div>
-        <Button onClick={() => setCreating(true)} disabled={creating}>
-          <Plus className="h-4 w-4" />
-          New Task
-        </Button>
+        <div className="flex items-center gap-3">
+          {/* Project filter */}
+          {projects && projects.length > 0 && (
+            <div className="flex items-center gap-2">
+              <FolderKanban className="h-3.5 w-3.5 text-muted-foreground" />
+              <Select
+                value={activeProjectFilter}
+                onChange={(e) => setActiveProjectFilter(e.target.value)}
+                className="text-sm w-48"
+              >
+                <option value="">All Projects</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </Select>
+              {activeProjectFilter && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setActiveProjectFilter("")}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+          )}
+          <Button onClick={() => setCreating(true)} disabled={creating}>
+            <Plus className="h-4 w-4" />
+            New Task
+          </Button>
+        </div>
       </div>
+
+      {/* Active project banner */}
+      {activeProject && (
+        <div className="flex items-center gap-2 px-6 py-2 bg-primary/5 border-b">
+          <FolderKanban className="h-3.5 w-3.5 text-primary" />
+          <span className="text-xs font-medium text-primary">{activeProject.name}</span>
+          {activeProject.description && (
+            <span className="text-xs text-muted-foreground">&mdash; {activeProject.description}</span>
+          )}
+        </div>
+      )}
 
       {/* New task form */}
       {creating && (
         <div className="border-b px-6 py-4 bg-card space-y-3">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
             <Input
               placeholder="Task title"
               value={form.title}
@@ -208,6 +264,15 @@ export default function TasksPage() {
                   </option>
                 ))}
             </Select>
+            <Select
+              value={form.projectId}
+              onChange={(e) => setForm((f) => ({ ...f, projectId: e.target.value }))}
+            >
+              <option value="">No Project</option>
+              {projects && projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </Select>
           </div>
           <Textarea
             placeholder="Description (optional)"
@@ -226,7 +291,7 @@ export default function TasksPage() {
               variant="ghost"
               onClick={() => {
                 setCreating(false);
-                setForm({ ...emptyForm });
+                setForm({ ...emptyForm, projectId: activeProjectFilter });
                 setError("");
               }}
               disabled={saving}
@@ -268,6 +333,7 @@ export default function TasksPage() {
                       task={task}
                       agents={agents || {}}
                       teams={teams || {}}
+                      projects={projects || []}
                       onDelete={handleDelete}
                       onAssign={handleAssign}
                     />
@@ -280,7 +346,7 @@ export default function TasksPage() {
           <KanbanOverlay>
             {({ value, variant }) => {
               if (variant === "column") return null;
-              const task = tasks?.find((t) => t.id === value);
+              const task = filteredTasks?.find((t) => t.id === value);
               if (!task) return null;
               return (
                 <TaskCardOverlay
@@ -301,16 +367,19 @@ function TaskCard({
   task,
   agents,
   teams,
+  projects,
   onDelete,
   onAssign,
 }: {
   task: Task;
   agents: Record<string, AgentConfig>;
   teams: Record<string, TeamConfig>;
+  projects: Project[];
   onDelete: (id: string) => void;
   onAssign: (task: Task) => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const project = task.projectId ? projects.find(p => p.id === task.projectId) : null;
 
   return (
     <KanbanItem value={task.id} asHandle={false}>
@@ -347,6 +416,12 @@ function TaskCard({
                 </Badge>
               ) : (
                 <span className="text-[10px] text-muted-foreground/60">Unassigned</span>
+              )}
+              {project && (
+                <Badge variant="outline" className="text-[10px] flex items-center gap-1">
+                  <FolderKanban className="h-2.5 w-2.5" />
+                  {project.name}
+                </Badge>
               )}
             </div>
 

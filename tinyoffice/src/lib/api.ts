@@ -150,6 +150,7 @@ export interface Task {
   status: TaskStatus;
   assignee: string;
   assigneeType: "agent" | "team" | "";
+  projectId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -172,6 +173,125 @@ export async function deleteTask(id: string): Promise<{ ok: boolean }> {
 
 export async function reorderTasks(columns: Record<string, string[]>): Promise<{ ok: boolean }> {
   return apiFetch("/api/tasks/reorder", { method: "PUT", body: JSON.stringify({ columns }) });
+}
+
+// ── Chat Rooms ───────────────────────────────────────────────────────────
+
+export interface ChatRoom {
+  id: string;
+  name: string;
+  description: string;
+  members: string[];       // agent IDs and/or team IDs
+  createdAt: number;
+  updatedAt: number;
+}
+
+function getRoomsFromStorage(): ChatRoom[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem("tinyclaw_rooms") || "[]");
+  } catch { return []; }
+}
+
+function saveRoomsToStorage(rooms: ChatRoom[]): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("tinyclaw_rooms", JSON.stringify(rooms));
+}
+
+export async function getChatRooms(): Promise<ChatRoom[]> {
+  return getRoomsFromStorage();
+}
+
+export async function createChatRoom(room: Omit<ChatRoom, "id" | "createdAt" | "updatedAt">): Promise<ChatRoom> {
+  const rooms = getRoomsFromStorage();
+  const newRoom: ChatRoom = {
+    ...room,
+    id: room.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `room-${Date.now()}`,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  // Ensure unique ID
+  if (rooms.find(r => r.id === newRoom.id)) {
+    newRoom.id = `${newRoom.id}-${Date.now().toString(36).slice(-4)}`;
+  }
+  rooms.push(newRoom);
+  saveRoomsToStorage(rooms);
+  return newRoom;
+}
+
+export async function updateChatRoom(id: string, updates: Partial<ChatRoom>): Promise<ChatRoom> {
+  const rooms = getRoomsFromStorage();
+  const idx = rooms.findIndex(r => r.id === id);
+  if (idx === -1) throw new Error("Room not found");
+  rooms[idx] = { ...rooms[idx], ...updates, updatedAt: Date.now() };
+  saveRoomsToStorage(rooms);
+  return rooms[idx];
+}
+
+export async function deleteChatRoom(id: string): Promise<void> {
+  const rooms = getRoomsFromStorage().filter(r => r.id !== id);
+  saveRoomsToStorage(rooms);
+}
+
+// ── Projects ─────────────────────────────────────────────────────────────
+
+export type ProjectStatus = "active" | "paused" | "completed" | "archived";
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  status: ProjectStatus;
+  agents: string[];        // assigned agent IDs
+  teams: string[];         // assigned team IDs
+  createdAt: number;
+  updatedAt: number;
+}
+
+function getProjectsFromStorage(): Project[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem("tinyclaw_projects") || "[]");
+  } catch { return []; }
+}
+
+function saveProjectsToStorage(projects: Project[]): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("tinyclaw_projects", JSON.stringify(projects));
+}
+
+export async function getProjects(): Promise<Project[]> {
+  return getProjectsFromStorage();
+}
+
+export async function createProject(project: Omit<Project, "id" | "createdAt" | "updatedAt">): Promise<Project> {
+  const projects = getProjectsFromStorage();
+  const newProject: Project = {
+    ...project,
+    id: project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `proj-${Date.now()}`,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  if (projects.find(p => p.id === newProject.id)) {
+    newProject.id = `${newProject.id}-${Date.now().toString(36).slice(-4)}`;
+  }
+  projects.push(newProject);
+  saveProjectsToStorage(projects);
+  return newProject;
+}
+
+export async function updateProject(id: string, updates: Partial<Project>): Promise<Project> {
+  const projects = getProjectsFromStorage();
+  const idx = projects.findIndex(p => p.id === id);
+  if (idx === -1) throw new Error("Project not found");
+  projects[idx] = { ...projects[idx], ...updates, updatedAt: Date.now() };
+  saveProjectsToStorage(projects);
+  return projects[idx];
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  const projects = getProjectsFromStorage().filter(p => p.id !== id);
+  saveProjectsToStorage(projects);
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────

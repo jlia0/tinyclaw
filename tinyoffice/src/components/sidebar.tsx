@@ -5,20 +5,20 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { usePolling } from "@/lib/hooks";
 import {
-  getAgents, getTeams, type AgentConfig, type TeamConfig,
+  getAgents, getChatRooms, type AgentConfig, type ChatRoom,
 } from "@/lib/api";
 import {
-  Zap, Plus, Users, LayoutDashboard, ScrollText,
+  Zap, Plus, LayoutDashboard, ScrollText,
   Settings, SlidersHorizontal, ClipboardList, Building2,
+  Hash, FolderKanban,
 } from "lucide-react";
 
 export function Sidebar() {
   const pathname = usePathname();
   const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
-  const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 5000);
+  const { data: rooms } = usePolling<ChatRoom[]>(getChatRooms, 3000);
 
   const agentEntries = agents ? Object.entries(agents) : [];
-  const teamEntries = teams ? Object.entries(teams) : [];
 
   return (
     <aside className="flex h-screen w-64 flex-col border-r bg-card">
@@ -48,6 +48,7 @@ export function Sidebar() {
           { href: "/", label: "Dashboard", icon: LayoutDashboard },
           { href: "/office", label: "Office", icon: Building2 },
           { href: "/tasks", label: "Tasks", icon: ClipboardList },
+          { href: "/projects", label: "Projects", icon: FolderKanban },
           { href: "/logs", label: "Logs", icon: ScrollText },
         ].map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -69,7 +70,7 @@ export function Sidebar() {
         })}
       </div>
 
-      {/* Scrollable agent/team list */}
+      {/* Scrollable agent/room list */}
       <div className="flex-1 overflow-y-auto px-3 pb-2">
         {/* Agents */}
         <div className="pt-3">
@@ -128,28 +129,28 @@ export function Sidebar() {
           </div>
         </div>
 
-        {/* Teams */}
+        {/* Chat Rooms */}
         <div className="pt-4">
           <div className="flex items-center justify-between px-2 mb-1">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Teams
+              Chat Rooms
             </span>
             <Link
-              href="/teams"
+              href="/rooms"
               className="text-muted-foreground hover:text-foreground transition-colors p-0.5"
-              title="Manage teams"
+              title="Manage rooms"
             >
               <SlidersHorizontal className="h-3 w-3" />
             </Link>
           </div>
           <div className="space-y-0.5">
-            {teamEntries.length > 0 ? (
-              teamEntries.map(([id, team]) => {
-                const href = `/chat/team/${id}`;
+            {rooms && rooms.length > 0 ? (
+              rooms.map((room) => {
+                const href = `/rooms/${room.id}`;
                 const active = pathname === href;
                 return (
                   <Link
-                    key={id}
+                    key={room.id}
                     href={href}
                     className={cn(
                       "flex items-center gap-2.5 px-2 py-1.5 text-sm transition-colors group",
@@ -162,12 +163,12 @@ export function Sidebar() {
                       "flex h-6 w-6 items-center justify-center shrink-0",
                       active ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground"
                     )}>
-                      <Users className="h-3 w-3" />
+                      <Hash className="h-3 w-3" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm leading-tight">{team.name}</p>
+                      <p className="truncate text-sm leading-tight">{room.name}</p>
                       <p className="truncate text-[10px] text-muted-foreground leading-tight">
-                        {team.agents.length} agent{team.agents.length !== 1 ? "s" : ""}
+                        {room.members.length === 0 ? "all agents" : `${room.members.length} member${room.members.length !== 1 ? "s" : ""}`}
                       </p>
                     </div>
                   </Link>
@@ -175,11 +176,11 @@ export function Sidebar() {
               })
             ) : (
               <Link
-                href="/teams"
+                href="/rooms"
                 className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Plus className="h-3 w-3" />
-                Add team
+                Add room
               </Link>
             )}
           </div>
