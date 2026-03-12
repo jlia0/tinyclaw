@@ -67,7 +67,7 @@ start_daemon() {
     elif [ $load_rc -ne 0 ]; then
         echo -e "${YELLOW}No configuration found. Running setup wizard...${NC}"
         echo ""
-        "$SCRIPT_DIR/lib/setup-wizard.sh"
+        node "$SCRIPT_DIR/packages/cli/dist/setup-wizard.js"
 
         if ! load_settings; then
             echo -e "${RED}Setup failed or was cancelled${NC}"

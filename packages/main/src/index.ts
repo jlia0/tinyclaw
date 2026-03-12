@@ -22,7 +22,11 @@ import {
     closeQueueDb, queueEvents,
 } from '@tinyclaw/core';
 import { startApiServer } from '@tinyclaw/server';
-import { conversations, handleTeamResponse } from '@tinyclaw/teams';
+import {
+    conversations,
+    handleTeamResponse,
+    groupChatroomMessages,
+} from '@tinyclaw/teams';
 
 // Ensure directories exist
 [FILES_DIR, path.dirname(LOG_FILE), CHATS_DIR].forEach(dir => {
@@ -154,13 +158,20 @@ async function processQueue(): Promise<void> {
 
         const currentChain = agentChains.get(agentId) || Promise.resolve();
         const newChain = currentChain.then(async () => {
-            for (const msg of messages) {
+            const { messages: groupedMessages, messageIds } = groupChatroomMessages(messages);
+            for (let i = 0; i < groupedMessages.length; i++) {
+                const msg = groupedMessages[i];
+                const ids = messageIds[i];
                 try {
                     await processMessage(msg);
-                    completeMessage(msg.id);
+                    for (const id of ids) {
+                        completeMessage(id);
+                    }
                 } catch (error) {
                     log('ERROR', `Failed to process message ${msg.id}: ${(error as Error).message}`);
-                    failMessage(msg.id, (error as Error).message);
+                    for (const id of ids) {
+                        failMessage(id, (error as Error).message);
+                    }
                 }
             }
         });

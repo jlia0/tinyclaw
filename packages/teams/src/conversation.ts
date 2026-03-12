@@ -3,7 +3,7 @@ import path from 'path';
 import {
     Conversation, MessageJobData, AgentConfig, TeamConfig,
     CHATS_DIR, getSettings, getAgents,
-    log, emitEvent,
+    log, emitEvent, insertChatMessage,
     collectFiles, findTeamForAgent,
     enqueueMessage, streamResponse,
 } from '@tinyclaw/core';
@@ -93,8 +93,9 @@ export function postToChatRoom(
     message: string,
     teamAgents: string[],
     originalData: { channel: string; sender: string; senderId?: string | null; messageId: string }
-): void {
+): number {
     const chatMsg = `[Chat room #${teamId} — @${fromAgent}]:\n${message}`;
+    const id = insertChatMessage(teamId, fromAgent, message);
     // Enqueue for every teammate (except the sender)
     for (const agentId of teamAgents) {
         if (agentId === fromAgent) continue;
@@ -110,6 +111,7 @@ export function postToChatRoom(
         });
     }
     log('DEBUG', `Chat room message: @${fromAgent} → #${teamId} (${teamAgents.length - 1} teammate(s))`);
+    return id;
 }
 
 /**

@@ -8,8 +8,9 @@ import {
   getAgents, getTeams, type AgentConfig, type TeamConfig,
 } from "@/lib/api";
 import {
-  Zap, Plus, Users, LayoutDashboard, ScrollText,
+  Zap, Plus, Hash, LayoutDashboard, ScrollText,
   Settings, SlidersHorizontal, ClipboardList, Building2,
+  FolderKanban,
 } from "lucide-react";
 
 export function Sidebar() {
@@ -48,6 +49,7 @@ export function Sidebar() {
           { href: "/", label: "Dashboard", icon: LayoutDashboard },
           { href: "/office", label: "Office", icon: Building2 },
           { href: "/tasks", label: "Tasks", icon: ClipboardList },
+          { href: "/projects", label: "Projects", icon: FolderKanban },
           { href: "/logs", label: "Logs", icon: ScrollText },
         ].map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -128,11 +130,11 @@ export function Sidebar() {
           </div>
         </div>
 
-        {/* Teams */}
+        {/* Chat Rooms */}
         <div className="pt-4">
           <div className="flex items-center justify-between px-2 mb-1">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Teams
+              Chat Rooms
             </span>
             <Link
               href="/teams"
@@ -152,23 +154,18 @@ export function Sidebar() {
                     key={id}
                     href={href}
                     className={cn(
-                      "flex items-center gap-2.5 px-2 py-1.5 text-sm transition-colors group",
+                      "flex items-center gap-2 px-2 py-1.5 text-sm transition-colors group",
                       active
                         ? "bg-accent text-accent-foreground"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     )}
                   >
-                    <div className={cn(
-                      "flex h-6 w-6 items-center justify-center shrink-0",
-                      active ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground"
-                    )}>
-                      <Users className="h-3 w-3" />
-                    </div>
+                    <Hash className={cn(
+                      "h-3.5 w-3.5 shrink-0",
+                      active ? "text-primary" : "text-muted-foreground"
+                    )} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm leading-tight">{team.name}</p>
-                      <p className="truncate text-[10px] text-muted-foreground leading-tight">
-                        {team.agents.length} agent{team.agents.length !== 1 ? "s" : ""}
-                      </p>
+                      <p className="truncate text-sm leading-tight">{team.name.toLowerCase().replace(/\s+/g, "-")}</p>
                     </div>
                   </Link>
                 );
@@ -179,7 +176,7 @@ export function Sidebar() {
                 className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Plus className="h-3 w-3" />
-                Add team
+                Add chat room
               </Link>
             )}
           </div>

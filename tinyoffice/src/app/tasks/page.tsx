@@ -5,8 +5,8 @@ import type { UniqueIdentifier } from "@dnd-kit/core";
 import { usePolling } from "@/lib/hooks";
 import {
   getTasks, createTask, updateTask, deleteTask, reorderTasks, sendMessage,
-  getAgents, getTeams,
-  type Task, type TaskStatus, type AgentConfig, type TeamConfig,
+  getAgents, getTeams, getProjects,
+  type Task, type TaskStatus, type AgentConfig, type TeamConfig, type Project,
 } from "@/lib/api";
 import {
   Kanban, KanbanBoard, KanbanColumn, KanbanItem, KanbanItemHandle, KanbanOverlay,
@@ -19,7 +19,7 @@ import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
   ClipboardList, Plus, GripVertical, Bot, Users, X, Check, Loader2,
-  Trash2, Send, Clock,
+  Trash2, Send, Clock, FolderKanban, Pencil,
 } from "lucide-react";
 
 const COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
@@ -34,19 +34,23 @@ interface TaskForm {
   description: string;
   assignee: string;
   assigneeType: "agent" | "team" | "";
+  projectId: string;
 }
 
-const emptyForm: TaskForm = { title: "", description: "", assignee: "", assigneeType: "" };
+const emptyForm: TaskForm = { title: "", description: "", assignee: "", assigneeType: "", projectId: "" };
 
 export default function TasksPage() {
   const { data: tasks, refresh } = usePolling<Task[]>(getTasks, 3000);
   const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
   const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 5000);
+  const { data: projects } = usePolling<Project[]>(getProjects, 5000);
 
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<TaskForm>({ ...emptyForm });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editForm, setEditForm] = useState<TaskForm>({ ...emptyForm });
 
   // Build kanban value: columns → task items
   const columns = useMemo(() => {
@@ -109,6 +113,7 @@ export default function TasksPage() {
         assignee: form.assignee,
         assigneeType: form.assigneeType,
         status: "backlog",
+        ...(form.projectId ? { projectId: form.projectId } : {}),
       });
       setForm({ ...emptyForm });
       setCreating(false);
@@ -148,6 +153,49 @@ export default function TasksPage() {
     [refresh]
   );
 
+  const openEdit = useCallback((task: Task) => {
+    setEditingTask(task);
+    setEditForm({
+      title: task.title,
+      description: task.description,
+      assignee: task.assignee || "",
+      assigneeType: task.assigneeType || "",
+      projectId: task.projectId || "",
+    });
+  }, []);
+
+  const closeEdit = useCallback(() => {
+    setEditingTask(null);
+    setEditForm({ ...emptyForm });
+  }, []);
+
+  const handleEditSave = useCallback(async () => {
+    if (!editingTask) return;
+    if (!editForm.title.trim()) {
+      setError("Title is required");
+      return;
+    }
+    const assignee = editForm.assignee ? editForm.assignee : "";
+    const assigneeType = editForm.assignee ? editForm.assigneeType : "";
+    setSaving(true);
+    setError("");
+    try {
+      await updateTask(editingTask.id, {
+        title: editForm.title.trim(),
+        description: editForm.description.trim(),
+        assignee,
+        assigneeType,
+        projectId: editForm.projectId || undefined,
+      });
+      closeEdit();
+      refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }, [editingTask, editForm, refresh, closeEdit]);
+
   const setAssignee = (value: string) => {
     if (!value) {
       setForm((f) => ({ ...f, assignee: "", assigneeType: "" }));
@@ -180,61 +228,199 @@ export default function TasksPage() {
         </Button>
       </div>
 
-      {/* New task form */}
+      {/* New task modal */}
       {creating && (
-        <div className="border-b px-6 py-4 bg-card space-y-3">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Input
-              placeholder="Task title"
-              value={form.title}
-              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-              className="md:col-span-2"
-            />
-            <Select
-              value={form.assignee ? `${form.assigneeType}:${form.assignee}` : ""}
-              onChange={(e) => setAssignee(e.target.value)}
-            >
-              <option value="">Unassigned</option>
-              {agents &&
-                Object.entries(agents).map(([id, a]) => (
-                  <option key={`agent:${id}`} value={`agent:${id}`}>
-                    Agent: {a.name}
-                  </option>
-                ))}
-              {teams &&
-                Object.entries(teams).map(([id, t]) => (
-                  <option key={`team:${id}`} value={`team:${id}`}>
-                    Team: {t.name}
-                  </option>
-                ))}
-            </Select>
-          </div>
-          <Textarea
-            placeholder="Description (optional)"
-            value={form.description}
-            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            rows={2}
-            className="text-sm resize-none"
-          />
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          <div className="flex items-center gap-2">
-            <Button onClick={handleCreate} disabled={saving}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Create
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setCreating(false);
-                setForm({ ...emptyForm });
-                setError("");
-              }}
-              disabled={saving}
-            >
-              <X className="h-4 w-4" />
-              Cancel
-            </Button>
-          </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <Card className="w-full max-w-lg border-border">
+            <CardContent className="p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold">New Task</p>
+                  <p className="text-xs text-muted-foreground">Create and assign work</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setCreating(false);
+                    setForm({ ...emptyForm });
+                    setError("");
+                  }}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Title</label>
+                <Input
+                  value={form.title}
+                  onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                  placeholder="Task title"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Description</label>
+                <Textarea
+                  value={form.description}
+                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                  rows={3}
+                  className="text-sm resize-none"
+                  placeholder="Description (optional)"
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Assignee</label>
+                  <Select
+                    value={form.assignee ? `${form.assigneeType}:${form.assignee}` : ""}
+                    onChange={(e) => setAssignee(e.target.value)}
+                  >
+                    <option value="">Unassigned</option>
+                    {agents &&
+                      Object.entries(agents).map(([id, a]) => (
+                        <option key={`agent:${id}`} value={`agent:${id}`}>
+                          Agent: {a.name}
+                        </option>
+                      ))}
+                    {teams &&
+                      Object.entries(teams).map(([id, t]) => (
+                        <option key={`team:${id}`} value={`team:${id}`}>
+                          Team: {t.name}
+                        </option>
+                      ))}
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Project</label>
+                  <Select
+                    value={form.projectId}
+                    onChange={(e) => setForm((f) => ({ ...f, projectId: e.target.value }))}
+                  >
+                    <option value="">No project</option>
+                    {projects?.filter((p) => p.status === "active").map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <div className="flex items-center gap-2">
+                <Button onClick={handleCreate} disabled={saving}>
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  Create
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setCreating(false);
+                    setForm({ ...emptyForm });
+                    setError("");
+                  }}
+                  disabled={saving}
+                >
+                  <X className="h-4 w-4" />
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Edit task modal */}
+      {editingTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <Card className="w-full max-w-lg border-border">
+            <CardContent className="p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold">Edit Task</p>
+                  <p className="text-xs text-muted-foreground">{editingTask.title}</p>
+                </div>
+                <Button variant="ghost" size="icon" onClick={closeEdit}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Title</label>
+                <Input
+                  value={editForm.title}
+                  onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Description</label>
+                <Textarea
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                  rows={3}
+                  className="text-sm resize-none"
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Assignee</label>
+                  <Select
+                    value={editForm.assignee ? `${editForm.assigneeType}:${editForm.assignee}` : ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (!value) {
+                        setEditForm((f) => ({ ...f, assignee: "", assigneeType: "" }));
+                        return;
+                      }
+                      const [type, id] = value.split(":");
+                      setEditForm((f) => ({
+                        ...f,
+                        assignee: id,
+                        assigneeType: type as "agent" | "team",
+                      }));
+                    }}
+                  >
+                    <option value="">Unassigned</option>
+                    {agents &&
+                      Object.entries(agents).map(([id, a]) => (
+                        <option key={`agent:${id}`} value={`agent:${id}`}>
+                          Agent: {a.name}
+                        </option>
+                      ))}
+                    {teams &&
+                      Object.entries(teams).map(([id, t]) => (
+                        <option key={`team:${id}`} value={`team:${id}`}>
+                          Team: {t.name}
+                        </option>
+                      ))}
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">Project</label>
+                  <Select
+                    value={editForm.projectId}
+                    onChange={(e) => setEditForm((f) => ({ ...f, projectId: e.target.value }))}
+                  >
+                    <option value="">No Project</option>
+                    {(projects || []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <div className="flex items-center gap-2">
+                <Button onClick={handleEditSave} disabled={saving}>
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  Save
+                </Button>
+                <Button variant="ghost" onClick={closeEdit} disabled={saving}>
+                  <X className="h-4 w-4" />
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -268,8 +454,10 @@ export default function TasksPage() {
                       task={task}
                       agents={agents || {}}
                       teams={teams || {}}
+                      projects={projects || []}
                       onDelete={handleDelete}
                       onAssign={handleAssign}
+                      onEdit={openEdit}
                     />
                   ))}
                 </div>
@@ -301,15 +489,20 @@ function TaskCard({
   task,
   agents,
   teams,
+  projects,
   onDelete,
   onAssign,
+  onEdit,
 }: {
   task: Task;
   agents: Record<string, AgentConfig>;
   teams: Record<string, TeamConfig>;
+  projects: Project[];
   onDelete: (id: string) => void;
   onAssign: (task: Task) => void;
+  onEdit: (task: Task) => void;
 }) {
+  const project = task.projectId ? projects.find((p) => p.id === task.projectId) : null;
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
@@ -331,6 +524,12 @@ function TaskCard({
 
           <div className="flex items-center justify-between pl-5.5">
             <div className="flex items-center gap-1.5">
+              {project && (
+                <Badge variant="outline" className="text-[10px] flex items-center gap-1">
+                  <FolderKanban className="h-2.5 w-2.5" />
+                  {project.name}
+                </Badge>
+              )}
               {task.assignee ? (
                 <Badge
                   variant="secondary"
@@ -365,6 +564,18 @@ function TaskCard({
                   <Send className="h-3 w-3" />
                 </Button>
               )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit(task);
+                }}
+                title="Edit task"
+              >
+                <Pencil className="h-3 w-3" />
+              </Button>
               {confirmDelete ? (
                 <div className="flex items-center gap-0.5">
                   <Button

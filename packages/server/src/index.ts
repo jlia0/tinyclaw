@@ -21,6 +21,7 @@ import teamsRoutes from './routes/teams';
 import settingsRoutes from './routes/settings';
 import { createQueueRoutes } from './routes/queue';
 import tasksRoutes from './routes/tasks';
+import projectsRoutes from './routes/projects';
 import logsRoutes from './routes/logs';
 import chatsRoutes from './routes/chats';
 import chatroomRoutes from './routes/chatroom';
@@ -49,6 +50,7 @@ export function startApiServer(
     app.route('/', settingsRoutes);
     app.route('/', createQueueRoutes(conversations));
     app.route('/', tasksRoutes);
+    app.route('/', projectsRoutes);
     app.route('/', logsRoutes);
     app.route('/', chatsRoutes);
     app.route('/', chatroomRoutes);

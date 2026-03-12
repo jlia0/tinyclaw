@@ -7,3 +7,4 @@
 
 export * from './routing';
 export * from './conversation';
+export * from './chatroom';

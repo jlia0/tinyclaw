@@ -1,6 +1,6 @@
 {
   "name": "tinyclaw",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "Multi-agent, multi-team, multi-channel 24/7 AI assistant",
   "workspaces": [
     "packages/*"
@@ -21,9 +21,7 @@
     "chatroom": "npm run chatroom -w @tinyclaw/visualizer"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.2.1",
     "@types/node": "^25.2.2",
-    "tailwindcss": "^4.2.1",
     "typescript": "^5.9.3"
   }
 }
