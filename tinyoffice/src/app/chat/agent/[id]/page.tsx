@@ -3,7 +3,7 @@
 import { use } from "react";
 import { usePolling } from "@/lib/hooks";
 import { getAgents, type AgentConfig } from "@/lib/api";
-import { ChatView } from "@/components/chat-view";
+import { AgentChatView } from "@/components/agent-chat-view";
 import { Badge } from "@/components/ui/badge";
 import { Bot, Cpu, FolderOpen } from "lucide-react";
 
@@ -47,9 +47,9 @@ export default function AgentChatPage({
 
       {/* Chat */}
       <div className="flex-1 min-h-0">
-        <ChatView
-          target={`@${id}`}
-          targetLabel={agent?.name || `@${id}`}
+        <AgentChatView
+          agentId={id}
+          agentName={agent?.name || `@${id}`}
         />
       </div>
     </div>

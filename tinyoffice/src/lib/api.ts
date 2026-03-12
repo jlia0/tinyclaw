@@ -72,6 +72,17 @@ export interface EventData {
   [key: string]: unknown;
 }
 
+export interface AgentMessage {
+  id: number;
+  agent_id: string;
+  role: "user" | "assistant";
+  channel: string;
+  sender: string;
+  message_id: string;
+  content: string;
+  created_at: number;
+}
+
 // ── API Functions ─────────────────────────────────────────────────────────
 
 export async function getAgents(): Promise<Record<string, AgentConfig>> {
@@ -141,6 +152,20 @@ export async function sendMessage(payload: {
   channel?: string;
 }): Promise<{ ok: boolean; messageId: string }> {
   return apiFetch("/api/message", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function getAgentMessages(
+  agentId: string,
+  limit = 100,
+  sinceId = 0,
+  channel?: string
+): Promise<AgentMessage[]> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    since_id: String(sinceId),
+  });
+  if (channel) params.set("channel", channel);
+  return apiFetch(`/api/agents/${encodeURIComponent(agentId)}/messages?${params.toString()}`);
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────
@@ -246,7 +271,8 @@ export async function deleteProject(id: string): Promise<{ ok: boolean }> {
 
 export function subscribeToEvents(
   onEvent: (event: EventData) => void,
-  onError?: (err: Event) => void
+  onError?: (err: Event) => void,
+  eventTypes?: string[]
 ): () => void {
   const es = new EventSource(`${API_BASE}/api/events/stream`);
 
@@ -255,12 +281,12 @@ export function subscribeToEvents(
   };
 
   // Listen to all known event types
-  const eventTypes = [
+  const types = eventTypes ?? [
     "message_received", "agent_routed", "chain_step_start", "chain_step_done",
     "chain_handoff", "team_chain_start", "team_chain_end", "response_ready",
-    "processor_start", "message_enqueued",
+    "processor_start", "message_enqueued", "agent_message",
   ];
-  for (const type of eventTypes) {
+  for (const type of types) {
     es.addEventListener(type, handler);
   }
 
