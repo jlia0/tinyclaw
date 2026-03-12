@@ -75,7 +75,10 @@ export function AgentChatView({
         seenRef.current.add(fp);
         next.push(item);
       }
-      next.sort((a, b) => a.created_at - b.created_at);
+      next.sort((a, b) => {
+        if (a.created_at !== b.created_at) return a.created_at - b.created_at;
+        return a.id.localeCompare(b.id);
+      });
       return next.length > 300 ? next.slice(-300) : next;
     });
   }, []);
@@ -135,6 +138,17 @@ export function AgentChatView({
     if (!input.trim() || sending) return;
     setSending(true);
     const outbound = input.trim();
+    const pendingId = `local-${Date.now()}`;
+    const createdAt = Date.now();
+    addItems([
+      {
+        id: pendingId,
+        role: "user",
+        content: outbound,
+        created_at: createdAt,
+        sender: "You",
+      },
+    ]);
     try {
       const result = await sendMessage({
         message: `@${agentId} ${outbound}`,
@@ -142,16 +156,15 @@ export function AgentChatView({
         channel: "web",
       });
 
-      addItems([
-        {
-          id: `local-${result.messageId}`,
-          role: "user",
-          content: outbound,
-          created_at: Date.now(),
-          message_id: result.messageId,
-          sender: "You",
-        },
-      ]);
+      const fp = `user:${result.messageId}:${outbound}`;
+      seenRef.current.add(fp);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === pendingId
+            ? { ...msg, message_id: result.messageId }
+            : msg
+        )
+      );
 
       setInput("");
     } catch {
