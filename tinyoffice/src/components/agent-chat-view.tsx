@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { usePolling, timeAgo } from "@/lib/hooks";
 import {
   getAgentMessages,
