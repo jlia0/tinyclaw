@@ -180,7 +180,6 @@ chmod +x bin/tinyagi
 chmod +x tinyagi.sh
 chmod +x scripts/install.sh
 chmod +x scripts/uninstall.sh
-chmod +x lib/setup-wizard.sh
 chmod +x lib/heartbeat-cron.sh
 chmod +x lib/update.sh
 

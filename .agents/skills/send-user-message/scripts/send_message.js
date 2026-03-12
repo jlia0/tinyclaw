@@ -1,15 +1,16 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env node
 /**
- * send_message.ts — Write a message to the TinyAGI outgoing queue
+ * send_message.js — Write a message to the TinyAGI outgoing queue
  * so a channel client (Discord/Telegram/WhatsApp) delivers it to a paired user.
  *
  * Usage:
- *   npx ts-node send_message.ts list-targets
- *   npx ts-node send_message.ts send --channel <ch> --sender-id <id> --sender <name> --message <msg> [--agent <agent>] [--files <paths>]
+ *   node send_message.js list-targets
+ *   node send_message.js send --channel <ch> --sender-id <id> --sender <name> --message <msg> [--agent <agent>] [--files <paths>]
  */
 
-import fs from 'fs';
-import path from 'path';
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 const API_PORT = parseInt(process.env.TINYAGI_API_PORT || '3777', 10);
 const API_BASE = `http://localhost:${API_PORT}`;
@@ -21,30 +22,14 @@ const SCRIPT_DIR = path.resolve(__dirname, '../../../..');
 const localTinyagi = path.join(SCRIPT_DIR, '.tinyagi');
 const TINYAGI_HOME = fs.existsSync(path.join(localTinyagi, 'settings.json'))
     ? localTinyagi
-    : path.join(require('os').homedir(), '.tinyagi');
+    : path.join(os.homedir(), '.tinyagi');
 
 const PAIRING_FILE = path.join(TINYAGI_HOME, 'pairing.json');
 
 // ---------------------------------------------------------------------------
-// Types (mirrors src/lib/pairing.ts)
-// ---------------------------------------------------------------------------
-interface PairingApprovedEntry {
-    channel: string;
-    senderId: string;
-    sender: string;
-    approvedAt: number;
-    approvedCode?: string;
-}
-
-interface PairingState {
-    pending: unknown[];
-    approved: PairingApprovedEntry[];
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function loadPairingState(): PairingState {
+function loadPairingState() {
     try {
         if (!fs.existsSync(PAIRING_FILE)) {
             return { pending: [], approved: [] };
@@ -54,7 +39,7 @@ function loadPairingState(): PairingState {
             pending: Array.isArray(raw.pending) ? raw.pending : [],
             approved: Array.isArray(raw.approved)
                 ? raw.approved.filter(
-                      (e: PairingApprovedEntry) =>
+                      (e) =>
                           e &&
                           typeof e.channel === 'string' &&
                           typeof e.senderId === 'string' &&
@@ -71,7 +56,7 @@ function loadPairingState(): PairingState {
 // Commands
 // ---------------------------------------------------------------------------
 
-function listTargets(): void {
+function listTargets() {
     const state = loadPairingState();
 
     if (state.approved.length === 0) {
@@ -90,8 +75,8 @@ function listTargets(): void {
     }
 }
 
-function parseArgs(argv: string[]): Record<string, string> {
-    const args: Record<string, string> = {};
+function parseArgs(argv) {
+    const args = {};
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         if (arg.startsWith('--') && i + 1 < argv.length) {
@@ -102,7 +87,7 @@ function parseArgs(argv: string[]): Record<string, string> {
     return args;
 }
 
-async function sendMessage(argv: string[]): Promise<void> {
+async function sendMessage(argv) {
     const args = parseArgs(argv);
 
     const channel = args['channel'];
@@ -113,7 +98,7 @@ async function sendMessage(argv: string[]): Promise<void> {
     const filesRaw = args['files'];
 
     // Validate required args
-    const missing: string[] = [];
+    const missing = [];
     if (!channel) missing.push('--channel');
     if (!senderId) missing.push('--sender-id');
     if (!sender) missing.push('--sender');
@@ -137,7 +122,7 @@ async function sendMessage(argv: string[]): Promise<void> {
         : undefined;
 
     // POST to API
-    const body: Record<string, unknown> = {
+    const body = {
         channel,
         sender,
         senderId,
@@ -158,7 +143,7 @@ async function sendMessage(argv: string[]): Promise<void> {
         process.exit(1);
     }
 
-    const result = await res.json() as { ok: boolean; messageId: string };
+    const result = await res.json();
 
     console.log(`Message queued: ${result.messageId}`);
     console.log(`  channel:  ${channel}`);
@@ -170,7 +155,7 @@ async function sendMessage(argv: string[]): Promise<void> {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
-async function main(): Promise<void> {
+async function main() {
     const args = process.argv.slice(2);
     const command = args[0];
 
@@ -183,8 +168,8 @@ async function main(): Promise<void> {
             break;
         default:
             console.error('Usage:');
-            console.error('  send_message.ts list-targets');
-            console.error('  send_message.ts send --channel <ch> --sender-id <id> --sender <name> --message <msg>');
+            console.error('  send_message.js list-targets');
+            console.error('  send_message.js send --channel <ch> --sender-id <id> --sender <name> --message <msg>');
             process.exit(1);
     }
 }
