@@ -7,8 +7,9 @@ import { usePolling } from "@/lib/hooks";
 import {
   getAgents, getTeams, type AgentConfig, type TeamConfig,
 } from "@/lib/api";
+import Image from "next/image";
 import {
-  Zap, Plus, Hash, LayoutDashboard, ScrollText,
+  Plus, Hash, LayoutDashboard, ScrollText,
   Settings, SlidersHorizontal, ClipboardList, Building2,
   FolderKanban, Swords,
 } from "lucide-react";
@@ -26,10 +27,8 @@ export function Sidebar() {
     <aside className="flex h-screen w-64 flex-col border-r bg-card">
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-2">
-        <div className="flex h-7 w-7 items-center justify-center bg-primary text-primary-foreground">
-          <Zap className="h-3.5 w-3.5" />
-        </div>
-        <span className="text-sm font-bold tracking-tight">TinyAGI</span>
+        <Image src="/icon.png" alt="TinyOffice" width={24} height={24} className="h-6 w-6" />
+        <span className="text-base font-bold tracking-tight">TinyOffice</span>
       </div>
 
       {/* Dashboard + Logs */}

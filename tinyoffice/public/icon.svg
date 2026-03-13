@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
+  <!-- Background -->
+  <rect width="180" height="180" fill="#f5f4f0"/>
+
+  <!-- Central dot -->
+  <circle cx="90" cy="90" r="12" fill="#18181b"/>
+
+  <!-- Inner ring of dots -->
+  <circle cx="90" cy="55" r="6" fill="#18181b"/>
+  <circle cx="120" cy="73" r="6" fill="#18181b"/>
+  <circle cx="120" cy="107" r="6" fill="#18181b"/>
+  <circle cx="90" cy="125" r="6" fill="#18181b"/>
+  <circle cx="60" cy="107" r="6" fill="#18181b"/>
+  <circle cx="60" cy="73" r="6" fill="#18181b"/>
+
+  <!-- Outer ring of dots -->
+  <circle cx="90" cy="28" r="4" fill="#18181b" opacity="0.5"/>
+  <circle cx="126" cy="42" r="4" fill="#18181b" opacity="0.5"/>
+  <circle cx="144" cy="78" r="4" fill="#18181b" opacity="0.5"/>
+  <circle cx="144" cy="102" r="4" fill="#18181b" opacity="0.5"/>
+  <circle cx="126" cy="138" r="4" fill="#18181b" opacity="0.5"/>
+  <circle cx="90" cy="152" r="4" fill="#18181b" opacity="0.5"/>
+  <circle cx="54" cy="138" r="4" fill="#18181b" opacity="0.5"/>
+  <circle cx="36" cy="102" r="4" fill="#18181b" opacity="0.5"/>
+  <circle cx="36" cy="78" r="4" fill="#18181b" opacity="0.5"/>
+  <circle cx="54" cy="42" r="4" fill="#18181b" opacity="0.5"/>
+</svg>
