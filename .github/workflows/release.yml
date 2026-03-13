@@ -118,17 +118,33 @@ jobs:
         id: release_notes
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
-          # Use for-each-ref to reliably get the annotated tag message (not the commit message)
-          TAG_MESSAGE=$(git for-each-ref --format='%(contents)' "refs/tags/$VERSION")
-          if [ -n "$TAG_MESSAGE" ]; then
-            echo "$TAG_MESSAGE" > release_notes.md
-          else
+
+          if [ -f "releases/${VERSION}.md" ]; then
+            cp "releases/${VERSION}.md" release_notes.md
+            echo "Using release notes from releases/${VERSION}.md"
+          fi
+
+          # actions/checkout dereferences annotated tags to commits,
+          # so re-fetch the tag to get the actual tag object
+          git fetch origin "refs/tags/$VERSION:refs/tags/$VERSION" --force 2>/dev/null || true
+
+          TAG_TYPE=$(git cat-file -t "refs/tags/$VERSION" 2>/dev/null)
+          if [ "$TAG_TYPE" = "tag" ] && [ ! -s release_notes.md ]; then
+            # Extract full tag message (everything after the header block)
+            git cat-file -p "refs/tags/$VERSION" | sed '1,/^$/d' > release_notes.md
+          fi
+
+          if [ ! -s release_notes.md ]; then
+            echo "::warning::Could not extract annotated tag message, using fallback"
             cat > release_notes.md <<EOF
           ## TinyAGI $VERSION
 
           See commits since last release for detailed changes.
           EOF
           fi
+
+          echo "=== release_notes.md preview ==="
+          head -5 release_notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

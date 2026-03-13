@@ -17,16 +17,49 @@ if [ -f "$SETTINGS_FILE" ]; then
 fi
 INTERVAL=${INTERVAL:-3600}
 
+declare -A LAST_SENT
+
+get_override_enabled() {
+    local agent_id="$1"
+    if [ -f "$SETTINGS_FILE" ] && command -v jq &> /dev/null; then
+        jq -r "(.agents // {}).\"${agent_id}\".heartbeat.enabled // empty" "$SETTINGS_FILE" 2>/dev/null
+    fi
+}
+
+get_override_interval() {
+    local agent_id="$1"
+    if [ -f "$SETTINGS_FILE" ] && command -v jq &> /dev/null; then
+        jq -r "(.agents // {}).\"${agent_id}\".heartbeat.interval // empty" "$SETTINGS_FILE" 2>/dev/null
+    fi
+}
+
+get_min_override_interval() {
+    if [ -f "$SETTINGS_FILE" ] && command -v jq &> /dev/null; then
+        jq -r '(.agents // {} | to_entries | map(.value.heartbeat.interval) | map(select(type=="number" and . > 0)) | min) // empty' "$SETTINGS_FILE" 2>/dev/null
+    fi
+}
+
 mkdir -p "$(dirname "$LOG_FILE")"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
 
-log "Heartbeat started (interval: ${INTERVAL}s, API: ${API_URL})"
+MIN_OVERRIDE_INTERVAL=$(get_min_override_interval)
+BASE_INTERVAL="$INTERVAL"
+if [ -n "$MIN_OVERRIDE_INTERVAL" ]; then
+    if [ "$MIN_OVERRIDE_INTERVAL" -lt "$BASE_INTERVAL" ]; then
+        BASE_INTERVAL="$MIN_OVERRIDE_INTERVAL"
+    fi
+fi
+if [ "$BASE_INTERVAL" -lt 10 ]; then
+    BASE_INTERVAL=10
+fi
+
+log "Heartbeat started (base interval: ${BASE_INTERVAL}s, default interval: ${INTERVAL}s, API: ${API_URL})"
 
 while true; do
-    sleep "$INTERVAL"
+    sleep "$BASE_INTERVAL"
 
     log "Heartbeat check - scanning all agents..."
 
@@ -52,9 +85,30 @@ while true; do
 
     AGENT_COUNT=0
 
+    NOW=$(date +%s)
+
     # Send heartbeat to each agent
     for AGENT_ID in $AGENT_IDS; do
         AGENT_COUNT=$((AGENT_COUNT + 1))
+
+        OVERRIDE_ENABLED=$(get_override_enabled "$AGENT_ID")
+        if [ "$OVERRIDE_ENABLED" = "false" ]; then
+            log "  → Agent @$AGENT_ID: heartbeat disabled (override)"
+            continue
+        fi
+
+        AGENT_INTERVAL=$(get_override_interval "$AGENT_ID")
+        if [ -z "$AGENT_INTERVAL" ]; then
+            AGENT_INTERVAL="$INTERVAL"
+        fi
+
+        LAST_SENT_AT=${LAST_SENT["$AGENT_ID"]}
+        if [ -n "$LAST_SENT_AT" ]; then
+            ELAPSED=$((NOW - LAST_SENT_AT))
+            if [ "$ELAPSED" -lt "$AGENT_INTERVAL" ]; then
+                continue
+            fi
+        fi
 
         # Get agent's working directory
         AGENT_DIR=$(jq -r "(.agents // {}).\"${AGENT_ID}\".working_directory // empty" "$SETTINGS_FILE" 2>/dev/null)
@@ -86,6 +140,7 @@ while true; do
         if echo "$RESPONSE" | jq -e '.ok' &>/dev/null; then
             MESSAGE_ID=$(echo "$RESPONSE" | jq -r '.messageId')
             log "  ✓ Queued for @$AGENT_ID: $MESSAGE_ID"
+            LAST_SENT["$AGENT_ID"]="$NOW"
         else
             log "  ✗ Failed to queue for @$AGENT_ID: $RESPONSE"
         fi

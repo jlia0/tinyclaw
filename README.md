@@ -127,11 +127,19 @@ After starting TinyAGI, scan the QR code:
 
 ## 🌐 TinyOffice Web Portal
 
-TinyAGI includes `tinyoffice/`, a Next.js web portal for operating TinyAGI from the browser.
+TinyAGI includes a web portal for managing your agents, teams, tasks, and chat — all from the browser.
 
 <div align="center">
   <img src="./docs/images/tinyoffice.png" alt="TinyOffice Office View" width="700" />
 </div>
+
+Once you start running TinyAGI locally, you can control it by visiting **[office.tinyagicompany.com](https://office.tinyagicompany.com/)**. It connects to your local TinyAGI API at `localhost:3777` — no account or sign-up needed.
+
+Alternatively, you can run TinyOffice locally:
+
+```bash
+tinyagi office  # Builds and starts on http://localhost:3000
+```
 
 <details>
 <summary><b>TinyOffice Features & Setup</b></summary>
@@ -143,8 +151,11 @@ TinyAGI includes `tinyoffice/`, a Next.js web portal for operating TinyAGI from 
 - **Logs & Events** - Inspect queue logs and streaming events
 - **Settings** - Edit TinyAGI configuration (`settings.json`) via UI
 - **Office View** - Visual simulation of agent interactions
+- **Org Chart** - Hierarchical visualization of teams and agents
+- **Chat Rooms** - Slack-style persistent chat rooms per team
+- **Projects** - Project-level task management with filtered kanban boards
 
-### Run TinyOffice
+### Running Locally
 
 Start TinyAGI first (API default: `http://localhost:3777`), then:
 
@@ -152,7 +163,7 @@ Start TinyAGI first (API default: `http://localhost:3777`), then:
 tinyagi office
 ```
 
-This auto-installs dependencies, builds, and starts the production server on `http://localhost:3000`.
+This auto-detects when dependencies or builds are needed (e.g. after `tinyagi update`) and starts the production server on `http://localhost:3000`.
 
 For development with hot-reload:
 

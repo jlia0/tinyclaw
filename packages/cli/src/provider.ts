@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import * as p from '@clack/prompts';
-import { readSettings, writeSettings, requireSettings } from './shared';
+import { readSettings, writeSettings, requireSettings } from './shared.ts';
 
 // --- provider show ---
 

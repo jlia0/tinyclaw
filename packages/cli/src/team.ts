@@ -5,7 +5,7 @@ import { Settings, updateAgentTeammates } from '@tinyagi/core';
 import {
     unwrap, cleanId, validateId,
     writeSettings, requireSettings,
-} from './shared';
+} from './shared.ts';
 
 function refreshTeamInfo(settings: Settings) {
     const agents = settings.agents || {};

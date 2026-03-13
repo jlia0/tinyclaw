@@ -259,7 +259,14 @@ function pairingMessage(code: string): string {
 }
 
 // Initialize Telegram bot (polling mode)
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
+// Set explicit server-side long-poll timeout so Telegram returns within 25s.
+// This keeps the polling loop bounded; the watchdog handles stale connections.
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {
+    polling: {
+        autoStart: true,
+        params: { timeout: 25 },
+    },
+});
 
 // Bot ready
 bot.getMe().then(async (me: TelegramBot.User) => {
@@ -651,16 +658,24 @@ bot.on('polling_error', (error: Error) => {
 // Track polling activity — any event from the bot means polling is alive
 bot.on('message', () => { lastPollingActivity = Date.now(); });
 
-// Watchdog: if no polling activity for 5 minutes, verify connectivity before restarting
+// Watchdog: if no polling activity for 5 minutes, verify connectivity before restarting.
+// After 10 minutes of silence, force-restart polling even if getMe() works — a stale
+// long-poll connection (e.g. after laptop sleep/wake) won't be detected by getMe()
+// since it uses a fresh connection that can't see the broken polling socket.
+const WATCHDOG_CHECK_MS = 5 * 60 * 1000;
+const WATCHDOG_FORCE_RESTART_MS = 10 * 60 * 1000;
 setInterval(async () => {
     const silentMs = Date.now() - lastPollingActivity;
-    if (silentMs > 5 * 60 * 1000) {
-        // Check if the bot can actually reach Telegram before deciding polling is dead
+    if (silentMs > WATCHDOG_CHECK_MS) {
         try {
             await bot.getMe();
-            // API works fine — polling is just idle (no messages). Reset timer.
-            lastPollingActivity = Date.now();
-            log('INFO', `Watchdog: no messages for ${Math.round(silentMs / 1000)}s but API reachable, polling is healthy`);
+            if (silentMs > WATCHDOG_FORCE_RESTART_MS) {
+                // API works but silence is too long — polling connection is likely stale
+                restartPolling(`No messages for ${Math.round(silentMs / 1000)}s despite API reachable — forcing polling restart (watchdog)`, 1000);
+            } else {
+                lastPollingActivity = Date.now();
+                log('INFO', `Watchdog: no messages for ${Math.round(silentMs / 1000)}s but API reachable, polling is healthy`);
+            }
         } catch {
             // API unreachable — polling is actually broken, restart it
             restartPolling(`No polling activity for ${Math.round(silentMs / 1000)}s and API unreachable (watchdog)`, 5000);

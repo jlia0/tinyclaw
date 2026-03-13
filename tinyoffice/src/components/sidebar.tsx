@@ -1,21 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { usePolling } from "@/lib/hooks";
 import {
   getAgents, getTeams, type AgentConfig, type TeamConfig,
 } from "@/lib/api";
 import {
-  Zap, Plus, Users, LayoutDashboard, ScrollText,
+  Zap, Plus, Hash, LayoutDashboard, ScrollText,
   Settings, SlidersHorizontal, ClipboardList, Building2,
+  FolderKanban, Swords,
 } from "lucide-react";
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
-  const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 5000);
+  const router = useRouter();
+  const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 0);
+  const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 0);
 
   const agentEntries = agents ? Object.entries(agents) : [];
   const teamEntries = teams ? Object.entries(teams) : [];
@@ -30,24 +32,13 @@ export function Sidebar() {
         <span className="text-sm font-bold tracking-tight">TinyAGI</span>
       </div>
 
-      {/* New Chat + Dashboard + Logs */}
+      {/* Dashboard + Logs */}
       <div className="px-3 pt-2 pb-1 space-y-0.5">
-        <Link
-          href="/console"
-          className={cn(
-            "flex items-center gap-2 w-full px-3 py-2 text-sm font-medium border transition-colors",
-            pathname === "/console"
-              ? "border-primary/50 bg-primary/10 text-foreground"
-              : "border-border hover:border-primary/30 hover:bg-muted text-muted-foreground"
-          )}
-        >
-          <Plus className="h-4 w-4" />
-          New Chat
-        </Link>
         {[
           { href: "/", label: "Dashboard", icon: LayoutDashboard },
           { href: "/office", label: "Office", icon: Building2 },
           { href: "/tasks", label: "Tasks", icon: ClipboardList },
+          { href: "/projects", label: "Projects", icon: FolderKanban },
           { href: "/logs", label: "Logs", icon: ScrollText },
         ].map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -88,7 +79,7 @@ export function Sidebar() {
           <div className="space-y-0.5">
             {agentEntries.length > 0 ? (
               agentEntries.map(([id, agent]) => {
-                const href = `/chat/agent/${id}`;
+                const href = `/agents/${id}`;
                 const active = pathname === href;
                 return (
                   <Link
@@ -113,6 +104,18 @@ export function Sidebar() {
                         {agent.provider}/{agent.model}
                       </p>
                     </div>
+                    <button
+                      type="button"
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary transition-all p-0.5"
+                      title="Configure skills"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/agents/${id}`);
+                      }}
+                      aria-label="Configure skills"
+                    >
+                      <Swords className="h-3 w-3" />
+                    </button>
                   </Link>
                 );
               })
@@ -128,11 +131,11 @@ export function Sidebar() {
           </div>
         </div>
 
-        {/* Teams */}
+        {/* Chat Rooms */}
         <div className="pt-4">
           <div className="flex items-center justify-between px-2 mb-1">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Teams
+              Chat Rooms
             </span>
             <Link
               href="/teams"
@@ -152,23 +155,18 @@ export function Sidebar() {
                     key={id}
                     href={href}
                     className={cn(
-                      "flex items-center gap-2.5 px-2 py-1.5 text-sm transition-colors group",
+                      "flex items-center gap-2 px-2 py-1.5 text-sm transition-colors group",
                       active
                         ? "bg-accent text-accent-foreground"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     )}
                   >
-                    <div className={cn(
-                      "flex h-6 w-6 items-center justify-center shrink-0",
-                      active ? "bg-primary text-primary-foreground" : "bg-secondary text-secondary-foreground"
-                    )}>
-                      <Users className="h-3 w-3" />
-                    </div>
+                    <Hash className={cn(
+                      "h-3.5 w-3.5 shrink-0",
+                      active ? "text-primary" : "text-muted-foreground"
+                    )} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm leading-tight">{team.name}</p>
-                      <p className="truncate text-[10px] text-muted-foreground leading-tight">
-                        {team.agents.length} agent{team.agents.length !== 1 ? "s" : ""}
-                      </p>
+                      <p className="truncate text-sm leading-tight">{team.name.toLowerCase().replace(/\s+/g, "-")}</p>
                     </div>
                   </Link>
                 );
@@ -179,7 +177,7 @@ export function Sidebar() {
                 className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Plus className="h-3 w-3" />
-                Add team
+                Add chat room
               </Link>
             )}
           </div>

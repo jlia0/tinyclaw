@@ -58,6 +58,21 @@ A message has been routed to a specific agent.
 | `model`         | `string`  | Model identifier                         |
 | `isTeamRouted`  | `boolean` | Whether the message was routed via @team |
 
+### `agent_message`
+
+An agent has produced a message. This is the **simplified event for single-agent chat** — instead of listening to the full `chain_step_start → chain_step_done → response_ready` lifecycle, tinyoffice clients can subscribe to just this event to get every agent response. Each `agent_message` is also persisted to the `agent_messages` table for chat history.
+
+| Field           | Type      | Description                                         |
+|-----------------|-----------|-----------------------------------------------------|
+| `agentId`       | `string`  | Agent identifier                                    |
+| `agentName`     | `string`  | Agent display name                                  |
+| `role`          | `string`  | Always `"assistant"` (user messages are not emitted) |
+| `channel`       | `string`  | Channel name                                        |
+| `sender`        | `string`  | Original sender                                     |
+| `messageId`     | `string`  | Original message ID                                 |
+| `content`       | `string`  | Full message content                                |
+| `isTeamMessage` | `boolean` | Whether this is part of a team conversation          |
+
 ### `chain_step_start`
 
 An agent is about to be invoked.
@@ -128,15 +143,26 @@ A final response is ready to be delivered back to the user.
 A typical solo message flows through events in this order:
 
 ```
-message_enqueued → message_received → agent_routed → chain_step_start → chain_step_done → response_ready
+message_enqueued → message_received → agent_routed → chain_step_start → chain_step_done → agent_message → response_ready
 ```
+
+**Simplified (for single-agent chat):** If you only need the agent's response, subscribe to `agent_message` — it fires once per agent response with the full content, and each message is persisted to the `agent_messages` table.
 
 A team conversation adds handoff events between agents:
 
 ```
 message_enqueued → message_received → agent_routed → team_chain_start
-  → chain_step_start → chain_step_done → chain_handoff
-  → chain_step_start → chain_step_done → chain_handoff
+  → chain_step_start → chain_step_done → agent_message → chain_handoff
+  → chain_step_start → chain_step_done → agent_message → chain_handoff
   → …
   → team_chain_end → response_ready
 ```
+
+## Agent message history
+
+All agent messages (both user inputs and agent responses) are persisted to the `agent_messages` SQLite table and available via the REST API:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/agent-messages` | All messages across all agents. Query: `?limit=100&since_id=0` |
+| `GET /api/agents/:id/messages` | Messages for a specific agent. Query: `?limit=100&since_id=0` |

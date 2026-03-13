@@ -20,9 +20,14 @@ import {
     completeMessage, failMessage,
     recoverStaleMessages, pruneAckedResponses, pruneCompletedMessages,
     closeQueueDb, queueEvents,
+    insertAgentMessage,
 } from '@tinyagi/core';
 import { startApiServer } from '@tinyagi/server';
-import { conversations, handleTeamResponse } from '@tinyagi/teams';
+import {
+    conversations,
+    handleTeamResponse,
+    groupChatroomMessages,
+} from '@tinyagi/teams';
 
 // Ensure directories exist
 [FILES_DIR, path.dirname(LOG_FILE), CHATS_DIR].forEach(dir => {
@@ -109,6 +114,18 @@ async function processMessage(dbMsg: any): Promise<void> {
     }
     emitEvent('chain_step_done', { agentId, agentName: agent.name, responseLength: response.length, responseText: response });
 
+    // ── Persist & emit simplified agent_message event ────────────────────
+    if (!isInternal) {
+        insertAgentMessage({ agentId, role: 'user', channel, sender, messageId, content: rawMessage });
+    }
+    insertAgentMessage({ agentId, role: 'assistant', channel, sender, messageId, content: response });
+    emitEvent('agent_message', {
+        agentId, agentName: agent.name, role: 'assistant',
+        channel, sender, messageId,
+        content: response,
+        isTeamMessage: isInternal || isTeamRouted,
+    });
+
     // ── Response routing ────────────────────────────────────────────────────
     // Always try team orchestration first — handles team-routed, internal,
     // AND direct messages to agents that belong to a team.
@@ -154,13 +171,20 @@ async function processQueue(): Promise<void> {
 
         const currentChain = agentChains.get(agentId) || Promise.resolve();
         const newChain = currentChain.then(async () => {
-            for (const msg of messages) {
+            const { messages: groupedMessages, messageIds } = groupChatroomMessages(messages);
+            for (let i = 0; i < groupedMessages.length; i++) {
+                const msg = groupedMessages[i];
+                const ids = messageIds[i];
                 try {
                     await processMessage(msg);
-                    completeMessage(msg.id);
+                    for (const id of ids) {
+                        completeMessage(id);
+                    }
                 } catch (error) {
                     log('ERROR', `Failed to process message ${msg.id}: ${(error as Error).message}`);
-                    failMessage(msg.id, (error as Error).message);
+                    for (const id of ids) {
+                        failMessage(id, (error as Error).message);
+                    }
                 }
             }
         });

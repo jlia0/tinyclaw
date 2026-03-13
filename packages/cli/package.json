@@ -1,9 +1,11 @@
 {
   "name": "@tinyagi/cli",
   "version": "0.0.10",
+  "type": "module",
   "main": "dist/shared.js",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "dev": "tsc -w"
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",

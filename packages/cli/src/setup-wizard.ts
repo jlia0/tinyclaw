@@ -7,7 +7,7 @@ import {
     unwrap, cleanId, validateId, required,
     writeSettings, SETTINGS_FILE, TINYAGI_HOME, SCRIPT_DIR,
     providerOptions, promptModel,
-} from './shared';
+} from './shared.ts';
 
 const ALL_CHANNELS = ['telegram', 'discord', 'whatsapp'] as const;
 

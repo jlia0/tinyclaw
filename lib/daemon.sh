@@ -371,7 +371,8 @@ status_daemon() {
 
 # --- Agent skills management (called by start_daemon) ---
 
-# Ensure all agent workspaces have .agents/skills copied from SCRIPT_DIR
+# Ensure all agent workspaces have .agents/skills synced from SCRIPT_DIR
+# and .claude/skills as a symlink to .agents/skills
 ensure_agent_skills_links() {
     local skills_src="$SCRIPT_DIR/.agents/skills"
     [ -d "$skills_src" ] || return 0
@@ -386,30 +387,24 @@ ensure_agent_skills_links() {
         local agent_dir="$agents_dir/$agent_id"
         [ -d "$agent_dir" ] || continue
 
-        # Migrate: replace old symlinks with real directories
-        if [ -L "$agent_dir/.agents/skills" ]; then
-            rm "$agent_dir/.agents/skills"
-        fi
-        if [ -L "$agent_dir/.claude/skills" ]; then
-            rm "$agent_dir/.claude/skills"
-        fi
-
         # Sync default skills into .agents/skills
-        # - Overwrites skills that exist in source (keeps them up to date)
-        # - Preserves agent-specific custom skills not in source
         mkdir -p "$agent_dir/.agents/skills"
         for skill_dir in "$skills_src"/*/; do
             [ -d "$skill_dir" ] || continue
             local skill_name
             skill_name="$(basename "$skill_dir")"
-            # Always overwrite default skills with latest from source
             rm -rf "$agent_dir/.agents/skills/$skill_name"
             cp -r "$skill_dir" "$agent_dir/.agents/skills/$skill_name"
         done
 
-        # Mirror .agents/skills into .claude/skills for Claude Code
-        mkdir -p "$agent_dir/.claude/skills"
-        cp -r "$agent_dir/.agents/skills/"* "$agent_dir/.claude/skills/" 2>/dev/null || true
+        # Ensure .claude/skills is a symlink to ../.agents/skills
+        mkdir -p "$agent_dir/.claude"
+        if [ -L "$agent_dir/.claude/skills" ]; then
+            rm "$agent_dir/.claude/skills"
+        elif [ -d "$agent_dir/.claude/skills" ]; then
+            rm -rf "$agent_dir/.claude/skills"
+        fi
+        ln -s ../.agents/skills "$agent_dir/.claude/skills"
     done
 }
 

@@ -15,3 +15,4 @@ export * from './pairing';
 export * from './response';
 export * from './agent';
 export * from './queues';
+export * from './memory';

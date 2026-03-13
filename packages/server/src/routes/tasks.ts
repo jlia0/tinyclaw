@@ -13,6 +13,7 @@ interface Task {
     status: TaskStatus;
     assignee: string;       // agent or team id, empty = unassigned
     assigneeType: 'agent' | 'team' | '';
+    projectId?: string;
     createdAt: number;
     updatedAt: number;
 }
@@ -53,6 +54,7 @@ app.post('/api/tasks', async (c) => {
         status: body.status || 'backlog',
         assignee: body.assignee || '',
         assigneeType: body.assigneeType || '',
+        projectId: body.projectId,
         createdAt: Date.now(),
         updatedAt: Date.now(),
     };

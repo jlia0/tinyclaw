@@ -107,8 +107,8 @@ function lerp(a: number, b: number, t: number) {
 }
 
 export default function OfficePage() {
-  const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
-  const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 5000);
+  const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 0);
+  const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 0);
   const [bubbles, setBubbles] = useState<SpeechBubble[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -283,10 +283,9 @@ export default function OfficePage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b px-6 py-3">
+      {/* Status bar */}
+      <div className="flex items-center justify-between px-6 py-2 border-b">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">Office</span>
           <Badge variant="outline" className="text-xs">
             {agentEntries.length} agent{agentEntries.length !== 1 ? "s" : ""}
           </Badge>

@@ -124,3 +124,13 @@ body {
 .animate-dash {
   animation: dash 1s linear infinite;
 }
+
+@keyframes float-skill {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+
+.animate-float-skill {
+  animation: float-skill 5s ease-in-out infinite;
+  will-change: transform;
+}

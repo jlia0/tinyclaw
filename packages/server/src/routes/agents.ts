@@ -1,76 +1,38 @@
 import fs from 'fs';
 import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { Hono } from 'hono';
 import { AgentConfig, CustomProvider } from '@tinyagi/core';
-import { SCRIPT_DIR, getSettings, getAgents } from '@tinyagi/core';
+import { getSettings, getAgents, ensureAgentDirectory } from '@tinyagi/core';
 import { log } from '@tinyagi/core';
 import { mutateSettings } from './settings';
 
 const app = new Hono();
+const execFileAsync = promisify(execFile);
 
-// ── Agent workspace provisioning ─────────────────────────────────────────────
-
-function copyIfExists(src: string, dest: string): boolean {
-    if (!fs.existsSync(src)) return false;
-    if (fs.statSync(src).isDirectory()) {
-        fs.cpSync(src, dest, { recursive: true });
-    } else {
-        fs.copyFileSync(src, dest);
+async function ensureSkillsCli(cwd: string) {
+    try {
+        await execFileAsync('npx', ['--yes', 'skills', '--version'], {
+            cwd,
+            env: { ...process.env, CI: '1' },
+            timeout: 60_000,
+            maxBuffer: 1024 * 1024,
+        });
+    } catch {
+        // Best-effort: running any command will install the CLI if missing.
     }
-    return true;
 }
 
-function provisionAgentWorkspace(agentDir: string, _agentId: string): string[] {
-    const steps: string[] = [];
-    fs.mkdirSync(agentDir, { recursive: true });
-    steps.push(`Created directory ${agentDir}`);
-
-    const claudeSrc = path.join(SCRIPT_DIR, '.claude');
-    if (fs.existsSync(claudeSrc)) {
-        copyIfExists(claudeSrc, path.join(agentDir, '.claude'));
-        steps.push('Copied .claude/');
-    } else {
-        fs.mkdirSync(path.join(agentDir, '.claude'), { recursive: true });
-        steps.push('Created .claude/');
-    }
-
-    if (copyIfExists(path.join(SCRIPT_DIR, 'heartbeat.md'), path.join(agentDir, 'heartbeat.md'))) {
-        steps.push('Copied heartbeat.md');
-    }
-
-    const agentsMd = path.join(SCRIPT_DIR, 'AGENTS.md');
-    if (copyIfExists(agentsMd, path.join(agentDir, 'AGENTS.md'))) {
-        steps.push('Copied AGENTS.md');
-    }
-
-    if (fs.existsSync(agentsMd)) {
-        fs.copyFileSync(agentsMd, path.join(agentDir, '.claude', 'CLAUDE.md'));
-        steps.push('Copied CLAUDE.md to .claude/');
-    }
-
-    // Copy default skills from SCRIPT_DIR
-    const skillsSrc = path.join(SCRIPT_DIR, '.agents', 'skills');
-    if (fs.existsSync(skillsSrc)) {
-        const targetAgentsSkills = path.join(agentDir, '.agents', 'skills');
-        fs.mkdirSync(targetAgentsSkills, { recursive: true });
-        fs.cpSync(skillsSrc, targetAgentsSkills, { recursive: true });
-        steps.push('Copied skills to .agents/skills/');
-
-        // Mirror into .claude/skills for Claude Code
-        const targetClaudeSkills = path.join(agentDir, '.claude', 'skills');
-        fs.mkdirSync(targetClaudeSkills, { recursive: true });
-        fs.cpSync(targetAgentsSkills, targetClaudeSkills, { recursive: true });
-        steps.push('Copied skills to .claude/skills/');
-    }
-
-    fs.mkdirSync(path.join(agentDir, '.tinyagi'), { recursive: true });
-    if (copyIfExists(path.join(SCRIPT_DIR, 'SOUL.md'), path.join(agentDir, '.tinyagi', 'SOUL.md'))) {
-        steps.push('Copied SOUL.md to .tinyagi/');
-    }
-
-    return steps;
+async function runSkills(args: string[], cwd: string): Promise<string> {
+    const { stdout, stderr } = await execFileAsync('npx', ['--yes', 'skills', ...args], {
+        cwd,
+        env: { ...process.env, CI: '1' },
+        timeout: 120_000,
+        maxBuffer: 1024 * 1024,
+    });
+    return `${stdout}${stderr ? `\n${stderr}` : ''}`.trim();
 }
-
 // GET /api/agents
 app.get('/api/agents', (c) => {
     return c.json(getAgents(getSettings()));
@@ -103,11 +65,10 @@ app.put('/api/agents/:id', async (c) => {
         };
     });
 
-    let provisionSteps: string[] = [];
     if (isNew) {
         try {
-            provisionSteps = provisionAgentWorkspace(workingDir, agentId);
-            log('INFO', `[API] Agent '${agentId}' provisioned: ${provisionSteps.join(', ')}`);
+            ensureAgentDirectory(workingDir);
+            log('INFO', `[API] Agent '${agentId}' provisioned at ${workingDir}`);
         } catch (err) {
             log('ERROR', `[API] Agent '${agentId}' provisioning failed: ${(err as Error).message}`);
         }
@@ -118,7 +79,6 @@ app.put('/api/agents/:id', async (c) => {
         ok: true,
         agent: settings.agents![agentId],
         provisioned: isNew,
-        provisionSteps,
     });
 });
 
@@ -131,6 +91,202 @@ app.delete('/api/agents/:id', (c) => {
     }
     mutateSettings(s => { delete s.agents![agentId]; });
     log('INFO', `[API] Agent '${agentId}' deleted`);
+    return c.json({ ok: true });
+});
+
+// ── Agent workspace data endpoints ───────────────────────────────────────────
+
+// GET /api/agents/:id/skills — list skills from .agents/skills/ in workspace
+app.get('/api/agents/:id/skills', (c) => {
+    const agentId = c.req.param('id');
+    const settings = getSettings();
+    const agent = settings.agents?.[agentId];
+    if (!agent) return c.json({ error: `agent '${agentId}' not found` }, 404);
+
+    const skillsDir = path.join(agent.working_directory, '.agents', 'skills');
+    const skills: { id: string; name: string; description: string }[] = [];
+
+    if (fs.existsSync(skillsDir)) {
+        for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+            if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+            const skillMd = path.join(skillsDir, entry.name, 'SKILL.md');
+            let name = entry.name;
+            let description = '';
+            if (fs.existsSync(skillMd)) {
+                try {
+                    const content = fs.readFileSync(skillMd, 'utf8');
+                    const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+                    if (fmMatch) {
+                        const fm = fmMatch[1];
+                        const nameMatch = fm.match(/^name:\s*["']?(.+?)["']?\s*$/m);
+                        if (nameMatch) name = nameMatch[1];
+                        const descMatch = fm.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+                        if (descMatch) description = descMatch[1];
+                    }
+                } catch { /* skip */ }
+            }
+            skills.push({ id: entry.name, name, description });
+        }
+    }
+
+    return c.json(skills);
+});
+
+// GET /api/agents/:id/skills/registry?query=seo — search skills registry
+app.get('/api/agents/:id/skills/registry', async (c) => {
+    const agentId = c.req.param('id');
+    const query = c.req.query('query') || '';
+    const settings = getSettings();
+    const agent = settings.agents?.[agentId];
+    if (!agent) return c.json({ error: `agent '${agentId}' not found` }, 404);
+    if (!query.trim()) return c.json({ results: [] });
+
+    try {
+        await ensureSkillsCli(agent.working_directory);
+        const output = await runSkills(['find', query], agent.working_directory);
+        const cleaned = output
+            .replace(/\u001b\[[0-9;]*m/g, '')
+            .replace(/\x1b\[[0-9;]*m/g, '')
+            .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '')
+            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+
+        const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
+        const results: { ref: string; installs?: string; url?: string }[] = [];
+
+        const refRegex = /([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+)/g;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            let match: RegExpExecArray | null;
+            while ((match = refRegex.exec(line)) !== null) {
+                const ref = match[1];
+                const installsMatch = line.match(/([\d.]+[KMB]?)\s+installs?/i);
+                const installs = installsMatch ? installsMatch[1] : undefined;
+                let url: string | undefined;
+
+                const inlineUrl = line.match(/https?:\/\/\S+/);
+                if (inlineUrl) {
+                    url = inlineUrl[0];
+                } else {
+                    const next = lines[i + 1];
+                    const cleanedNext = next?.replace(/^└\s*/, '');
+                    if (cleanedNext && (cleanedNext.startsWith('http://') || cleanedNext.startsWith('https://'))) {
+                        url = cleanedNext;
+                    }
+                }
+
+                results.push({ ref, installs, url });
+            }
+        }
+
+        return c.json({ results, raw: output });
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 500);
+    }
+});
+
+// POST /api/agents/:id/skills/install — install a registry skill to codex agent
+app.post('/api/agents/:id/skills/install', async (c) => {
+    const agentId = c.req.param('id');
+    const settings = getSettings();
+    const agent = settings.agents?.[agentId];
+    if (!agent) return c.json({ error: `agent '${agentId}' not found` }, 404);
+
+    const body = await c.req.json() as { ref?: string };
+    const ref = (body.ref || '').trim();
+    if (!ref) return c.json({ error: 'ref is required' }, 400);
+
+    try {
+        await ensureSkillsCli(agent.working_directory);
+        const output = await runSkills(['add', ref, '-a', 'codex', '-y'], agent.working_directory);
+        return c.json({ ok: true, output });
+    } catch (err) {
+        return c.json({ error: (err as Error).message }, 500);
+    }
+});
+
+// GET /api/agents/:id/system-prompt — read AGENTS.md from workspace
+app.get('/api/agents/:id/system-prompt', (c) => {
+    const agentId = c.req.param('id');
+    const settings = getSettings();
+    const agent = settings.agents?.[agentId];
+    if (!agent) return c.json({ error: `agent '${agentId}' not found` }, 404);
+
+    const agentsMd = path.join(agent.working_directory, 'AGENTS.md');
+    let content = '';
+    if (fs.existsSync(agentsMd)) {
+        try { content = fs.readFileSync(agentsMd, 'utf8'); } catch { /* skip */ }
+    }
+    return c.json({ content, path: agentsMd });
+});
+
+// PUT /api/agents/:id/system-prompt — write AGENTS.md to workspace
+app.put('/api/agents/:id/system-prompt', async (c) => {
+    const agentId = c.req.param('id');
+    const settings = getSettings();
+    const agent = settings.agents?.[agentId];
+    if (!agent) return c.json({ error: `agent '${agentId}' not found` }, 404);
+
+    const body = await c.req.json() as { content: string };
+    const agentsMd = path.join(agent.working_directory, 'AGENTS.md');
+    fs.writeFileSync(agentsMd, body.content || '', 'utf8');
+    return c.json({ ok: true });
+});
+
+// GET /api/agents/:id/memory — load memory index from workspace memory/ folder
+app.get('/api/agents/:id/memory', (c) => {
+    const agentId = c.req.param('id');
+    const settings = getSettings();
+    const agent = settings.agents?.[agentId];
+    if (!agent) return c.json({ error: `agent '${agentId}' not found` }, 404);
+
+    const { loadMemoryIndex } = require('@tinyagi/core');
+    const index = loadMemoryIndex(agent.working_directory);
+    const memoryDir = path.join(agent.working_directory, 'memory');
+    const files: { name: string; path: string }[] = [];
+
+    if (fs.existsSync(memoryDir)) {
+        const scan = (dir: string, rel: string) => {
+            for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+                if (item.name.startsWith('.')) continue;
+                const itemRel = rel ? `${rel}/${item.name}` : item.name;
+                if (item.isDirectory()) {
+                    scan(path.join(dir, item.name), itemRel);
+                } else if (item.name.endsWith('.md')) {
+                    files.push({ name: item.name, path: itemRel });
+                }
+            }
+        };
+        scan(memoryDir, '');
+    }
+
+    return c.json({ index, files, memoryDir });
+});
+
+// GET /api/agents/:id/heartbeat — read heartbeat.md from workspace
+app.get('/api/agents/:id/heartbeat', (c) => {
+    const agentId = c.req.param('id');
+    const settings = getSettings();
+    const agent = settings.agents?.[agentId];
+    if (!agent) return c.json({ error: `agent '${agentId}' not found` }, 404);
+
+    const heartbeatMd = path.join(agent.working_directory, 'heartbeat.md');
+    let content = '';
+    if (fs.existsSync(heartbeatMd)) {
+        try { content = fs.readFileSync(heartbeatMd, 'utf8'); } catch { /* skip */ }
+    }
+    return c.json({ content, path: heartbeatMd });
+});
+
+// PUT /api/agents/:id/heartbeat — write heartbeat.md to workspace
+app.put('/api/agents/:id/heartbeat', async (c) => {
+    const agentId = c.req.param('id');
+    const settings = getSettings();
+    const agent = settings.agents?.[agentId];
+    if (!agent) return c.json({ error: `agent '${agentId}' not found` }, 404);
+
+    const body = await c.req.json() as { content: string };
+    const heartbeatMd = path.join(agent.working_directory, 'heartbeat.md');
+    fs.writeFileSync(heartbeatMd, body.content || '', 'utf8');
     return c.json({ ok: true });
 });
 

@@ -7,7 +7,7 @@ import {
     unwrap, cleanId, validateId, required,
     writeSettings, requireSettings, SCRIPT_DIR,
     providerOptions, promptModel, harnessOptions,
-} from './shared';
+} from './shared.ts';
 
 // --- agent add ---
 

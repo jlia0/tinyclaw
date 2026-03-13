@@ -21,9 +21,11 @@ import teamsRoutes from './routes/teams';
 import settingsRoutes from './routes/settings';
 import { createQueueRoutes } from './routes/queue';
 import tasksRoutes from './routes/tasks';
+import projectsRoutes from './routes/projects';
 import logsRoutes from './routes/logs';
 import chatsRoutes from './routes/chats';
 import chatroomRoutes from './routes/chatroom';
+import agentMessagesRoutes from './routes/agent-messages';
 
 const API_PORT = parseInt(process.env.TINYAGI_API_PORT || '3777', 10);
 
@@ -49,9 +51,11 @@ export function startApiServer(
     app.route('/', settingsRoutes);
     app.route('/', createQueueRoutes(conversations));
     app.route('/', tasksRoutes);
+    app.route('/', projectsRoutes);
     app.route('/', logsRoutes);
     app.route('/', chatsRoutes);
     app.route('/', chatroomRoutes);
+    app.route('/', agentMessagesRoutes);
 
     // SSE endpoint — needs raw Node.js response for streaming
     app.get('/api/events/stream', (c) => {

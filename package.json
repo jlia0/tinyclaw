@@ -1,18 +1,19 @@
 {
   "name": "tinyagi",
-  "version": "0.0.11",
+  "version": "0.0.13",
   "description": "Multi-agent, multi-team, multi-channel 24/7 AI assistant",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
     "build": "tsc --build",
+    "dev": "concurrently -k -n core,teams,server,main \"npm run dev -w @tinyagi/core\" \"npm run dev -w @tinyagi/teams\" \"npm run dev -w @tinyagi/server\" \"npm run dev -w @tinyagi/main\"",
     "build:core": "npm run build -w @tinyagi/core",
     "build:teams": "npm run build -w @tinyagi/teams",
     "build:channels": "npm run build -w @tinyagi/channels",
     "build:server": "npm run build -w @tinyagi/server",
     "build:visualizer": "npm run build -w @tinyagi/visualizer",
-    "start": "npm run start -w @tinyagi/core",
+    "start": "npm run start -w @tinyagi/main",
     "discord": "npm run discord -w @tinyagi/channels",
     "telegram": "npm run telegram -w @tinyagi/channels",
     "whatsapp": "npm run whatsapp -w @tinyagi/channels",
@@ -21,9 +22,9 @@
     "chatroom": "npm run chatroom -w @tinyagi/visualizer"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.2.1",
     "@types/node": "^25.2.2",
-    "tailwindcss": "^4.2.1",
+    "concurrently": "^9.2.1",
+    "nodemon": "^3.1.9",
     "typescript": "^5.9.3"
   }
 }

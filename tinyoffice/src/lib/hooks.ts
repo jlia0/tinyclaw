@@ -34,10 +34,10 @@ export function usePolling<T>(
   useEffect(() => {
     mountedRef.current = true;
     refresh();
-    const id = setInterval(refresh, intervalMs);
+    const id = intervalMs > 0 ? setInterval(refresh, intervalMs) : null;
     return () => {
       mountedRef.current = false;
-      clearInterval(id);
+      if (id) clearInterval(id);
     };
   }, [refresh, intervalMs]);
 

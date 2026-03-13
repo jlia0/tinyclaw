@@ -5,6 +5,10 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "dev": "concurrently -k -n tsc,nodemon \"tsc -w\" \"nodemon --watch dist --ext js dist/discord.js\"",
+    "dev:discord": "concurrently -k -n tsc,nodemon \"tsc -w\" \"nodemon --watch dist --ext js dist/discord.js\"",
+    "dev:telegram": "concurrently -k -n tsc,nodemon \"tsc -w\" \"nodemon --watch dist --ext js dist/telegram.js\"",
+    "dev:whatsapp": "concurrently -k -n tsc,nodemon \"tsc -w\" \"nodemon --watch dist --ext js dist/whatsapp.js\"",
     "discord": "node dist/discord.js",
     "telegram": "node dist/telegram.js",
     "whatsapp": "node dist/whatsapp.js"

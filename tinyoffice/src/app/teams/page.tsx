@@ -27,8 +27,8 @@ const emptyForm: FormData = {
 };
 
 export default function TeamsPage() {
-  const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
-  const { data: teams, loading, refresh } = usePolling<Record<string, TeamConfig>>(getTeams, 5000);
+  const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 0);
+  const { data: teams, loading, refresh } = usePolling<Record<string, TeamConfig>>(getTeams, 0);
   const [editing, setEditing] = useState<FormData | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [saving, setSaving] = useState(false);

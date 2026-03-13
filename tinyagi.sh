@@ -252,20 +252,22 @@ case "${1:-}" in
         node "$SCRIPT_DIR/packages/visualizer/dist/chatroom-viewer.js" --team "$CHATROOM_TEAM"
         ;;
     office)
-        # Install tinyoffice deps if needed
-        if [ ! -d "$SCRIPT_DIR/tinyoffice/node_modules" ]; then
+        OFFICE_DIR="$SCRIPT_DIR/tinyoffice"
+        # Install deps if node_modules missing or package.json changed since last install
+        if [ ! -d "$OFFICE_DIR/node_modules" ] || \
+           [ "$OFFICE_DIR/package.json" -nt "$OFFICE_DIR/node_modules/.package-lock.json" ]; then
             echo -e "${BLUE}Installing TinyOffice dependencies...${NC}"
-            (cd "$SCRIPT_DIR/tinyoffice" && npm install)
+            (cd "$OFFICE_DIR" && npm install) || { echo -e "${RED}Install failed${NC}"; exit 1; }
         fi
-        # Build if .next doesn't exist or source is newer
-        if [ ! -d "$SCRIPT_DIR/tinyoffice/.next" ] || \
-           [ -n "$(find "$SCRIPT_DIR/tinyoffice/src" -newer "$SCRIPT_DIR/tinyoffice/.next" -print -quit 2>/dev/null)" ]; then
+        # Build if .next missing or source/deps changed since last build
+        if [ ! -f "$OFFICE_DIR/.next/BUILD_ID" ] || \
+           [ "$OFFICE_DIR/package.json" -nt "$OFFICE_DIR/.next/BUILD_ID" ] || \
+           [ -n "$(find "$OFFICE_DIR/src" -newer "$OFFICE_DIR/.next/BUILD_ID" -print -quit 2>/dev/null)" ]; then
             echo -e "${BLUE}Building TinyOffice...${NC}"
-            (cd "$SCRIPT_DIR/tinyoffice" && npm run build)
+            (cd "$OFFICE_DIR" && npm run build) || { echo -e "${RED}Build failed${NC}"; exit 1; }
         fi
-        # Start Next.js production server
         echo -e "${GREEN}Starting TinyOffice on http://localhost:3000${NC}"
-        (cd "$SCRIPT_DIR/tinyoffice" && npm run start)
+        (cd "$OFFICE_DIR" && npm run start)
         ;;
     pairing)
         node "$CLI/pairing.js" "${2:-}" "${3:-}" "${4:-}"

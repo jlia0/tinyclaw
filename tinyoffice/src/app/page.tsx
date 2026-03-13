@@ -23,8 +23,8 @@ import {
 } from "lucide-react";
 
 export default function DashboardPage() {
-  const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
-  const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 5000);
+  const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 0);
+  const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 0);
   const { data: queue } = usePolling<QueueStatus>(getQueueStatus, 2000);
   const { events } = useSSE(30);
 

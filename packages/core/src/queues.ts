@@ -46,9 +46,20 @@ export function initQueueDb(): void {
             team_id TEXT NOT NULL, from_agent TEXT NOT NULL,
             message TEXT NOT NULL, created_at INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS agent_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            sender TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_msg_status ON messages(status, agent, created_at);
         CREATE INDEX IF NOT EXISTS idx_resp_channel ON responses(channel, status);
         CREATE INDEX IF NOT EXISTS idx_chat_team ON chat_messages(team_id, id);
+        CREATE INDEX IF NOT EXISTS idx_agent_messages_agent ON agent_messages(agent_id, created_at);
     `);
 
     // Migrate: add metadata column to responses if missing (for existing databases)
@@ -175,6 +186,29 @@ export function pruneAckedResponses(olderThanMs = 86400000): number {
 
 export function pruneCompletedMessages(olderThanMs = 86400000): number {
     return getDb().prepare(`DELETE FROM messages WHERE status='completed' AND updated_at<?`).run(Date.now() - olderThanMs).changes;
+}
+
+// ── Agent messages (per-agent chat history) ─────────────────────────────────
+
+export function insertAgentMessage(data: {
+    agentId: string; role: 'user' | 'assistant';
+    channel: string; sender: string; messageId: string; content: string;
+}): number {
+    return getDb().prepare(
+        `INSERT INTO agent_messages (agent_id,role,channel,sender,message_id,content,created_at) VALUES (?,?,?,?,?,?,?)`
+    ).run(data.agentId, data.role, data.channel, data.sender, data.messageId, data.content, Date.now()).lastInsertRowid as number;
+}
+
+export function getAgentMessages(agentId: string, limit = 100, sinceId = 0): any[] {
+    return getDb().prepare(
+        `SELECT * FROM agent_messages WHERE agent_id=? AND id>? ORDER BY created_at DESC LIMIT ?`
+    ).all(agentId, sinceId, limit);
+}
+
+export function getAllAgentMessages(limit = 100, sinceId = 0): any[] {
+    return getDb().prepare(
+        `SELECT * FROM agent_messages WHERE id>? ORDER BY created_at DESC LIMIT ?`
+    ).all(sinceId, limit);
 }
 
 // ── Chat messages ───────────────────────────────────────────────────────────

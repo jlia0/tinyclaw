@@ -13,6 +13,10 @@ export interface AgentConfig {
     working_directory: string;
     system_prompt?: string;
     prompt_file?: string;
+    heartbeat?: {
+        enabled?: boolean;
+        interval?: number;
+    };
 }
 
 export interface TeamConfig {

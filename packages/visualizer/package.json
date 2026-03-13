@@ -5,6 +5,9 @@
   "main": "dist/team-visualizer.js",
   "scripts": {
     "build": "tsc",
+    "dev": "concurrently -k -n tsc,nodemon \"tsc -w\" \"nodemon --watch dist --ext js dist/team-visualizer.js\"",
+    "dev:visualize": "concurrently -k -n tsc,nodemon \"tsc -w\" \"nodemon --watch dist --ext js dist/team-visualizer.js\"",
+    "dev:chatroom": "concurrently -k -n tsc,nodemon \"tsc -w\" \"nodemon --watch dist --ext js dist/chatroom-viewer.js\"",
     "visualize": "node dist/team-visualizer.js",
     "chatroom": "node dist/chatroom-viewer.js"
   },

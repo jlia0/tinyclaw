@@ -2,6 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
 import { SCRIPT_DIR } from './config';
+import { loadMemoryIndex } from './memory';
+
+/**
+ * Built-in agent instructions read from the AGENTS.md template at SCRIPT_DIR.
+ * Teammate markers are replaced at runtime by buildSystemPrompt().
+ */
+export const BUILTIN_AGENT_INSTRUCTIONS = fs.readFileSync(path.join(SCRIPT_DIR, 'AGENTS.md'), 'utf8');
 
 /**
  * Recursively copy directory
@@ -23,81 +30,100 @@ export function copyDirSync(src: string, dest: string): void {
 }
 
 /**
- * Ensure agent directory exists with template files copied from TINYAGI_HOME.
- * Creates directory if it doesn't exist and copies .claude/, heartbeat.md, and AGENTS.md.
+ * Sync default skills from SCRIPT_DIR into an agent workspace and ensure
+ * .claude/skills is a symlink to .agents/skills (not a copy).
  */
-export function ensureAgentDirectory(agentDir: string): void {
-    if (fs.existsSync(agentDir)) {
-        return; // Directory already exists
-    }
-
-    fs.mkdirSync(agentDir, { recursive: true });
-
-    // Copy .claude directory
-    const sourceClaudeDir = path.join(SCRIPT_DIR, '.claude');
-    const targetClaudeDir = path.join(agentDir, '.claude');
-    if (fs.existsSync(sourceClaudeDir)) {
-        copyDirSync(sourceClaudeDir, targetClaudeDir);
-    }
-
-    // Copy heartbeat.md
-    const sourceHeartbeat = path.join(SCRIPT_DIR, 'heartbeat.md');
-    const targetHeartbeat = path.join(agentDir, 'heartbeat.md');
-    if (fs.existsSync(sourceHeartbeat)) {
-        fs.copyFileSync(sourceHeartbeat, targetHeartbeat);
-    }
-
-    // Copy AGENTS.md
-    const sourceAgents = path.join(SCRIPT_DIR, 'AGENTS.md');
-    const targetAgents = path.join(agentDir, 'AGENTS.md');
-    if (fs.existsSync(sourceAgents)) {
-        fs.copyFileSync(sourceAgents, targetAgents);
-    }
-
-    // Copy AGENTS.md as .claude/CLAUDE.md
-    if (fs.existsSync(sourceAgents)) {
-        fs.mkdirSync(path.join(agentDir, '.claude'), { recursive: true });
-        fs.copyFileSync(sourceAgents, path.join(agentDir, '.claude', 'CLAUDE.md'));
-    }
-
-    // Copy default skills from SCRIPT_DIR into .agents/skills
+export function syncAgentSkills(agentDir: string): void {
     const sourceSkills = path.join(SCRIPT_DIR, '.agents', 'skills');
-    if (fs.existsSync(sourceSkills)) {
-        const targetAgentsSkills = path.join(agentDir, '.agents', 'skills');
-        fs.mkdirSync(targetAgentsSkills, { recursive: true });
-        copyDirSync(sourceSkills, targetAgentsSkills);
+    if (!fs.existsSync(sourceSkills)) return;
 
-        // Mirror into .claude/skills for Claude Code
-        const targetClaudeSkills = path.join(agentDir, '.claude', 'skills');
-        fs.mkdirSync(targetClaudeSkills, { recursive: true });
-        copyDirSync(targetAgentsSkills, targetClaudeSkills);
+    // Copy default skills into .agents/skills (overwrites existing, preserves custom)
+    const targetAgentsSkills = path.join(agentDir, '.agents', 'skills');
+    fs.mkdirSync(targetAgentsSkills, { recursive: true });
+    for (const entry of fs.readdirSync(sourceSkills, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const dest = path.join(targetAgentsSkills, entry.name);
+        fs.rmSync(dest, { recursive: true, force: true });
+        copyDirSync(path.join(sourceSkills, entry.name), dest);
     }
 
-    // Create .tinyagi directory and copy SOUL.md
-    const targetTinyagi = path.join(agentDir, '.tinyagi');
-    fs.mkdirSync(targetTinyagi, { recursive: true });
-    const sourceSoul = path.join(SCRIPT_DIR, 'SOUL.md');
-    if (fs.existsSync(sourceSoul)) {
-        fs.copyFileSync(sourceSoul, path.join(targetTinyagi, 'SOUL.md'));
+    // Ensure .claude/skills is a symlink to ../.agents/skills
+    const targetClaudeSkills = path.join(agentDir, '.claude', 'skills');
+    fs.mkdirSync(path.join(agentDir, '.claude'), { recursive: true });
+
+    // Remove whatever exists (real dir, stale symlink, or file) and replace with symlink
+    try {
+        const lstat = fs.lstatSync(targetClaudeSkills);
+        if (lstat.isSymbolicLink()) {
+            fs.unlinkSync(targetClaudeSkills);
+        } else {
+            fs.rmSync(targetClaudeSkills, { recursive: true, force: true });
+        }
+    } catch {
+        // Doesn't exist — that's fine
     }
+
+    fs.symlinkSync(path.join('..', '.agents', 'skills'), targetClaudeSkills);
 }
 
 /**
- * Update the AGENTS.md in an agent's directory with current teammate info.
- * Replaces content between <!-- TEAMMATES_START --> and <!-- TEAMMATES_END --> markers.
+ * Ensure agent directory exists with template files from SCRIPT_DIR.
+ * Safe to call on existing directories — will sync skills and ensure symlinks.
  */
-export function updateAgentTeammates(agentDir: string, agentId: string, agents: Record<string, AgentConfig>, teams: Record<string, TeamConfig>): void {
-    const agentsMdPath = path.join(agentDir, 'AGENTS.md');
-    if (!fs.existsSync(agentsMdPath)) return;
+export function ensureAgentDirectory(agentDir: string): void {
+    const isNew = !fs.existsSync(agentDir);
+    fs.mkdirSync(agentDir, { recursive: true });
 
-    let content = fs.readFileSync(agentsMdPath, 'utf8');
+    if (isNew) {
+        // Copy .claude directory
+        const sourceClaudeDir = path.join(SCRIPT_DIR, '.claude');
+        if (fs.existsSync(sourceClaudeDir)) {
+            copyDirSync(sourceClaudeDir, path.join(agentDir, '.claude'));
+        }
+
+        // Copy heartbeat.md
+        const sourceHeartbeat = path.join(SCRIPT_DIR, 'heartbeat.md');
+        if (fs.existsSync(sourceHeartbeat)) {
+            fs.copyFileSync(sourceHeartbeat, path.join(agentDir, 'heartbeat.md'));
+        }
+
+        // Create empty AGENTS.md for user customization
+        fs.writeFileSync(path.join(agentDir, 'AGENTS.md'), '');
+
+        // Create .tinyagi directory and copy SOUL.md
+        const targetTinyagi = path.join(agentDir, '.tinyagi');
+        fs.mkdirSync(targetTinyagi, { recursive: true });
+        const sourceSoul = path.join(SCRIPT_DIR, 'SOUL.md');
+        if (fs.existsSync(sourceSoul)) {
+            fs.copyFileSync(sourceSoul, path.join(targetTinyagi, 'SOUL.md'));
+        }
+    }
+
+    // Create memory directory for hierarchical memory system
+    fs.mkdirSync(path.join(agentDir, 'memory'), { recursive: true });
+
+    // Always sync skills (keeps them up to date for both new and existing dirs)
+    syncAgentSkills(agentDir);
+}
+
+/**
+ * Build the full system prompt for an agent invocation.
+ * Combines built-in instructions + teammate info + user's custom AGENTS.md + config system prompt.
+ */
+export function buildSystemPrompt(
+    agentId: string,
+    agentDir: string,
+    agents: Record<string, AgentConfig>,
+    teams: Record<string, TeamConfig>,
+    configSystemPrompt?: string,
+    configPromptFile?: string
+): string {
+    let prompt = BUILTIN_AGENT_INSTRUCTIONS;
+
+    // Build teammate block
     const startMarker = '<!-- TEAMMATES_START -->';
     const endMarker = '<!-- TEAMMATES_END -->';
-    const startIdx = content.indexOf(startMarker);
-    const endIdx = content.indexOf(endMarker);
-    if (startIdx === -1 || endIdx === -1) return;
 
-    // Find teammates from all teams this agent belongs to
     const teammates: { id: string; name: string; model: string }[] = [];
     for (const team of Object.values(teams)) {
         if (!team.agents.includes(agentId)) continue;
@@ -122,26 +148,54 @@ export function updateAgentTeammates(agentDir: string, agentId: string, agents: 
         }
     }
 
-    const newContent = content.substring(0, startIdx + startMarker.length) + block + content.substring(endIdx);
-    fs.writeFileSync(agentsMdPath, newContent);
+    // Inject teammate block into the built-in instructions
+    const startIdx = prompt.indexOf(startMarker);
+    const endIdx = prompt.indexOf(endMarker);
+    if (startIdx !== -1 && endIdx !== -1) {
+        prompt = prompt.substring(0, startIdx + startMarker.length) + block + prompt.substring(endIdx);
+    }
 
-    // Also write to .claude/CLAUDE.md
-    const claudeDir = path.join(agentDir, '.claude');
-    if (!fs.existsSync(claudeDir)) {
-        fs.mkdirSync(claudeDir, { recursive: true });
-    }
-    const claudeMdPath = path.join(claudeDir, 'CLAUDE.md');
-    let claudeContent = '';
-    if (fs.existsSync(claudeMdPath)) {
-        claudeContent = fs.readFileSync(claudeMdPath, 'utf8');
-    }
-    const cStartIdx = claudeContent.indexOf(startMarker);
-    const cEndIdx = claudeContent.indexOf(endMarker);
-    if (cStartIdx !== -1 && cEndIdx !== -1) {
-        claudeContent = claudeContent.substring(0, cStartIdx + startMarker.length) + block + claudeContent.substring(cEndIdx);
+    // Inject memory index into the system prompt
+    const memStartMarker = '<!-- MEMORY_START -->';
+    const memEndMarker = '<!-- MEMORY_END -->';
+    const memoryTree = loadMemoryIndex(agentDir);
+    let memBlock = '';
+    if (memoryTree) {
+        memBlock = '\n' + memoryTree + '\n\n' +
+            'To read a memory in detail, read the file at `memory/<path>`. ' +
+            'Use the **memory** skill to create, update, or reorganize memories.\n';
     } else {
-        // Append markers + block
-        claudeContent = claudeContent.trimEnd() + '\n\n' + startMarker + block + endMarker + '\n';
+        memBlock = '\nNo memories yet. Use the **memory** skill to start building your memory.\n';
     }
-    fs.writeFileSync(claudeMdPath, claudeContent);
+    const memStartIdx = prompt.indexOf(memStartMarker);
+    const memEndIdx = prompt.indexOf(memEndMarker);
+    if (memStartIdx !== -1 && memEndIdx !== -1) {
+        prompt = prompt.substring(0, memStartIdx + memStartMarker.length) + memBlock + prompt.substring(memEndIdx);
+    }
+
+    // Append user's custom AGENTS.md from agent workspace (if non-empty)
+    const userAgentsMd = path.join(agentDir, 'AGENTS.md');
+    if (fs.existsSync(userAgentsMd)) {
+        const userContent = fs.readFileSync(userAgentsMd, 'utf8').trim();
+        if (userContent) {
+            prompt += '\n\n' + userContent;
+        }
+    }
+
+    // Append config system prompt (from settings.json)
+    if (configPromptFile) {
+        try {
+            const promptFileContent = fs.readFileSync(configPromptFile, 'utf8').trim();
+            if (promptFileContent) {
+                prompt += '\n\n' + promptFileContent;
+            }
+        } catch {
+            // Ignore missing prompt file
+        }
+    } else if (configSystemPrompt) {
+        prompt += '\n\n' + configSystemPrompt;
+    }
+
+    return prompt;
 }
+
