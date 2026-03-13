@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { AgentConfig, TeamConfig } from './types';
 import { SCRIPT_DIR } from './config';
+import { loadMemoryIndex } from './memory';
 
 /**
  * Built-in agent instructions read from the AGENTS.md template at SCRIPT_DIR.
@@ -98,6 +99,9 @@ export function ensureAgentDirectory(agentDir: string): void {
         }
     }
 
+    // Create memory directory for hierarchical memory system
+    fs.mkdirSync(path.join(agentDir, 'memory'), { recursive: true });
+
     // Always sync skills (keeps them up to date for both new and existing dirs)
     syncAgentSkills(agentDir);
 }
@@ -151,6 +155,24 @@ export function buildSystemPrompt(
         prompt = prompt.substring(0, startIdx + startMarker.length) + block + prompt.substring(endIdx);
     }
 
+    // Inject memory index into the system prompt
+    const memStartMarker = '<!-- MEMORY_START -->';
+    const memEndMarker = '<!-- MEMORY_END -->';
+    const memoryTree = loadMemoryIndex(agentDir);
+    let memBlock = '';
+    if (memoryTree) {
+        memBlock = '\n' + memoryTree + '\n\n' +
+            'To read a memory in detail, read the file at `memory/<path>`. ' +
+            'Use the **memory** skill to create, update, or reorganize memories.\n';
+    } else {
+        memBlock = '\nNo memories yet. Use the **memory** skill to start building your memory.\n';
+    }
+    const memStartIdx = prompt.indexOf(memStartMarker);
+    const memEndIdx = prompt.indexOf(memEndMarker);
+    if (memStartIdx !== -1 && memEndIdx !== -1) {
+        prompt = prompt.substring(0, memStartIdx + memStartMarker.length) + memBlock + prompt.substring(memEndIdx);
+    }
+
     // Append user's custom AGENTS.md from agent workspace (if non-empty)
     const userAgentsMd = path.join(agentDir, 'AGENTS.md');
     if (fs.existsSync(userAgentsMd)) {
@@ -176,3 +198,4 @@ export function buildSystemPrompt(
 
     return prompt;
 }
+

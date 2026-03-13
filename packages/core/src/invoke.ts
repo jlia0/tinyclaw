@@ -68,7 +68,7 @@ export async function invokeAgent(
         log('INFO', `Initialized agent directory with config files: ${agentDir}`);
     }
 
-    // Build system prompt in-memory (built-in instructions + teammates + user customization)
+    // Build system prompt in-memory (built-in instructions + teammates + memory + user customization)
     const systemPrompt = buildSystemPrompt(agentId, agentDir, agents, teams, agent.system_prompt, agent.prompt_file);
 
     // Resolve working directory
