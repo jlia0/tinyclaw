@@ -1,21 +1,10 @@
 #!/usr/bin/env node
 import * as p from '@clack/prompts';
-import fs from 'fs';
-import { Settings, updateAgentTeammates } from '@tinyclaw/core';
+import { Settings } from '@tinyclaw/core';
 import {
     unwrap, cleanId, validateId,
     writeSettings, requireSettings,
 } from './shared.ts';
-
-function refreshTeamInfo(settings: Settings) {
-    const agents = settings.agents || {};
-    const teams = settings.teams || {};
-    for (const [agentId, agent] of Object.entries(agents)) {
-        if (agent.working_directory && fs.existsSync(agent.working_directory)) {
-            updateAgentTeammates(agent.working_directory, agentId, agents, teams);
-        }
-    }
-}
 
 // --- team add ---
 
@@ -78,8 +67,6 @@ async function teamAdd() {
     };
     writeSettings(settings);
 
-    refreshTeamInfo(settings);
-
     p.log.success(`Team '${teamId}' created!`);
     p.log.info(`Agents: ${selectedAgents.join(', ')}`);
     p.log.info(`Leader: @${leader}`);
@@ -109,7 +96,6 @@ async function teamRemove(teamId: string) {
     delete settings.teams![teamId];
     writeSettings(settings);
 
-    refreshTeamInfo(settings);
     p.log.success(`Team '${teamId}' removed.`);
 }
 
@@ -160,8 +146,6 @@ async function teamRemoveAgent(teamId: string, agentId: string) {
     team.agents = remaining;
     team.leader_agent = newLeader;
     writeSettings(settings);
-
-    refreshTeamInfo(settings);
 
     p.log.success(`Removed @${agentId} from team '${teamId}'.${newLeader !== team.leader_agent ? ` New leader: @${newLeader}.` : ''}`);
 }
@@ -234,8 +218,6 @@ function teamAddAgent(teamId: string, agentId: string) {
 
     team.agents.push(agentId);
     writeSettings(settings);
-
-    refreshTeamInfo(settings);
 
     p.log.success(`Added @${agentId} to team '${teamId}' (${team.name}).`);
 }
