@@ -4,7 +4,7 @@ import path from 'path';
 import { AgentConfig, CustomProvider, TeamConfig } from './types';
 import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel, getSettings } from './config';
 import { log } from './logging';
-import { ensureAgentDirectory, updateAgentTeammates } from './agent';
+import { ensureAgentDirectory, buildSystemPrompt } from './agent';
 
 export async function runCommand(command: string, args: string[], cwd?: string, envOverrides?: Record<string, string>): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -68,8 +68,8 @@ export async function invokeAgent(
         log('INFO', `Initialized agent directory with config files: ${agentDir}`);
     }
 
-    // Update AGENTS.md with current teammate info
-    updateAgentTeammates(agentDir, agentId, agents, teams);
+    // Build system prompt in-memory (built-in instructions + teammates + user customization)
+    const systemPrompt = buildSystemPrompt(agentId, agentDir, agents, teams, agent.system_prompt, agent.prompt_file);
 
     // Resolve working directory
     const workingDir = agent.working_directory
@@ -138,6 +138,9 @@ export async function invokeAgent(
         if (modelId) {
             codexArgs.push('--model', modelId);
         }
+        if (systemPrompt) {
+            codexArgs.push('-c', `developer_instructions=${systemPrompt}`);
+        }
         codexArgs.push('--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json', message);
 
         const codexOutput = await runCommand('codex', codexArgs, workingDir, envOverrides);
@@ -171,9 +174,24 @@ export async function invokeAgent(
             log('INFO', `Resetting OpenCode conversation for agent: ${agentId}`);
         }
 
+        // Pass system prompt via OPENCODE_CONFIG_CONTENT env var using a custom agent
+        if (systemPrompt) {
+            const configContent = JSON.stringify({
+                agent: {
+                    [agentId]: {
+                        prompt: systemPrompt
+                    }
+                }
+            });
+            envOverrides.OPENCODE_CONFIG_CONTENT = configContent;
+        }
+
         const opencodeArgs = ['run', '--format', 'json'];
         if (modelId) {
             opencodeArgs.push('--model', modelId);
+        }
+        if (systemPrompt) {
+            opencodeArgs.push('--agent', agentId);
         }
         if (continueConversation) {
             opencodeArgs.push('-c');
@@ -211,6 +229,9 @@ export async function invokeAgent(
         const claudeArgs = ['--dangerously-skip-permissions'];
         if (modelId) {
             claudeArgs.push('--model', modelId);
+        }
+        if (systemPrompt) {
+            claudeArgs.push('--system-prompt', systemPrompt);
         }
         if (continueConversation) {
             claudeArgs.push('-c');

@@ -38,15 +38,9 @@ function provisionAgentWorkspace(agentDir: string, _agentId: string): string[] {
         steps.push('Copied heartbeat.md');
     }
 
-    const agentsMd = path.join(SCRIPT_DIR, 'AGENTS.md');
-    if (copyIfExists(agentsMd, path.join(agentDir, 'AGENTS.md'))) {
-        steps.push('Copied AGENTS.md');
-    }
-
-    if (fs.existsSync(agentsMd)) {
-        fs.copyFileSync(agentsMd, path.join(agentDir, '.claude', 'CLAUDE.md'));
-        steps.push('Copied CLAUDE.md to .claude/');
-    }
+    // Create empty AGENTS.md for user customization (built-in instructions are passed via system prompt)
+    fs.writeFileSync(path.join(agentDir, 'AGENTS.md'), '');
+    steps.push('Created empty AGENTS.md');
 
     // Copy default skills from SCRIPT_DIR
     const skillsSrc = path.join(SCRIPT_DIR, '.agents', 'skills');

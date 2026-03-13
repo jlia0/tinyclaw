@@ -4,6 +4,12 @@ import { AgentConfig, TeamConfig } from './types';
 import { SCRIPT_DIR } from './config';
 
 /**
+ * Built-in agent instructions read from the AGENTS.md template at SCRIPT_DIR.
+ * Teammate markers are replaced at runtime by buildSystemPrompt().
+ */
+export const BUILTIN_AGENT_INSTRUCTIONS = fs.readFileSync(path.join(SCRIPT_DIR, 'AGENTS.md'), 'utf8');
+
+/**
  * Recursively copy directory
  */
 export function copyDirSync(src: string, dest: string): void {
@@ -24,7 +30,8 @@ export function copyDirSync(src: string, dest: string): void {
 
 /**
  * Ensure agent directory exists with template files copied from TINYCLAW_HOME.
- * Creates directory if it doesn't exist and copies .claude/, heartbeat.md, and AGENTS.md.
+ * Creates directory if it doesn't exist. Creates an empty AGENTS.md for user customization.
+ * The built-in instructions are now passed via system prompt at invocation time.
  */
 export function ensureAgentDirectory(agentDir: string): void {
     if (fs.existsSync(agentDir)) {
@@ -47,18 +54,8 @@ export function ensureAgentDirectory(agentDir: string): void {
         fs.copyFileSync(sourceHeartbeat, targetHeartbeat);
     }
 
-    // Copy AGENTS.md
-    const sourceAgents = path.join(SCRIPT_DIR, 'AGENTS.md');
-    const targetAgents = path.join(agentDir, 'AGENTS.md');
-    if (fs.existsSync(sourceAgents)) {
-        fs.copyFileSync(sourceAgents, targetAgents);
-    }
-
-    // Copy AGENTS.md as .claude/CLAUDE.md
-    if (fs.existsSync(sourceAgents)) {
-        fs.mkdirSync(path.join(agentDir, '.claude'), { recursive: true });
-        fs.copyFileSync(sourceAgents, path.join(agentDir, '.claude', 'CLAUDE.md'));
-    }
+    // Create empty AGENTS.md for user customization
+    fs.writeFileSync(path.join(agentDir, 'AGENTS.md'), '');
 
     // Copy default skills from SCRIPT_DIR into .agents/skills
     const sourceSkills = path.join(SCRIPT_DIR, '.agents', 'skills');
@@ -83,21 +80,23 @@ export function ensureAgentDirectory(agentDir: string): void {
 }
 
 /**
- * Update the AGENTS.md in an agent's directory with current teammate info.
- * Replaces content between <!-- TEAMMATES_START --> and <!-- TEAMMATES_END --> markers.
+ * Build the full system prompt for an agent invocation.
+ * Combines built-in instructions + teammate info + user's custom AGENTS.md + config system prompt.
  */
-export function updateAgentTeammates(agentDir: string, agentId: string, agents: Record<string, AgentConfig>, teams: Record<string, TeamConfig>): void {
-    const agentsMdPath = path.join(agentDir, 'AGENTS.md');
-    if (!fs.existsSync(agentsMdPath)) return;
+export function buildSystemPrompt(
+    agentId: string,
+    agentDir: string,
+    agents: Record<string, AgentConfig>,
+    teams: Record<string, TeamConfig>,
+    configSystemPrompt?: string,
+    configPromptFile?: string
+): string {
+    let prompt = BUILTIN_AGENT_INSTRUCTIONS;
 
-    let content = fs.readFileSync(agentsMdPath, 'utf8');
+    // Build teammate block
     const startMarker = '<!-- TEAMMATES_START -->';
     const endMarker = '<!-- TEAMMATES_END -->';
-    const startIdx = content.indexOf(startMarker);
-    const endIdx = content.indexOf(endMarker);
-    if (startIdx === -1 || endIdx === -1) return;
 
-    // Find teammates from all teams this agent belongs to
     const teammates: { id: string; name: string; model: string }[] = [];
     for (const team of Object.values(teams)) {
         if (!team.agents.includes(agentId)) continue;
@@ -122,26 +121,35 @@ export function updateAgentTeammates(agentDir: string, agentId: string, agents: 
         }
     }
 
-    const newContent = content.substring(0, startIdx + startMarker.length) + block + content.substring(endIdx);
-    fs.writeFileSync(agentsMdPath, newContent);
+    // Inject teammate block into the built-in instructions
+    const startIdx = prompt.indexOf(startMarker);
+    const endIdx = prompt.indexOf(endMarker);
+    if (startIdx !== -1 && endIdx !== -1) {
+        prompt = prompt.substring(0, startIdx + startMarker.length) + block + prompt.substring(endIdx);
+    }
 
-    // Also write to .claude/CLAUDE.md
-    const claudeDir = path.join(agentDir, '.claude');
-    if (!fs.existsSync(claudeDir)) {
-        fs.mkdirSync(claudeDir, { recursive: true });
+    // Append user's custom AGENTS.md from agent workspace (if non-empty)
+    const userAgentsMd = path.join(agentDir, 'AGENTS.md');
+    if (fs.existsSync(userAgentsMd)) {
+        const userContent = fs.readFileSync(userAgentsMd, 'utf8').trim();
+        if (userContent) {
+            prompt += '\n\n' + userContent;
+        }
     }
-    const claudeMdPath = path.join(claudeDir, 'CLAUDE.md');
-    let claudeContent = '';
-    if (fs.existsSync(claudeMdPath)) {
-        claudeContent = fs.readFileSync(claudeMdPath, 'utf8');
+
+    // Append config system prompt (from settings.json)
+    if (configPromptFile) {
+        try {
+            const promptFileContent = fs.readFileSync(configPromptFile, 'utf8').trim();
+            if (promptFileContent) {
+                prompt += '\n\n' + promptFileContent;
+            }
+        } catch {
+            // Ignore missing prompt file
+        }
+    } else if (configSystemPrompt) {
+        prompt += '\n\n' + configSystemPrompt;
     }
-    const cStartIdx = claudeContent.indexOf(startMarker);
-    const cEndIdx = claudeContent.indexOf(endMarker);
-    if (cStartIdx !== -1 && cEndIdx !== -1) {
-        claudeContent = claudeContent.substring(0, cStartIdx + startMarker.length) + block + claudeContent.substring(cEndIdx);
-    } else {
-        // Append markers + block
-        claudeContent = claudeContent.trimEnd() + '\n\n' + startMarker + block + endMarker + '\n';
-    }
-    fs.writeFileSync(claudeMdPath, claudeContent);
+
+    return prompt;
 }
