@@ -129,7 +129,6 @@ export const CODEX_MODEL_IDS: Record<string, string> = {
 
 export const GEMINI_MODEL_IDS: Record<string, string> = {
     'gemini-2.5-flash': 'gemini-2.5-flash',
-    'gemini-2.5': 'gemini-2.5',
     'gemini-2.5-pro': 'gemini-2.5-pro',
 };
 

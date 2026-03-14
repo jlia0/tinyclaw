@@ -264,16 +264,31 @@ export async function invokeAgent(
             envOverrides.GEMINI_SYSTEM_MD = '';
         }
 
-        const geminiArgs = ['--approval-mode=yolo', '--output-format', 'json'];
-        if (!shouldReset) {
-            geminiArgs.push('--resume', 'latest');
-        }
-        if (modelId) {
-            geminiArgs.push('--model', modelId);
-        }
-        geminiArgs.push('--prompt', message);
+        const buildGeminiArgs = (resumeLatest: boolean): string[] => {
+            const args = ['--approval-mode=yolo', '--output-format', 'json'];
+            if (resumeLatest) {
+                args.push('--resume', 'latest');
+            }
+            if (modelId) {
+                args.push('--model', modelId);
+            }
+            args.push('--prompt', message);
+            return args;
+        };
 
-        const geminiOutput = await runCommand('gemini', geminiArgs, workingDir, envOverrides);
+        let geminiOutput: string;
+        try {
+            geminiOutput = await runCommand('gemini', buildGeminiArgs(!shouldReset), workingDir, envOverrides);
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            if (!shouldReset && errorMessage.includes('No previous sessions found for this project')) {
+                log('INFO', `No Gemini session to resume for agent ${agentId}; retrying without resume`);
+                geminiOutput = await runCommand('gemini', buildGeminiArgs(false), workingDir, envOverrides);
+            } else {
+                throw error;
+            }
+        }
+
         let response = '';
         const trimmedOutput = geminiOutput.trim();
         const candidates = [trimmedOutput, ...trimmedOutput.split('\n').map(line => line.trim()).filter(Boolean).reverse()];

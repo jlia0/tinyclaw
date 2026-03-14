@@ -40,7 +40,6 @@ const MODELS: Record<string, { value: string; label: string }[]> = {
   google: [
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-    { value: "gemini-2.5", label: "Gemini 2.5" },
   ],
   opencode: [
     { value: "opencode/claude-sonnet-4-5", label: "opencode/claude-sonnet-4-5" },

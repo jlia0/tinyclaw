@@ -92,7 +92,7 @@ function providerSet(providerName: string, args: string[]) {
             p.log.message("Use 'tinyclaw model {gpt-5.3-codex|gpt-5.2}' to set the model.");
             p.log.message("Note: Make sure you have the 'codex' CLI installed.");
         } else if (providerName === 'google') {
-            p.log.message("Use 'tinyclaw model {gemini-2.5-flash|gemini-2.5-pro|gemini-2.5}' to set the model.");
+            p.log.message("Use 'tinyclaw model {gemini-2.5-flash|gemini-2.5-pro}' to set the model.");
             p.log.message("Note: Make sure you have the 'gemini' CLI installed.");
         } else {
             p.log.message("Use 'tinyclaw model {sonnet|opus}' to set the model.");
@@ -142,7 +142,7 @@ function modelSet(modelName: string) {
     // Determine provider from model name
     const anthropicModels = ['sonnet', 'opus'];
     const openaiModels = ['gpt-5.2', 'gpt-5.3-codex'];
-    const googleModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5'];
+    const googleModels = ['gemini-2.5-flash', 'gemini-2.5-pro'];
 
     let targetProvider: string;
     if (anthropicModels.includes(modelName)) {
@@ -152,11 +152,11 @@ function modelSet(modelName: string) {
     } else if (googleModels.includes(modelName)) {
         targetProvider = 'google';
     } else {
-        p.log.error('Usage: model {sonnet|opus|gpt-5.2|gpt-5.3-codex|gemini-2.5-flash|gemini-2.5-pro|gemini-2.5}');
+        p.log.error('Usage: model {sonnet|opus|gpt-5.2|gpt-5.3-codex|gemini-2.5-flash|gemini-2.5-pro}');
         p.log.message('');
         p.log.message('Anthropic models: sonnet, opus');
         p.log.message('OpenAI models: gpt-5.2, gpt-5.3-codex');
-        p.log.message('Google models: gemini-2.5-flash, gemini-2.5-pro, gemini-2.5');
+        p.log.message('Google models: gemini-2.5-flash, gemini-2.5-pro');
         process.exit(1);
     }
 

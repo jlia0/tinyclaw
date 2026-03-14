@@ -112,7 +112,6 @@ export function googleModelOptions(): ProviderOption[] {
     return [
         { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'recommended' },
         { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-        { value: 'gemini-2.5', label: 'Gemini 2.5' },
         { value: '__custom__', label: 'Custom', hint: 'enter model name' },
     ];
 }
