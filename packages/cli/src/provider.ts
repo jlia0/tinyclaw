@@ -2,12 +2,26 @@
 import * as p from '@clack/prompts';
 import { readSettings, writeSettings, requireSettings } from './shared.ts';
 
+function getModelSection(settings: ReturnType<typeof requireSettings>, provider: string) {
+    if (provider === 'openai') return settings.models?.openai;
+    if (provider === 'opencode') return settings.models?.opencode;
+    if (provider === 'google') return settings.models?.google;
+    return settings.models?.anthropic;
+}
+
+function getProviderLabel(provider: string): string {
+    if (provider === 'openai') return 'OpenAI/Codex';
+    if (provider === 'opencode') return 'OpenCode';
+    if (provider === 'google') return 'Google/Gemini';
+    return 'Anthropic';
+}
+
 // --- provider show ---
 
 function providerShow() {
     const settings = requireSettings();
     const provider = settings.models?.provider || 'anthropic';
-    const modelSection = provider === 'openai' ? settings.models?.openai : settings.models?.anthropic;
+    const modelSection = getModelSection(settings, provider);
     const model = modelSection?.model || '';
 
     if (model) {
@@ -43,8 +57,8 @@ function providerSet(providerName: string, args: string[]) {
         }
     }
 
-    if (providerName !== 'anthropic' && providerName !== 'openai') {
-        p.log.error('Usage: provider {anthropic|openai} [--model MODEL] [--auth-token TOKEN]');
+    if (providerName !== 'anthropic' && providerName !== 'openai' && providerName !== 'google') {
+        p.log.error('Usage: provider {anthropic|openai|google} [--model MODEL] [--auth-token TOKEN]');
         process.exit(1);
     }
 
@@ -68,15 +82,18 @@ function providerSet(providerName: string, args: string[]) {
             }
         }
 
-        p.log.success(`Switched to ${providerName === 'anthropic' ? 'Anthropic' : 'OpenAI/Codex'} provider with model: ${modelArg}`);
+        p.log.success(`Switched to ${getProviderLabel(providerName)} provider with model: ${modelArg}`);
         if (updatedCount > 0) {
             p.log.message(`  Updated ${updatedCount} agent(s) from ${oldProvider} to ${providerName}/${modelArg}`);
         }
     } else {
-        p.log.success(`Switched to ${providerName === 'anthropic' ? 'Anthropic' : 'OpenAI/Codex'} provider`);
+        p.log.success(`Switched to ${getProviderLabel(providerName)} provider`);
         if (providerName === 'openai') {
             p.log.message("Use 'tinyclaw model {gpt-5.3-codex|gpt-5.2}' to set the model.");
             p.log.message("Note: Make sure you have the 'codex' CLI installed.");
+        } else if (providerName === 'google') {
+            p.log.message("Use 'tinyclaw model {gemini-2.5-flash|gemini-2.5-pro|gemini-2.5}' to set the model.");
+            p.log.message("Note: Make sure you have the 'gemini' CLI installed.");
         } else {
             p.log.message("Use 'tinyclaw model {sonnet|opus}' to set the model.");
         }
@@ -85,7 +102,7 @@ function providerSet(providerName: string, args: string[]) {
     if (authTokenArg) {
         if (!settings.models[providerName]) settings.models[providerName] = {};
         (settings.models as any)[providerName].auth_token = authTokenArg;
-        p.log.success(`${providerName === 'anthropic' ? 'Anthropic' : 'OpenAI'} auth token saved`);
+        p.log.success(`${getProviderLabel(providerName)} auth token saved`);
     }
 
     writeSettings(settings);
@@ -96,7 +113,7 @@ function providerSet(providerName: string, args: string[]) {
 function modelShow() {
     const settings = requireSettings();
     const provider = settings.models?.provider || 'anthropic';
-    const modelSection = provider === 'openai' ? settings.models?.openai : settings.models?.anthropic;
+    const modelSection = getModelSection(settings, provider);
     const model = modelSection?.model || '';
 
     if (model) {
@@ -125,17 +142,21 @@ function modelSet(modelName: string) {
     // Determine provider from model name
     const anthropicModels = ['sonnet', 'opus'];
     const openaiModels = ['gpt-5.2', 'gpt-5.3-codex'];
+    const googleModels = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5'];
 
     let targetProvider: string;
     if (anthropicModels.includes(modelName)) {
         targetProvider = 'anthropic';
     } else if (openaiModels.includes(modelName)) {
         targetProvider = 'openai';
+    } else if (googleModels.includes(modelName)) {
+        targetProvider = 'google';
     } else {
-        p.log.error('Usage: model {sonnet|opus|gpt-5.2|gpt-5.3-codex}');
+        p.log.error('Usage: model {sonnet|opus|gpt-5.2|gpt-5.3-codex|gemini-2.5-flash|gemini-2.5-pro|gemini-2.5}');
         p.log.message('');
         p.log.message('Anthropic models: sonnet, opus');
         p.log.message('OpenAI models: gpt-5.2, gpt-5.3-codex');
+        p.log.message('Google models: gemini-2.5-flash, gemini-2.5-pro, gemini-2.5');
         process.exit(1);
     }
 
@@ -176,6 +197,7 @@ switch (command) {
         break;
     case 'anthropic':
     case 'openai':
+    case 'google':
         providerSet(command, args);
         break;
     case 'model':
@@ -187,7 +209,7 @@ switch (command) {
         break;
     default:
         p.log.error(`Unknown provider command: ${command}`);
-        p.log.message('Usage: provider {show|anthropic|openai} [--model MODEL] [--auth-token TOKEN]');
+        p.log.message('Usage: provider {show|anthropic|openai|google} [--model MODEL] [--auth-token TOKEN]');
         p.log.message('       provider model [name]');
         process.exit(1);
 }

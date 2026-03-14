@@ -305,8 +305,8 @@ app.put('/api/custom-providers/:id', async (c) => {
     if (!body.name || !body.harness || !body.base_url || !body.api_key) {
         return c.json({ error: 'name, harness, base_url, and api_key are required' }, 400);
     }
-    if (body.harness !== 'claude' && body.harness !== 'codex') {
-        return c.json({ error: 'harness must be "claude" or "codex"' }, 400);
+    if (body.harness !== 'claude' && body.harness !== 'codex' && body.harness !== 'gemini') {
+        return c.json({ error: 'harness must be "claude", "codex", or "gemini"' }, 400);
     }
 
     const settings = mutateSettings(s => {

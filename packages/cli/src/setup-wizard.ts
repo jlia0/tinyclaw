@@ -166,6 +166,7 @@ async function main() {
             provider: providerKey,
             ...(providerKey === 'anthropic' ? { anthropic: { model } } : {}),
             ...(providerKey === 'openai' ? { openai: { model } } : {}),
+            ...(providerKey === 'google' ? { google: { model } } : {}),
             ...(providerKey === 'opencode' ? { opencode: { model } } : {}),
         },
         monitoring: {

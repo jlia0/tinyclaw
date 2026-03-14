@@ -83,6 +83,7 @@ export function providerOptions(includeCustom = false): ProviderOption[] {
     const opts: ProviderOption[] = [
         { value: 'anthropic', label: 'Anthropic (Claude)', hint: 'recommended' },
         { value: 'openai', label: 'OpenAI (Codex/GPT)' },
+        { value: 'google', label: 'Google (Gemini CLI)' },
         { value: 'opencode', label: 'OpenCode' },
     ];
     if (includeCustom) {
@@ -103,6 +104,15 @@ export function openaiModelOptions(): ProviderOption[] {
     return [
         { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', hint: 'recommended' },
         { value: 'gpt-5.2', label: 'GPT-5.2' },
+        { value: '__custom__', label: 'Custom', hint: 'enter model name' },
+    ];
+}
+
+export function googleModelOptions(): ProviderOption[] {
+    return [
+        { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'recommended' },
+        { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+        { value: 'gemini-2.5', label: 'Gemini 2.5' },
         { value: '__custom__', label: 'Custom', hint: 'enter model name' },
     ];
 }
@@ -129,6 +139,8 @@ export async function promptModel(provider: string): Promise<string> {
 
     if (provider === 'anthropic') {
         options = anthropicModelOptions();
+    } else if (provider === 'google') {
+        options = googleModelOptions();
     } else if (provider === 'opencode') {
         options = opencodeModelOptions();
         customHint = 'Enter model name (e.g. provider/model)';
@@ -152,11 +164,12 @@ export async function promptModel(provider: string): Promise<string> {
 }
 
 /**
- * Prompt for harness selection (claude or codex).
+ * Prompt for harness selection.
  */
 export function harnessOptions(): ProviderOption[] {
     return [
         { value: 'claude', label: 'claude (Anthropic CLI)' },
         { value: 'codex', label: 'codex (OpenAI CLI)' },
+        { value: 'gemini', label: 'gemini (Google Gemini CLI)' },
     ];
 }

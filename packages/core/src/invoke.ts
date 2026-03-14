@@ -2,7 +2,14 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, CustomProvider, TeamConfig } from './types';
-import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel, getSettings } from './config';
+import {
+    SCRIPT_DIR,
+    resolveClaudeModel,
+    resolveCodexModel,
+    resolveOpenCodeModel,
+    resolveGeminiModel,
+    getSettings,
+} from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, buildSystemPrompt } from './agent';
 
@@ -48,7 +55,7 @@ export async function runCommand(command: string, args: string[], cwd?: string, 
 }
 
 /**
- * Invoke a single agent with a message. Contains all Claude/Codex invocation logic.
+ * Invoke a single agent with a message. Contains all Claude/Codex/Gemini invocation logic.
  * Returns the raw response text.
  */
 export async function invokeAgent(
@@ -95,7 +102,7 @@ export async function invokeAgent(
             throw new Error(`Custom provider '${customId}' not found in settings.custom_providers`);
         }
         // Map harness back to built-in provider for CLI selection
-        provider = customProvider.harness === 'codex' ? 'openai' : 'anthropic';
+        provider = customProvider.harness === 'codex' ? 'openai' : customProvider.harness === 'gemini' ? 'google' : 'anthropic';
 
         // Build env overrides based on harness
         if (customProvider.harness === 'claude') {
@@ -105,6 +112,10 @@ export async function invokeAgent(
         } else if (customProvider.harness === 'codex') {
             envOverrides.OPENAI_API_KEY = customProvider.api_key;
             envOverrides.OPENAI_BASE_URL = customProvider.base_url;
+        } else if (customProvider.harness === 'gemini') {
+            envOverrides.GOOGLE_API_KEY = customProvider.api_key;
+            envOverrides.GEMINI_API_KEY = customProvider.api_key;
+            envOverrides.GEMINI_SANDBOX = 'true';
         }
 
         log('INFO', `Using custom provider '${customId}' (harness: ${customProvider.harness}, base_url: ${customProvider.base_url})`);
@@ -115,6 +126,9 @@ export async function invokeAgent(
             envOverrides.ANTHROPIC_API_KEY = settings.models.anthropic.auth_token;
         } else if (provider === 'openai' && settings.models?.openai?.auth_token) {
             envOverrides.OPENAI_API_KEY = settings.models.openai.auth_token;
+        } else if (provider === 'google' && settings.models?.google?.auth_token) {
+            envOverrides.GOOGLE_API_KEY = settings.models.google.auth_token;
+            envOverrides.GEMINI_API_KEY = settings.models.google.auth_token;
         }
     }
 
@@ -215,6 +229,77 @@ export async function invokeAgent(
         }
 
         return response || 'Sorry, I could not generate a response from OpenCode.';
+    } else if (provider === 'google') {
+        const modelId = resolveGeminiModel(effectiveModel);
+        log('INFO', `Using Gemini CLI (agent: ${agentId}${modelId ? `, model: ${modelId}` : ''})`);
+
+        if (shouldReset) {
+            log('INFO', `Resetting Gemini state for agent: ${agentId}`);
+        }
+
+        const geminiRoot = path.join(agentDir, '.tinyclaw', 'gemini');
+        const homeDir = path.join(geminiRoot, 'home');
+        const geminiHomeDir = path.join(homeDir, '.gemini');
+        const systemPromptPath = path.join(geminiRoot, 'system.md');
+
+        fs.mkdirSync(path.join(agentDir, '.tinyclaw'), { recursive: true });
+        fs.mkdirSync(geminiRoot, { recursive: true });
+        if (shouldReset) {
+            fs.rmSync(homeDir, { recursive: true, force: true });
+        }
+        fs.mkdirSync(homeDir, { recursive: true });
+        fs.mkdirSync(geminiHomeDir, { recursive: true });
+
+        const trimmedPrompt = systemPrompt.trim();
+        if (trimmedPrompt) {
+            fs.writeFileSync(systemPromptPath, trimmedPrompt + '\n');
+        } else if (fs.existsSync(systemPromptPath)) {
+            fs.rmSync(systemPromptPath, { force: true });
+        }
+
+        envOverrides.GEMINI_CLI_HOME = homeDir;
+        if (trimmedPrompt) {
+            envOverrides.GEMINI_SYSTEM_MD = systemPromptPath;
+        } else {
+            envOverrides.GEMINI_SYSTEM_MD = '';
+        }
+
+        const geminiArgs = ['--approval-mode=yolo', '--output-format', 'json'];
+        if (!shouldReset) {
+            geminiArgs.push('--resume', 'latest');
+        }
+        if (modelId) {
+            geminiArgs.push('--model', modelId);
+        }
+        geminiArgs.push('--prompt', message);
+
+        const geminiOutput = await runCommand('gemini', geminiArgs, workingDir, envOverrides);
+        let response = '';
+        const trimmedOutput = geminiOutput.trim();
+        const candidates = [trimmedOutput, ...trimmedOutput.split('\n').map(line => line.trim()).filter(Boolean).reverse()];
+        for (const candidate of candidates) {
+            try {
+                const parsed = JSON.parse(candidate);
+                if (parsed?.error) {
+                    const errorMessage = typeof parsed.error === 'string'
+                        ? parsed.error
+                        : parsed.error?.message || JSON.stringify(parsed.error);
+                    throw new Error(errorMessage);
+                }
+                if (typeof parsed?.response === 'string') {
+                    response = parsed.response.trim();
+                    break;
+                }
+            } catch (error) {
+                if (!(error instanceof SyntaxError)) {
+                    throw error;
+                }
+            }
+        }
+        if (!response) {
+            response = trimmedOutput;
+        }
+        return response || 'Sorry, I could not generate a response from Gemini.';
     } else {
         // Default to Claude (Anthropic)
         log('INFO', `Using Claude provider (agent: ${agentId})`);

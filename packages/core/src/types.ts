@@ -1,6 +1,6 @@
 export interface CustomProvider {
     name: string;
-    harness: 'claude' | 'codex';  // which CLI to invoke
+    harness: 'claude' | 'codex' | 'gemini';  // which CLI to invoke
     base_url: string;
     api_key: string;
     model?: string;               // model name to pass to the CLI
@@ -8,8 +8,8 @@ export interface CustomProvider {
 
 export interface AgentConfig {
     name: string;
-    provider: string;       // 'anthropic', 'openai', 'opencode', or 'custom:<provider_id>'
-    model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex'
+    provider: string;       // 'anthropic', 'openai', 'opencode', 'google', or 'custom:<provider_id>'
+    model: string;           // e.g. 'sonnet', 'opus', 'gpt-5.3-codex', 'gemini-2.5-flash'
     working_directory: string;
     system_prompt?: string;
     prompt_file?: string;
@@ -43,7 +43,7 @@ export interface Settings {
         defaults?: Record<string, { agentId: string }>;
     };
     models?: {
-        provider?: string; // 'anthropic', 'openai', or 'opencode'
+        provider?: string; // 'anthropic', 'openai', 'opencode' or 'google'
         anthropic?: {
             model?: string;
             auth_token?: string;
@@ -55,6 +55,11 @@ export interface Settings {
         opencode?: {
             model?: string;
         };
+        google?: {
+            model?: string;
+            auth_token?: string;
+        };
+
     };
     agents?: Record<string, AgentConfig>;
     custom_providers?: Record<string, CustomProvider>;
@@ -120,6 +125,12 @@ export const CLAUDE_MODEL_IDS: Record<string, string> = {
 export const CODEX_MODEL_IDS: Record<string, string> = {
     'gpt-5.2': 'gpt-5.2',
     'gpt-5.3-codex': 'gpt-5.3-codex',
+};
+
+export const GEMINI_MODEL_IDS: Record<string, string> = {
+    'gemini-2.5-flash': 'gemini-2.5-flash',
+    'gemini-2.5': 'gemini-2.5',
+    'gemini-2.5-pro': 'gemini-2.5-pro',
 };
 
 // OpenCode model IDs in provider/model format (passed via --model / -m flag).

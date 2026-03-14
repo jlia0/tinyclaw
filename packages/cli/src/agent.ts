@@ -179,7 +179,7 @@ async function customProviderAdd() {
     const harness = unwrap(await p.select({
         message: 'Harness (which CLI to use)',
         options: harnessOptions(),
-    })) as 'claude' | 'codex';
+    })) as 'claude' | 'codex' | 'gemini';
 
     const baseUrl = unwrap(await p.text({
         message: "Base URL (e.g. 'https://proxy.example.com/v1')",
@@ -322,6 +322,7 @@ function agentProvider(agentId: string, providerArg?: string, flag?: string, mod
     switch (providerArg) {
         case 'anthropic':
         case 'openai':
+        case 'google':
         case 'opencode':
             agent.provider = providerArg;
             if (model) agent.model = model;
@@ -331,7 +332,7 @@ function agentProvider(agentId: string, providerArg?: string, flag?: string, mod
                 agent.provider = providerArg;
                 if (model) agent.model = model;
             } else {
-                p.log.error('Usage: tinyclaw agent provider <agent_id> {anthropic|openai|opencode|custom:<id>} [--model MODEL]');
+                p.log.error('Usage: tinyclaw agent provider <agent_id> {anthropic|openai|google|opencode|custom:<id>} [--model MODEL]');
                 process.exit(1);
             }
     }

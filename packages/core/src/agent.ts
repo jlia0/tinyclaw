@@ -198,4 +198,3 @@ export function buildSystemPrompt(
 
     return prompt;
 }
-
