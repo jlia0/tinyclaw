@@ -115,7 +115,6 @@ export async function invokeAgent(
         } else if (customProvider.harness === 'gemini') {
             envOverrides.GOOGLE_API_KEY = customProvider.api_key;
             envOverrides.GEMINI_API_KEY = customProvider.api_key;
-            envOverrides.GEMINI_SANDBOX = 'true';
         }
 
         log('INFO', `Using custom provider '${customId}' (harness: ${customProvider.harness}, base_url: ${customProvider.base_url})`);
