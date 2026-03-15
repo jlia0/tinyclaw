@@ -7,7 +7,7 @@ import { Settings, SETTINGS_FILE, TINYCLAW_HOME, SCRIPT_DIR } from '@tinyclaw/co
 export { SETTINGS_FILE, TINYCLAW_HOME, SCRIPT_DIR };
 
 const BANNER = `
-  ▀█▀ █ █▄ █ █▄█ ▄▀█ █▀▀ █
+  ▀█▀ █ █▄ █ █▄█ █▀█ █▀▀ █
    █  █ █ ▀█  █  █▀█ █▄█ █
 `;
 
