@@ -105,7 +105,9 @@ async function processMessage(dbMsg: any): Promise<void> {
     emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: data.fromAgent || null });
     let response: string;
     try {
-        response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams);
+        response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams, (text) => {
+            emitEvent('agent_progress', { agentId, agentName: agent.name, text, messageId });
+        });
     } catch (error) {
         const provider = agent.provider || 'anthropic';
         const providerLabel = provider === 'openai' ? 'Codex' : provider === 'opencode' ? 'OpenCode' : 'Claude';
