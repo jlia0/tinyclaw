@@ -32,7 +32,8 @@ CLI="$SCRIPT_DIR/packages/cli/dist"
 
 case "${1:-}" in
     start)
-        start_daemon
+        shift  # remove 'start'
+        start_daemon "$@"
         ;;
     stop)
         stop_daemon
@@ -290,7 +291,7 @@ case "${1:-}" in
         echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channels|provider|model|agent|team|chatroom|office|pairing|update|version|attach}"
         echo ""
         echo "Commands:"
-        echo "  start                    Start TinyClaw"
+        echo "  start [--skip-setup]      Start TinyClaw (--skip-setup: API only, complete setup in browser)"
         echo "  stop                     Stop all processes"
         echo "  restart                  Restart TinyClaw"
         echo "  status                   Show current status"

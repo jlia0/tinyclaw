@@ -4,6 +4,14 @@
 
 # Start daemon
 start_daemon() {
+    # Parse flags
+    local skip_setup=false
+    for arg in "$@"; do
+        case "$arg" in
+            --skip-setup) skip_setup=true ;;
+        esac
+    done
+
     if session_exists; then
         echo -e "${YELLOW}Session already running${NC}"
         return 1
@@ -66,6 +74,13 @@ start_daemon() {
             return 1
         fi
     elif [ $load_rc -ne 0 ]; then
+        if [ "$skip_setup" = true ]; then
+            # --skip-setup: start API server only, let user complete setup via web
+            echo -e "${YELLOW}No configuration found. Starting API server for web setup...${NC}"
+            echo ""
+            _start_server_only
+            return
+        fi
         echo -e "${YELLOW}No configuration found. Running setup wizard...${NC}"
         echo ""
         node "$SCRIPT_DIR/packages/cli/dist/setup-wizard.js"
@@ -247,6 +262,40 @@ start_daemon() {
     local ch_list
     ch_list=$(IFS=','; echo "${ACTIVE_CHANNELS[*]}")
     log "Daemon started with $total_panes panes (channels=$ch_list)"
+}
+
+# Start queue processor + API server only (--skip-setup mode, no settings yet).
+# Creates a proper tmux session so tinyclaw stop/restart still work.
+_start_server_only() {
+    # Ensure TINYCLAW_HOME directories exist so the server can write settings
+    mkdir -p "$TINYCLAW_HOME/logs"
+    mkdir -p "$TINYCLAW_HOME/files"
+
+    # Create tmux session with a single queue-processor pane
+    tmux new-session -d -s "$TMUX_SESSION" -n "tinyclaw" -c "$SCRIPT_DIR"
+
+    local win_base
+    win_base=$(tmux show-option -gv base-index 2>/dev/null || echo 0)
+    local pane_base
+    pane_base=$(tmux show-option -gv pane-base-index 2>/dev/null || echo 0)
+
+    sleep 2
+    tmux send-keys -t "$TMUX_SESSION:${win_base}.$pane_base" "cd '$SCRIPT_DIR' && node packages/main/dist/index.js" C-m
+    tmux select-pane -t "$TMUX_SESSION:${win_base}.$pane_base" -T "Queue"
+
+    echo -e "${GREEN}✓ TinyClaw started (setup mode — no channels)${NC}"
+    echo ""
+    echo -e "API server: ${BLUE}http://localhost:${TINYCLAW_API_PORT:-3777}${NC}"
+    echo ""
+    echo -e "Complete setup in your browser:"
+    echo -e "  ${BLUE}http://localhost:3000/setup${NC}  (TinyOffice)"
+    echo -e "  or run: ${BLUE}tinyclaw office${NC}"
+    echo ""
+    echo -e "Once setup is complete, restart to enable channels:"
+    echo -e "  ${BLUE}tinyclaw restart${NC}"
+    echo ""
+
+    log "Started in skip-setup mode (queue + API only, no channels)"
 }
 
 # Stop daemon

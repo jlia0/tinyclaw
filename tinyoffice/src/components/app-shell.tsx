@@ -1,11 +1,32 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef } from "react";
 import { Sidebar } from "@/components/sidebar";
+import { usePolling } from "@/lib/hooks";
+import { checkConnection } from "@/lib/api";
+
+const FAIL_THRESHOLD = 3; // consecutive failures before redirecting
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const hideSidebar = pathname === "/setup";
+  const router = useRouter();
+  const hideSidebar = pathname === "/setup" || pathname === "/connect";
+  const failCount = useRef(0);
+
+  const { data: connected, loading } = usePolling(checkConnection, 5000);
+
+  useEffect(() => {
+    if (loading) return;
+    if (connected === false) {
+      failCount.current += 1;
+      if (failCount.current >= FAIL_THRESHOLD && pathname !== "/connect") {
+        router.replace("/connect");
+      }
+    } else {
+      failCount.current = 0;
+    }
+  }, [connected, loading, pathname, router]);
 
   return (
     <div className="flex h-screen overflow-hidden">

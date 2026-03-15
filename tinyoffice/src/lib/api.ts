@@ -1,6 +1,39 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3777";
+const DEFAULT_API_BASE = "http://localhost:3777";
+const STORAGE_KEY = "tinyclaw_api_base";
+
+/** Resolve the API base URL. Priority: env > localStorage > default. */
+export function getApiBase(): string {
+  // Env var always wins (set at build time via NEXT_PUBLIC_*)
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) return stored;
+  }
+  return DEFAULT_API_BASE;
+}
+
+/** Persist a custom API base URL in localStorage. Pass null to reset to default. */
+export function setApiBase(url: string | null): void {
+  if (url) {
+    localStorage.setItem(STORAGE_KEY, url);
+  } else {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+}
+
+/** Check if the TinyClaw API is reachable at the given (or current) base URL. */
+export async function checkConnection(baseUrl?: string): Promise<boolean> {
+  const base = baseUrl ?? getApiBase();
+  try {
+    const res = await fetch(`${base}/api/settings`, { signal: AbortSignal.timeout(3000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const API_BASE = getApiBase();
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: { "Content-Type": "application/json", ...options?.headers },
@@ -332,7 +365,7 @@ export function subscribeToEvents(
   onError?: (err: Event) => void,
   eventTypes?: string[]
 ): () => void {
-  const es = new EventSource(`${API_BASE}/api/events/stream`);
+  const es = new EventSource(`${getApiBase()}/api/events/stream`);
 
   const handler = (e: MessageEvent) => {
     try { onEvent(JSON.parse(e.data)); } catch { /* ignore parse errors */ }
