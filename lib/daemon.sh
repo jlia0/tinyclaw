@@ -267,8 +267,54 @@ stop_daemon() {
     log "Daemon stopped"
 }
 
+# Validate settings without starting the daemon.
+# Returns 0 if ready to start, non-zero otherwise.
+# Safe to call while the daemon is running — reads only, no side effects.
+preflight_check() {
+    load_settings
+    local load_rc=$?
+
+    if [ $load_rc -eq 2 ]; then
+        local jq_err
+        jq_err=$(jq empty "$SETTINGS_FILE" 2>&1)
+        echo -e "${RED}Restart aborted: settings.json contains invalid JSON${NC}"
+        echo -e "  ${YELLOW}${jq_err}${NC}"
+        echo "  Fix manually: $SETTINGS_FILE"
+        return 1
+    elif [ $load_rc -ne 0 ]; then
+        echo -e "${RED}Restart aborted: settings.json is missing or has no configuration${NC}"
+        echo "  Run 'tinyclaw setup' to reconfigure"
+        return 1
+    fi
+
+    if [ ${#ACTIVE_CHANNELS[@]} -eq 0 ]; then
+        echo -e "${RED}Restart aborted: no channels configured in settings.json${NC}"
+        echo "  Run 'tinyclaw setup' to reconfigure"
+        return 1
+    fi
+
+    for ch in "${ACTIVE_CHANNELS[@]}"; do
+        local token_key
+        token_key="$(channel_token_key "$ch")"
+        if [ -n "$token_key" ] && [ -z "$(get_channel_token "$ch")" ]; then
+            echo -e "${RED}Restart aborted: $(channel_display "$ch") bot token is missing${NC}"
+            echo "  Run 'tinyclaw setup' to reconfigure"
+            return 1
+        fi
+    done
+
+    return 0
+}
+
 # Restart daemon safely even when called from inside TinyClaw's tmux session
 restart_daemon() {
+    # Validate settings before touching the live session.
+    # If preflight fails, the running daemon stays up and we bail out.
+    if ! preflight_check; then
+        echo -e "${YELLOW}Daemon restart cancelled — live session preserved${NC}"
+        return 1
+    fi
+
     if session_exists && [ -n "${TMUX:-}" ]; then
         local current_session
         current_session=$(tmux display-message -p '#S' 2>/dev/null || true)
