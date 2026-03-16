@@ -91,8 +91,6 @@ export function postToChatRoom(
     teamId: string,
     fromAgent: string,
     message: string,
-    teamAgents: string[],
-    originalData: { channel: string; sender: string; senderId?: string | null; messageId: string }
 ): number {
     const id = insertChatMessage(teamId, fromAgent, message);
     // Chat room messages are stored as history only — NOT enqueued as active messages for teammates.
@@ -212,9 +210,7 @@ export async function handleTeamResponse(params: {
         log('INFO', `Chat room broadcasts from @${agentId}: ${chatRoomMsgs.map(m => `#${m.teamId}`).join(', ')}`);
     }
     for (const crMsg of chatRoomMsgs) {
-        postToChatRoom(crMsg.teamId, agentId, crMsg.message, teams[crMsg.teamId].agents, {
-            channel, sender, senderId: data.senderId, messageId,
-        });
+        postToChatRoom(crMsg.teamId, agentId, crMsg.message);
     }
 
     const teamContext = resolveTeamContext(agentId, isTeamRouted, data, teams);

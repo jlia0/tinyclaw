@@ -32,11 +32,7 @@ app.post('/api/chatroom/:teamId', async (c) => {
         return c.json({ error: 'message is required' }, 400);
     }
 
-    const id = postToChatRoom(teamId, 'user', body.message.trim(), team.agents, {
-        channel: 'chatroom',
-        sender: 'user',
-        messageId: `chatroom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    });
+    const id = postToChatRoom(teamId, 'user', body.message.trim());
 
     return c.json({ ok: true, id });
 });
