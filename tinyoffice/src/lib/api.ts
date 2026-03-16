@@ -160,6 +160,10 @@ export async function runSetup(settings: Settings): Promise<{ ok: boolean; setti
   return apiFetch("/api/setup", { method: "POST", body: JSON.stringify(settings) });
 }
 
+export async function applyServices(): Promise<{ ok: boolean; started: string[]; heartbeat: boolean; errors?: string[] }> {
+  return apiFetch("/api/services/apply", { method: "POST" });
+}
+
 export async function getQueueStatus(): Promise<QueueStatus> {
   return apiFetch("/api/queue/status");
 }

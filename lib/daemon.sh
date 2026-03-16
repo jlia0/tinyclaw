@@ -302,6 +302,147 @@ _start_server_only() {
     log "Started in skip-setup mode (queue + API only, no channels)"
 }
 
+# ── Granular service management ───────────────────────────────────────────
+
+# Start a single channel in the running tmux session
+start_channel() {
+    local channel="$1"
+    if [ -z "$channel" ]; then
+        echo -e "${RED}Usage: tinyclaw channel start <channel_id>${NC}"
+        return 1
+    fi
+
+    # Validate channel exists
+    local valid=false
+    for ch in "${ALL_CHANNELS[@]}"; do
+        [ "$ch" = "$channel" ] && valid=true
+    done
+    if [ "$valid" = false ]; then
+        echo -e "${RED}Unknown channel: $channel${NC}"
+        return 1
+    fi
+
+    if ! session_exists; then
+        echo -e "${RED}No tmux session running. Start TinyClaw first.${NC}"
+        return 1
+    fi
+
+    # Check if pane already exists
+    local existing
+    existing=$(tmux list-panes -t "$TMUX_SESSION" -F '#{pane_title}' 2>/dev/null | grep -x "$(channel_display "$channel")" || true)
+    if [ -n "$existing" ]; then
+        echo -e "${YELLOW}$(channel_display "$channel") is already running${NC}"
+        return 0
+    fi
+
+    # Write token to .env if needed
+    load_settings 2>/dev/null || true
+    local env_var
+    env_var="$(channel_token_env "$channel")"
+    local token_val
+    token_val="$(get_channel_token "$channel")"
+    if [ -n "$env_var" ] && [ -n "$token_val" ]; then
+        local env_file="$SCRIPT_DIR/.env"
+        # Append or update the token line
+        if [ -f "$env_file" ] && grep -q "^${env_var}=" "$env_file" 2>/dev/null; then
+            sed -i.bak "s|^${env_var}=.*|${env_var}=${token_val}|" "$env_file" && rm -f "${env_file}.bak"
+        else
+            echo "${env_var}=${token_val}" >> "$env_file"
+        fi
+    fi
+
+    # Add pane
+    tmux split-window -t "$TMUX_SESSION" -c "$SCRIPT_DIR"
+    tmux select-layout -t "$TMUX_SESSION" tiled
+    sleep 1
+    # Find the newest pane (highest id) — that's the one we just created
+    local new_pane
+    new_pane=$(tmux list-panes -t "$TMUX_SESSION" -F '#{pane_id}' | tail -1)
+    tmux send-keys -t "$new_pane" "cd '$SCRIPT_DIR' && node $(channel_script "$channel")" C-m
+    tmux select-pane -t "$new_pane" -T "$(channel_display "$channel")"
+
+    echo -e "${GREEN}✓ $(channel_display "$channel") started${NC}"
+    log "Channel $channel started (pane $new_pane)"
+}
+
+# Stop a single channel in the running tmux session
+stop_channel() {
+    local channel="$1"
+    if [ -z "$channel" ]; then
+        echo -e "${RED}Usage: tinyclaw channel stop <channel_id>${NC}"
+        return 1
+    fi
+
+    if ! session_exists; then
+        echo -e "${YELLOW}No tmux session running${NC}"
+        return 0
+    fi
+
+    local display
+    display="$(channel_display "$channel")"
+    local pane_id
+    pane_id=$(tmux list-panes -t "$TMUX_SESSION" -F '#{pane_id} #{pane_title}' 2>/dev/null | grep " ${display}$" | awk '{print $1}' | head -1)
+
+    if [ -n "$pane_id" ]; then
+        tmux kill-pane -t "$pane_id" 2>/dev/null || true
+        echo -e "${GREEN}✓ $(channel_display "$channel") stopped${NC}"
+        log "Channel $channel stopped (pane $pane_id)"
+    else
+        echo -e "${YELLOW}$(channel_display "$channel") pane not found${NC}"
+    fi
+
+    # Kill any remaining process as fallback
+    pkill -f "$(channel_script "$channel")" 2>/dev/null || true
+}
+
+# Start heartbeat in the running tmux session
+start_heartbeat() {
+    if ! session_exists; then
+        echo -e "${RED}No tmux session running. Start TinyClaw first.${NC}"
+        return 1
+    fi
+
+    # Check if already running
+    local existing
+    existing=$(tmux list-panes -t "$TMUX_SESSION" -F '#{pane_title}' 2>/dev/null | grep -x "Heartbeat" || true)
+    if [ -n "$existing" ]; then
+        echo -e "${YELLOW}Heartbeat is already running${NC}"
+        return 0
+    fi
+
+    tmux split-window -t "$TMUX_SESSION" -c "$SCRIPT_DIR"
+    tmux select-layout -t "$TMUX_SESSION" tiled
+    sleep 1
+    local new_pane
+    new_pane=$(tmux list-panes -t "$TMUX_SESSION" -F '#{pane_id}' | tail -1)
+    tmux send-keys -t "$new_pane" "cd '$SCRIPT_DIR' && ./lib/heartbeat-cron.sh" C-m
+    tmux select-pane -t "$new_pane" -T "Heartbeat"
+
+    echo -e "${GREEN}✓ Heartbeat started${NC}"
+    log "Heartbeat started (pane $new_pane)"
+}
+
+# Stop heartbeat in the running tmux session
+stop_heartbeat() {
+    if ! session_exists; then
+        echo -e "${YELLOW}No tmux session running${NC}"
+        return 0
+    fi
+
+    local pane_id
+    pane_id=$(tmux list-panes -t "$TMUX_SESSION" -F '#{pane_id} #{pane_title}' 2>/dev/null | grep " Heartbeat$" | awk '{print $1}' | head -1)
+
+    if [ -n "$pane_id" ]; then
+        tmux kill-pane -t "$pane_id" 2>/dev/null || true
+        echo -e "${GREEN}✓ Heartbeat stopped${NC}"
+        log "Heartbeat stopped (pane $pane_id)"
+    else
+        echo -e "${YELLOW}Heartbeat pane not found${NC}"
+    fi
+
+    pkill -f "heartbeat-cron.sh" 2>/dev/null || true
+}
+
 # Stop daemon
 stop_daemon() {
     log "Stopping TinyClaw..."

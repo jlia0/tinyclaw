@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { runSetup, type Settings, type AgentConfig } from "@/lib/api";
+import { runSetup, applyServices, type Settings, type AgentConfig } from "@/lib/api";
 import { Card, CardContent, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -79,6 +79,8 @@ export default function SetupPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [appliedChannels, setAppliedChannels] = useState<string[]>([]);
+  const [appliedHeartbeat, setAppliedHeartbeat] = useState(false);
 
   // Form state
   const [enabledChannels, setEnabledChannels] = useState<string[]>([]);
@@ -190,6 +192,16 @@ export default function SetupPage() {
       setError("");
       const settings = buildSettings();
       await runSetup(settings);
+
+      // Apply services (start channels + heartbeat) without requiring restart
+      try {
+        const result = await applyServices();
+        setAppliedChannels(result.started || []);
+        setAppliedHeartbeat(result.heartbeat || false);
+      } catch {
+        // Non-fatal — services can be started manually
+      }
+
       setDone(true);
     } catch (err) {
       setError((err as Error).message);
@@ -207,7 +219,23 @@ export default function SetupPage() {
           <p className="text-muted-foreground">
             Your configuration has been saved.
           </p>
-          {enabledChannels.length > 0 ? (
+          {appliedChannels.length > 0 || appliedHeartbeat ? (
+            <div className="bg-muted rounded-md p-4 text-sm space-y-2 text-left max-w-sm mx-auto">
+              <p className="font-medium">Services started:</p>
+              {appliedChannels.map((ch) => (
+                <div key={ch} className="flex items-center gap-2">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                  <span className="capitalize">{ch}</span>
+                </div>
+              ))}
+              {appliedHeartbeat && (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                  <span>Heartbeat</span>
+                </div>
+              )}
+            </div>
+          ) : enabledChannels.length > 0 ? (
             <div className="bg-muted rounded-md p-4 text-sm space-y-2 text-left max-w-sm mx-auto">
               <p className="font-medium">Restart to enable channels:</p>
               <pre className="bg-background rounded px-2 py-1 text-xs">tinyclaw restart</pre>

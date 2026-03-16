@@ -73,14 +73,45 @@ case "${1:-}" in
         shift  # remove 'reset'
         node "$CLI/agent.js" reset "$@"
         ;;
-    channels)
-        if [ "$2" = "reset" ] && [ -n "$3" ]; then
-            node "$CLI/messaging.js" channels-reset "$3"
-        else
-            local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
-            echo "Usage: $0 channels reset {$local_names}"
-            exit 1
-        fi
+    channels|channel)
+        case "${2:-}" in
+            start)
+                if [ -z "$3" ]; then
+                    echo "Usage: $0 channel start <channel_id>"
+                    exit 1
+                fi
+                start_channel "$3"
+                ;;
+            stop)
+                if [ -z "$3" ]; then
+                    echo "Usage: $0 channel stop <channel_id>"
+                    exit 1
+                fi
+                stop_channel "$3"
+                ;;
+            reset)
+                if [ -z "$3" ]; then
+                    echo "Usage: $0 channel reset <channel_id>"
+                    exit 1
+                fi
+                node "$CLI/messaging.js" channels-reset "$3"
+                ;;
+            *)
+                local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
+                echo "Usage: $0 channel {start|stop|reset} {$local_names}"
+                exit 1
+                ;;
+        esac
+        ;;
+    heartbeat)
+        case "${2:-}" in
+            start)  start_heartbeat ;;
+            stop)   stop_heartbeat ;;
+            *)
+                echo "Usage: $0 heartbeat {start|stop}"
+                exit 1
+                ;;
+        esac
         ;;
     provider)
         case "${2:-}" in
@@ -289,7 +320,7 @@ case "${1:-}" in
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
         echo -e "${BLUE}TinyClaw - Claude Code + Messaging Channels${NC}"
         echo ""
-        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channels|provider|model|agent|team|chatroom|office|pairing|update|version|attach}"
+        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channel|heartbeat|provider|model|agent|team|chatroom|office|pairing|update|version|attach}"
         echo ""
         echo "Commands:"
         echo "  start [--skip-setup]      Start TinyClaw (--skip-setup: API only, complete setup in browser)"
@@ -300,7 +331,10 @@ case "${1:-}" in
         echo "  send <msg>               Send message to AI manually"
         echo "  logs [type]              View logs ($local_names|heartbeat|daemon|queue|all)"
         echo "  reset <id> [id2 ...]     Reset specific agent conversation(s)"
-        echo "  channels reset <channel> Reset channel auth ($local_names)"
+        echo "  channel start <ch>       Start a channel in the running session"
+        echo "  channel stop <ch>        Stop a channel"
+        echo "  channel reset <ch>       Reset channel auth ($local_names)"
+        echo "  heartbeat start|stop     Start or stop the heartbeat process"
         echo "  provider [name] [--model model]  Show or switch AI provider"
         echo "  provider {list|add|remove}       Manage custom providers"
         echo "  model [name]             Show or switch AI model"
