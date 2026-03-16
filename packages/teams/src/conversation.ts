@@ -12,7 +12,7 @@ import { convertTagsToReadable, extractTeammateMentions, extractChatRoomMessages
 // Active conversations — tracks in-flight team message passing
 export const conversations = new Map<string, Conversation>();
 
-export const MAX_CONVERSATION_MESSAGES = 50;
+export const DEFAULT_MAX_CONVERSATION_MESSAGES = 10;
 
 // Per-conversation locks to prevent race conditions
 const conversationLocks = new Map<string, Promise<void>>();
@@ -245,7 +245,7 @@ export async function handleTeamResponse(params: {
             responses: [],
             files: new Set(),
             totalMessages: 0,
-            maxMessages: MAX_CONVERSATION_MESSAGES,
+            maxMessages: getSettings().protection?.max_chain_depth ?? DEFAULT_MAX_CONVERSATION_MESSAGES,
             teamContext,
             startTime: Date.now(),
             outgoingMentions: new Map(),
