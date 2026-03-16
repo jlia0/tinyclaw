@@ -43,8 +43,23 @@ app.put('/api/settings', async (c) => {
 });
 
 // POST /api/setup — run initial setup (write settings + create directories)
+// Blocked if settings.json already exists with agents configured.
+// To reconfigure a live system, use PUT /api/agents/:id, PUT /api/teams/:id,
+// or PUT /api/settings instead.
 app.post('/api/setup', async (c) => {
     const settings = (await c.req.json()) as Settings;
+
+    // Guard: refuse to overwrite an existing configured installation.
+    // There is intentionally no bypass parameter — agents can discover and
+    // exploit query parameters. Use the individual PUT endpoints to modify
+    // a running configuration.
+    if (fs.existsSync(SETTINGS_FILE)) {
+        const existing = (() => { try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch { return null; } })();
+        if (existing?.agents && Object.keys(existing.agents).length > 0) {
+            log('WARN', '[API] Setup blocked: settings.json already has agents configured.');
+            return c.json({ ok: false, error: 'Settings already configured. Use PUT /api/agents, /api/teams, or /api/settings to modify a running system.' }, 409);
+        }
+    }
 
     if (settings.workspace?.path) {
         settings.workspace.path = expandHomePath(settings.workspace.path);
@@ -57,8 +72,15 @@ app.post('/api/setup', async (c) => {
         }
     }
 
-    // Write settings.json
+    // Back up existing settings before overwriting
     fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
+    if (fs.existsSync(SETTINGS_FILE)) {
+        const backupPath = `${SETTINGS_FILE}.bak`;
+        fs.copyFileSync(SETTINGS_FILE, backupPath);
+        log('INFO', `[API] Setup: backed up existing settings to ${backupPath}`);
+    }
+
+    // Write settings.json
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n');
     log('INFO', '[API] Setup: settings.json written');
 

@@ -373,8 +373,14 @@ status_daemon() {
 
 # --- Agent skills management (called by start_daemon) ---
 
-# Ensure all agent workspaces have .agents/skills synced from SCRIPT_DIR
-# and .claude/skills as a symlink to .agents/skills
+# Ensure all agent workspaces have .agents/skills populated from SCRIPT_DIR
+# and .claude/skills as a symlink to .agents/skills.
+#
+# Each built-in skill is installed as a symlink into the agent's .agents/skills/
+# directory rather than a copy. This means:
+#   - Built-in skills stay current without wiping agent-created skills.
+#   - Skills created by agents (not in the source) are left untouched.
+#   - Stale symlinks (skill removed from source) are cleaned up automatically.
 ensure_agent_skills_links() {
     local skills_src="$SCRIPT_DIR/.agents/skills"
     [ -d "$skills_src" ] || return 0
@@ -389,14 +395,38 @@ ensure_agent_skills_links() {
         local agent_dir="$agents_dir/$agent_id"
         [ -d "$agent_dir" ] || continue
 
-        # Sync default skills into .agents/skills
         mkdir -p "$agent_dir/.agents/skills"
+
+        # Install each built-in skill as a symlink (absolute path).
+        # If a real directory exists with the same name (agent-created copy),
+        # leave it alone — don't overwrite agent work.
         for skill_dir in "$skills_src"/*/; do
             [ -d "$skill_dir" ] || continue
             local skill_name
             skill_name="$(basename "$skill_dir")"
-            rm -rf "$agent_dir/.agents/skills/$skill_name"
-            cp -r "$skill_dir" "$agent_dir/.agents/skills/$skill_name"
+            local dest="$agent_dir/.agents/skills/$skill_name"
+
+            if [ -L "$dest" ]; then
+                # Already a symlink — update it to point to current source
+                ln -sfn "$skill_dir" "$dest"
+            elif [ -d "$dest" ]; then
+                # Real directory: agent-created skill, leave it alone
+                :
+            else
+                # Not present — create symlink
+                ln -s "$skill_dir" "$dest"
+            fi
+        done
+
+        # Remove symlinks that point to skills no longer in source
+        # (built-in skill was deleted upstream). Real directories are kept.
+        for dest in "$agent_dir/.agents/skills"/*/; do
+            [ -L "${dest%/}" ] || continue
+            local skill_name
+            skill_name="$(basename "$dest")"
+            if [ ! -d "$skills_src/$skill_name" ]; then
+                rm "$agent_dir/.agents/skills/$skill_name"
+            fi
         done
 
         # Ensure .claude/skills is a symlink to ../.agents/skills

@@ -174,10 +174,17 @@ curl -s http://localhost:3777/api/logs?limit=50 | jq
 
 ## Direct settings.json editing
 
-When the API server is not running, edit `~/.tinyclaw/settings.json` directly. Use `jq` for safe atomic edits:
+> **WARNING — agents should not edit settings.json directly.** Direct edits bypass all validation and can corrupt or destroy the running configuration. Agents running with `--dangerously-skip-permissions` have unrestricted file access, which makes an accidental overwrite unrecoverable. Always prefer the REST API (`PUT /api/agents`, `PUT /api/teams`, `PUT /api/settings`) which validates input, merges safely, and keeps the system consistent.
+>
+> Direct editing is a last resort for **human operators only** when the API server is not running and there is no other option.
+
+If a human operator must edit `~/.tinyclaw/settings.json` while the daemon is stopped, back up the file first and use `jq` for atomic edits:
 
 ```bash
 SETTINGS="$HOME/.tinyclaw/settings.json"
+
+# Always back up first
+cp "$SETTINGS" "$SETTINGS.bak"
 
 # Add an agent
 jq --arg id "analyst" --argjson agent '{"name":"Analyst","provider":"anthropic","model":"sonnet","working_directory":"'$HOME'/tinyclaw-workspace/analyst"}' \
@@ -192,6 +199,10 @@ jq --arg id "research" --argjson team '{"name":"Research Team","agents":["analys
 ```
 
 After editing `settings.json`, run `tinyclaw restart` to pick up changes.
+
+## POST /api/setup is for initial setup only
+
+`POST /api/setup` **fully replaces** settings.json — it does not merge. It will be rejected with HTTP 409 if agents are already configured. There is no override. To modify a running system, use `PUT /api/agents/:id`, `PUT /api/teams/:id`, or `PUT /api/settings`.
 
 ## Modifying TinyClaw source code
 
