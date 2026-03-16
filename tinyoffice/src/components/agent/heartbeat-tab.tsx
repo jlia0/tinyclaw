@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { HeartPulse, Loader2, Save, Check } from "lucide-react";
 
 export function HeartbeatTab({
@@ -51,21 +52,7 @@ export function HeartbeatTab({
                 Periodically wake the agent to check tasks and process work
               </p>
             </div>
-            <Button
-              variant="ghost"
-              className={`
-                relative h-6 w-11 p-0 transition-colors border rounded-full
-                ${enabled ? "bg-primary border-primary" : "bg-muted border-border"}
-              `}
-              onClick={onToggle}
-            >
-              <span
-                className={`
-                  absolute top-0.5 h-4.5 w-4.5 rounded-full bg-white transition-transform
-                  ${enabled ? "left-5" : "left-0.5"}
-                `}
-              />
-            </Button>
+            <Switch checked={enabled} onCheckedChange={onToggle} />
           </div>
 
           {enabled && (
