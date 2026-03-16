@@ -190,26 +190,6 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">API Endpoints</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
-            <ApiEndpoint method="POST" path="/api/message" desc="Send a message to the queue" />
-            <ApiEndpoint method="GET" path="/api/agents" desc="List all agents" />
-            <ApiEndpoint method="GET" path="/api/teams" desc="List all teams" />
-            <ApiEndpoint method="GET" path="/api/settings" desc="Get current settings" />
-            <ApiEndpoint method="PUT" path="/api/settings" desc="Update settings" />
-            <ApiEndpoint method="GET" path="/api/queue/status" desc="Queue status" />
-            <ApiEndpoint method="GET" path="/api/responses" desc="Recent responses" />
-            <ApiEndpoint method="GET" path="/api/events/stream" desc="SSE event stream" />
-            <ApiEndpoint method="GET" path="/api/events" desc="Recent events (polling)" />
-            <ApiEndpoint method="GET" path="/api/logs" desc="Queue processor logs" />
-            <ApiEndpoint method="GET" path="/api/chats" desc="Chat histories" />
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
@@ -239,16 +219,3 @@ function OverviewCard({ icon, title, value }: { icon: React.ReactNode; title: st
   );
 }
 
-function ApiEndpoint({ method, path, desc }: { method: string; path: string; desc: string }) {
-  const methodColor = method === "POST" ? "bg-blue-500/10 text-blue-500" :
-    method === "PUT" ? "bg-orange-500/10 text-orange-500" :
-    "bg-green-500/10 text-green-500";
-
-  return (
-    <div className="flex items-center gap-3 border p-3">
-      <Badge className={`${methodColor} text-[10px] font-mono`}>{method}</Badge>
-      <code className="text-xs font-mono flex-1">{path}</code>
-      <span className="text-xs text-muted-foreground hidden lg:inline">{desc}</span>
-    </div>
-  );
-}

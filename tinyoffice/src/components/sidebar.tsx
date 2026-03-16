@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
+import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
 import { usePolling } from "@/lib/hooks";
 import {
@@ -11,12 +12,12 @@ import Image from "next/image";
 import {
   Plus, Hash, LayoutDashboard, ScrollText,
   Settings, SlidersHorizontal, ClipboardList, Building2,
-  FolderKanban, Swords,
+  FolderKanban, Sun, Moon,
 } from "lucide-react";
 
 export function Sidebar() {
   const pathname = usePathname();
-  const router = useRouter();
+  const { resolvedTheme, setTheme } = useTheme();
   const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 0);
   const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 0);
 
@@ -28,7 +29,18 @@ export function Sidebar() {
       {/* Header */}
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-2">
         <Image src="/icon.png" alt="TinyOffice" width={24} height={24} className="h-6 w-6" />
-        <span className="text-base font-bold tracking-tight">TinyOffice</span>
+        <span className="text-base font-bold tracking-tight flex-1">TinyOffice</span>
+        <button
+          onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+          className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+          title={resolvedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {resolvedTheme === "dark" ? (
+            <Sun className="h-3.5 w-3.5" />
+          ) : (
+            <Moon className="h-3.5 w-3.5" />
+          )}
+        </button>
       </div>
 
       {/* Dashboard + Logs */}
@@ -85,7 +97,7 @@ export function Sidebar() {
                     key={id}
                     href={href}
                     className={cn(
-                      "flex items-center gap-2.5 px-2 py-1.5 text-sm transition-colors group",
+                      "flex items-center gap-2.5 px-2 py-1.5 text-sm transition-colors",
                       active
                         ? "bg-accent text-accent-foreground"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -103,18 +115,6 @@ export function Sidebar() {
                         {agent.provider}/{agent.model}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-primary transition-all p-0.5"
-                      title="Configure skills"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        router.push(`/agents/${id}`);
-                      }}
-                      aria-label="Configure skills"
-                    >
-                      <Swords className="h-3 w-3" />
-                    </button>
                   </Link>
                 );
               })
@@ -134,7 +134,7 @@ export function Sidebar() {
         <div className="pt-4">
           <div className="flex items-center justify-between px-2 mb-1">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-              Chat Rooms
+              Teams
             </span>
             <Link
               href="/teams"
@@ -176,7 +176,7 @@ export function Sidebar() {
                 className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Plus className="h-3 w-3" />
-                Add chat room
+                Add team
               </Link>
             )}
           </div>
@@ -199,13 +199,6 @@ export function Sidebar() {
         </Link>
       </div>
 
-      {/* Status */}
-      <div className="px-4 py-3 border-t">
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-          <div className="h-1.5 w-1.5 animate-pulse-dot bg-primary" />
-          Queue Processor Active
-        </div>
-      </div>
     </aside>
   );
 }

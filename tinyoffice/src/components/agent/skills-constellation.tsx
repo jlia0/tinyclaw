@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
 
 // ── Skill types ──────────────────────────────────────────────────────────────
 
@@ -30,8 +29,6 @@ function layoutRadial(
 
   const positions: { x: number; y: number; angle: number; ring: number }[] = [];
 
-  // For small counts, single ring
-  // For larger counts, distribute across multiple rings
   const perRing = Math.min(count, 10);
   const rings = Math.ceil(count / perRing);
 
@@ -39,7 +36,7 @@ function layoutRadial(
   for (let ring = 0; ring < rings && idx < count; ring++) {
     const radius = baseRadius + ring * 90;
     const itemsInRing = Math.min(perRing, count - idx);
-    const angleOffset = ring * 0.15; // Slight rotation per ring for visual interest
+    const angleOffset = ring * 0.15;
 
     for (let i = 0; i < itemsInRing; i++) {
       const angle = angleOffset + (i / itemsInRing) * Math.PI * 2;
@@ -90,14 +87,14 @@ export function SkillsConstellation({
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full min-h-[560px] overflow-hidden bg-[#0a0a0a] border select-none"
+      className="relative w-full h-full min-h-[560px] overflow-hidden bg-background border select-none"
     >
       {/* Radial gradient background */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(ellipse at center, rgba(163,230,53,0.04) 0%, rgba(163,230,53,0.01) 35%, transparent 70%)",
+            "radial-gradient(ellipse at center, color-mix(in srgb, var(--primary) 4%, transparent) 0%, color-mix(in srgb, var(--primary) 1%, transparent) 35%, transparent 70%)",
         }}
       />
 
@@ -115,7 +112,8 @@ export function SkillsConstellation({
             cy={cy}
             r={baseRadius + i * 90}
             fill="none"
-            stroke="rgba(163,230,53,0.06)"
+            stroke="var(--muted-foreground)"
+            strokeOpacity={0.15}
             strokeWidth={0.5}
             strokeDasharray="3 6"
           />
@@ -134,11 +132,12 @@ export function SkillsConstellation({
               y1={cy}
               x2={pos.x}
               y2={pos.y}
-              stroke={isHovered ? "rgba(163,230,53,0.35)" : "rgba(163,230,53,0.14)"}
+              stroke="var(--muted-foreground)"
+              strokeOpacity={isHovered ? 0.4 : 0.2}
               strokeWidth={0.7}
               strokeDasharray="2 4"
               style={{
-                transition: "stroke 0.3s, stroke-width 0.3s",
+                transition: "stroke-opacity 0.3s, stroke-width 0.3s",
               }}
             />
           );
@@ -151,7 +150,10 @@ export function SkillsConstellation({
         style={{ left: cx - 32, top: cy - 44 }}
       >
         <div className="relative">
-          <div className="h-16 w-16 border-2 border-primary bg-card flex items-center justify-center text-xl font-bold text-primary shadow-[0_0_20px_rgba(163,230,53,0.15)]">
+          <div
+            className="h-16 w-16 border-2 border-primary bg-card flex items-center justify-center text-xl font-bold text-primary"
+            style={{ boxShadow: "0 0 20px color-mix(in srgb, var(--primary) 25%, transparent)" }}
+          >
             {agentInitials}
           </div>
       </div>
@@ -214,7 +216,7 @@ export function SkillsConstellation({
       })}
 
       {/* Bottom legend */}
-      <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/80 to-transparent z-30">
+      <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-t from-background via-background/80 to-transparent z-30">
         <div className="flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">
             Agent Skills

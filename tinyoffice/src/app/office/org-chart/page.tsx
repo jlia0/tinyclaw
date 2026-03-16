@@ -259,7 +259,7 @@ function OrgChartInner() {
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (node.type === "agent") {
-        router.push(`/chat/agent/${node.data.agentId}`);
+        router.push(`/agents/${node.data.agentId}`);
       } else if (node.type === "team" && node.data.teamId) {
         router.push(`/chat/team/${node.data.teamId}`);
       }

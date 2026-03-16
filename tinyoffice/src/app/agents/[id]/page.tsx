@@ -5,7 +5,6 @@ import { usePolling } from "@/lib/hooks";
 import {
   getAgents,
   getSettings,
-  saveAgent,
   updateSettings,
   getAgentSkills,
   getAgentSystemPrompt,
@@ -13,30 +12,22 @@ import {
   getAgentMemory,
   getAgentHeartbeat,
   saveAgentHeartbeat,
-  searchRegistrySkills,
-  installRegistrySkill,
-  getSchedules,
-  createSchedule,
-  deleteSchedule,
   type AgentConfig,
   type Settings,
   type WorkspaceSkill,
-  type Schedule,
 } from "@/lib/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { type SkillEntry } from "@/components/agent/skills-constellation";
 import {
-  SkillsConstellation,
-  type SkillEntry,
-} from "@/components/skills-constellation";
-import { AgentChatView } from "@/components/agent-chat-view";
-import {
-  FullScreenCalendar,
-  type CalendarData,
-} from "@/components/ui/fullscreen-calendar";
+  AgentChatView,
+  SkillsTab,
+  ScheduleTab,
+  SystemPromptTab,
+  MemoryTab,
+  HeartbeatTab,
+} from "@/components/agent";
 import {
   Bot,
   Swords,
@@ -45,13 +36,6 @@ import {
   HeartPulse,
   CalendarDays,
   ArrowLeft,
-  Check,
-  Loader2,
-  Save,
-  FolderOpen,
-  RefreshCw,
-  Trash2,
-  X,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -72,15 +56,17 @@ export default function AgentConfigPage({
   params: Promise<{ id: string }>;
 }) {
   const { id: agentId } = use(params);
-  const { data: agents, refresh } = usePolling<Record<string, AgentConfig>>(
+  const { data: agents } = usePolling<Record<string, AgentConfig>>(
     getAgents,
     0,
   );
   const { data: settings } = usePolling<Settings>(getSettings, 0);
 
   const [activeTab, setActiveTab] = useState<TabId>("chat");
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [spSaving, setSpSaving] = useState(false);
+  const [spSaved, setSpSaved] = useState(false);
+  const [hbSaving, setHbSaving] = useState(false);
+  const [hbSaved, setHbSaved] = useState(false);
 
   // Workspace data
   const [workspaceSkills, setWorkspaceSkills] = useState<WorkspaceSkill[]>([]);
@@ -151,18 +137,25 @@ export default function AgentConfigPage({
     description: s.description,
   }));
 
-  const handleSave = useCallback(async () => {
+  const handleSaveSystemPrompt = useCallback(async () => {
     if (!agent) return;
-    setSaving(true);
+    setSpSaving(true);
     try {
-      await saveAgent(agentId, agent);
-
-      // Save system prompt to AGENTS.md
       await saveAgentSystemPrompt(agentId, systemPromptContent);
+      setSpSaved(true);
+      setTimeout(() => setSpSaved(false), 2000);
+    } catch {
+      // Error handling
+    } finally {
+      setSpSaving(false);
+    }
+  }, [agent, agentId, systemPromptContent]);
 
-      // Save heartbeat.md
+  const handleSaveHeartbeat = useCallback(async () => {
+    if (!agent) return;
+    setHbSaving(true);
+    try {
       await saveAgentHeartbeat(agentId, heartbeatContent);
-
       if (settings?.monitoring) {
         await updateSettings({
           monitoring: {
@@ -171,23 +164,14 @@ export default function AgentConfigPage({
           },
         });
       }
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-      refresh();
+      setHbSaved(true);
+      setTimeout(() => setHbSaved(false), 2000);
     } catch {
       // Error handling
     } finally {
-      setSaving(false);
+      setHbSaving(false);
     }
-  }, [
-    agent,
-    agentId,
-    systemPromptContent,
-    heartbeatContent,
-    heartbeatInterval,
-    settings,
-    refresh,
-  ]);
+  }, [agent, agentId, heartbeatContent, heartbeatInterval, settings]);
 
   const refreshWorkspaceData = useCallback(() => {
     getAgentSkills(agentId)
@@ -264,16 +248,6 @@ export default function AgentConfigPage({
           </div>
         </div>
 
-        <Button onClick={handleSave} disabled={saving} className="gap-2">
-          {saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : saved ? (
-            <Check className="h-4 w-4" />
-          ) : (
-            <Save className="h-4 w-4" />
-          )}
-          {saved ? "Saved" : "Save"}
-        </Button>
       </div>
 
       {/* Tabs */}
@@ -282,16 +256,17 @@ export default function AgentConfigPage({
           const Icon = tab.icon;
           const active = activeTab === tab.id;
           return (
-            <button
+            <Button
               key={tab.id}
+              variant="ghost"
               onClick={() => setActiveTab(tab.id)}
               className={`
-                flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors
-                border-b-2 -mb-px
+                flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors rounded-none
+                border-b-2 -mb-px h-auto
                 ${
                   active
                     ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground hover:bg-transparent"
                 }
               `}
             >
@@ -302,7 +277,7 @@ export default function AgentConfigPage({
                   ({workspaceSkills.length})
                 </span>
               )}
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -332,6 +307,9 @@ export default function AgentConfigPage({
             filePath={systemPromptPath}
             loaded={systemPromptLoaded}
             onChange={setSystemPromptContent}
+            onSave={handleSaveSystemPrompt}
+            saving={spSaving}
+            saved={spSaved}
           />
         )}
         {activeTab === "memory" && (
@@ -339,7 +317,6 @@ export default function AgentConfigPage({
             memoryIndex={memoryIndex}
             memoryFiles={memoryFiles}
             memoryDir={memoryDir}
-            agentId={agentId}
             onRefresh={refreshWorkspaceData}
           />
         )}
@@ -353,1115 +330,12 @@ export default function AgentConfigPage({
             onToggle={() => setHeartbeatEnabled(!heartbeatEnabled)}
             interval={heartbeatInterval}
             onIntervalChange={setHeartbeatInterval}
+            onSave={handleSaveHeartbeat}
+            saving={hbSaving}
+            saved={hbSaved}
           />
         )}
       </div>
-    </div>
-  );
-}
-
-// ── Skills Tab ──────────────────────────────────────────────────────────────
-
-function SkillsTab({
-  skills,
-  agentName,
-  agentInitials,
-  onRefresh,
-  agentId,
-}: {
-  skills: SkillEntry[];
-  agentName: string;
-  agentInitials: string;
-  onRefresh: () => void;
-  agentId: string;
-}) {
-  const [search, setSearch] = useState("");
-  const [registryQuery, setRegistryQuery] = useState("");
-  const [registryResults, setRegistryResults] = useState<
-    { ref: string; installs?: string; url?: string }[]
-  >([]);
-  const [registryLoading, setRegistryLoading] = useState(false);
-  const [registryError, setRegistryError] = useState<string | null>(null);
-  const [installingRef, setInstallingRef] = useState<string | null>(null);
-  const [installMessage, setInstallMessage] = useState<string | null>(null);
-  const [registryOpen, setRegistryOpen] = useState(false);
-
-  const filtered = skills.filter((s) => {
-    if (
-      search &&
-      !s.name.toLowerCase().includes(search.toLowerCase()) &&
-      !s.description.toLowerCase().includes(search.toLowerCase())
-    )
-      return false;
-    return true;
-  });
-
-  const runRegistrySearch = async () => {
-    const q = registryQuery.trim();
-    if (!q) return;
-    setRegistryLoading(true);
-    setRegistryError(null);
-    setInstallMessage(null);
-    try {
-      const res = await searchRegistrySkills(agentId, q);
-      setRegistryResults(res.results || []);
-    } catch (err) {
-      setRegistryError((err as Error).message);
-      setRegistryResults([]);
-    } finally {
-      setRegistryLoading(false);
-    }
-  };
-
-  const handleInstall = async (ref: string) => {
-    setInstallingRef(ref);
-    setRegistryError(null);
-    setInstallMessage(null);
-    try {
-      await installRegistrySkill(agentId, ref);
-      setInstallMessage(`Installed ${ref}.`);
-      onRefresh();
-    } catch (err) {
-      setRegistryError((err as Error).message);
-    } finally {
-      setInstallingRef(null);
-    }
-  };
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Filters bar */}
-      <div className="flex items-center gap-3 px-6 py-3 border-b bg-card/50">
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search skills..."
-          className="max-w-xs h-8 text-xs"
-        />
-        <button
-          onClick={onRefresh}
-          className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors border border-border"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Refresh
-        </button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setRegistryOpen(true)}
-        >
-          Registry Search
-        </Button>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground">
-            {filtered.length} skills
-          </span>
-        </div>
-      </div>
-
-      {registryOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-3xl bg-card border shadow-lg">
-            <div className="flex items-center justify-between px-4 py-3 border-b">
-              <div className="text-sm font-semibold">Registry Search</div>
-              <button
-                onClick={() => setRegistryOpen(false)}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                Close
-              </button>
-            </div>
-            <div className="p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Input
-                  value={registryQuery}
-                  onChange={(e) => setRegistryQuery(e.target.value)}
-                  placeholder="Search skills registry (skills.sh)..."
-                  className="flex-1 h-9 text-sm"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") runRegistrySearch();
-                  }}
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={runRegistrySearch}
-                  disabled={registryLoading || !registryQuery.trim()}
-                >
-                  {registryLoading ? "Searching..." : "Search"}
-                </Button>
-              </div>
-              {registryError && (
-                <div className="text-[11px] text-destructive">
-                  {registryError}
-                </div>
-              )}
-              {installMessage && (
-                <div className="text-[11px] text-primary">{installMessage}</div>
-              )}
-              {registryResults.length > 0 && (
-                <div className="space-y-2">
-                  {registryResults.map((r) => (
-                    <div
-                      key={r.ref}
-                      className="flex items-center gap-3 px-3 py-2 border bg-card/60"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium truncate">
-                          {r.ref}
-                        </div>
-                        {r.installs && (
-                          <div className="text-[10px] text-muted-foreground">
-                            {r.installs} installs
-                          </div>
-                        )}
-                        {r.url && (
-                          <div className="text-[10px] text-muted-foreground truncate">
-                            {r.url}
-                          </div>
-                        )}
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleInstall(r.ref)}
-                        disabled={installingRef === r.ref}
-                      >
-                        {installingRef === r.ref ? "Installing..." : "Install"}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Constellation */}
-      {filtered.length > 0 ? (
-        <div className="flex-1">
-          <SkillsConstellation
-            skills={filtered}
-            agentName={agentName}
-            agentInitials={agentInitials}
-          />
-        </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center text-muted-foreground">
-            <Swords className="h-8 w-8 mx-auto mb-3 opacity-30" />
-            <p className="text-sm">No skills found in workspace</p>
-            <p className="text-xs mt-1">
-              Skills are loaded from{" "}
-              <code className="bg-muted px-1 py-0.5 text-[10px] font-mono">
-                .agents/skills/
-              </code>{" "}
-              in the agent workspace
-            </p>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── System Prompt Tab ───────────────────────────────────────────────────────
-
-function SystemPromptTab({
-  content,
-  filePath,
-  loaded,
-  onChange,
-}: {
-  content: string;
-  filePath: string;
-  loaded: boolean;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="p-6 space-y-6 max-w-5xl">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <FileText className="h-4 w-4 text-primary" />
-            System Prompt
-            <span className="text-[10px] text-muted-foreground font-normal">
-              AGENTS.md
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-2 p-3 bg-secondary/50 border">
-            <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-            <p className="text-xs text-muted-foreground">
-              Loaded from{" "}
-              <code className="bg-muted px-1 py-0.5 font-mono text-[10px]">
-                {filePath || "AGENTS.md"}
-              </code>{" "}
-              in the agent workspace. Changes are saved back to this file.
-            </p>
-          </div>
-
-          {!loaded ? (
-            <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm">Loading...</span>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                Agent Instructions
-              </label>
-              <p className="text-[11px] text-muted-foreground/70 mb-2">
-                This is the agent&apos;s AGENTS.md file — it defines behavior,
-                team communication, memory index, and other persistent
-                instructions.
-              </p>
-              <Textarea
-                value={content}
-                onChange={(e) => onChange(e.target.value)}
-                placeholder="# Agent Instructions&#10;&#10;Define this agent's behavior and instructions..."
-                rows={28}
-                className="text-sm font-mono"
-              />
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-muted-foreground">
-                  {content.length} characters &middot;{" "}
-                  {content.split("\n").length} lines
-                </span>
-                <span className="text-[10px] text-muted-foreground">
-                  Markdown
-                </span>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ── Memory Tab ──────────────────────────────────────────────────────────────
-
-function MemoryTab({
-  memoryIndex,
-  memoryFiles,
-  memoryDir,
-  agentId,
-  onRefresh,
-}: {
-  memoryIndex: string;
-  memoryFiles: { name: string; path: string }[];
-  memoryDir: string;
-  agentId: string;
-  onRefresh: () => void;
-}) {
-  return (
-    <div className="p-6 space-y-6 max-w-5xl">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Brain className="h-4 w-4 text-primary" />
-            Agent Memory
-            <button
-              onClick={onRefresh}
-              className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <RefreshCw className="h-3 w-3" />
-              Refresh
-            </button>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-2 p-3 bg-secondary/50 border">
-            <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-            <p className="text-xs text-muted-foreground">
-              Memory files loaded from{" "}
-              <code className="bg-muted px-1 py-0.5 font-mono text-[10px]">
-                {memoryDir || `memory/`}
-              </code>{" "}
-              in the agent workspace. The agent manages its own memory using the
-              memory skill.
-            </p>
-          </div>
-
-          {/* Memory index */}
-          {memoryIndex ? (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                Memory Index
-              </label>
-              <div className="p-5 bg-card border font-mono text-xs whitespace-pre-wrap leading-relaxed text-muted-foreground">
-                {memoryIndex}
-              </div>
-            </div>
-          ) : (
-            <div className="p-6 text-center text-muted-foreground">
-              <Brain className="h-6 w-6 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">No memories yet</p>
-              <p className="text-xs mt-1">
-                The agent will build memories as it works using the memory
-                skill.
-              </p>
-            </div>
-          )}
-
-          {/* File listing */}
-          {memoryFiles.length > 0 && (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">
-                Memory Files ({memoryFiles.length})
-              </label>
-              <div className="border divide-y">
-                {memoryFiles.map((file) => (
-                  <div
-                    key={file.path}
-                    className="flex items-center gap-2 px-3 py-2 text-xs"
-                  >
-                    <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
-                    <span className="font-mono text-muted-foreground">
-                      {file.path}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Conversation History</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-2 p-3 bg-secondary/50 border">
-            <p className="text-xs text-muted-foreground">
-              Recent conversations are stored in the agent&apos;s message
-              history. View conversation history from the{" "}
-              <Link
-                href={`/chat/agent/${agentId}`}
-                className="text-primary hover:underline"
-              >
-                chat view
-              </Link>
-              .
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ── Heartbeat Tab ───────────────────────────────────────────────────────────
-
-function HeartbeatTab({
-  content,
-  filePath,
-  loaded,
-  onChange,
-  enabled,
-  onToggle,
-  interval,
-  onIntervalChange,
-}: {
-  content: string;
-  filePath: string;
-  loaded: boolean;
-  onChange: (v: string) => void;
-  enabled: boolean;
-  onToggle: () => void;
-  interval: string;
-  onIntervalChange: (v: string) => void;
-}) {
-  const intervalSec = parseInt(interval) || 300;
-
-  return (
-    <div className="p-6 space-y-6 max-w-5xl">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm flex items-center gap-2">
-            <HeartPulse className="h-4 w-4 text-primary" />
-            Heartbeat Monitor
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {/* Toggle */}
-          <div className="flex items-center justify-between p-3 bg-secondary/50 border">
-            <div>
-              <p className="text-sm font-medium">Heartbeat Enabled</p>
-              <p className="text-xs text-muted-foreground">
-                Periodically wake the agent to check tasks and process work
-              </p>
-            </div>
-            <button
-              onClick={onToggle}
-              className={`
-                relative h-6 w-11 transition-colors border
-                ${enabled ? "bg-primary border-primary" : "bg-muted border-border"}
-              `}
-            >
-              <span
-                className={`
-                  absolute top-0.5 h-4.5 w-4.5 bg-white transition-transform
-                  ${enabled ? "left-5" : "left-0.5"}
-                `}
-              />
-            </button>
-          </div>
-
-          {enabled && (
-            <>
-              {/* Interval */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">
-                  Interval (seconds)
-                </label>
-                <Input
-                  type="number"
-                  value={interval}
-                  onChange={(e) => onIntervalChange(e.target.value)}
-                  min={30}
-                  max={3600}
-                  className="max-w-[200px] font-mono"
-                />
-                <p className="text-[10px] text-muted-foreground">
-                  Every{" "}
-                  {intervalSec >= 60
-                    ? `${Math.floor(intervalSec / 60)}m ${intervalSec % 60 ? `${intervalSec % 60}s` : ""}`
-                    : `${intervalSec}s`}{" "}
-                  the agent will wake up and execute the heartbeat prompt
-                </p>
-              </div>
-
-              {/* Heartbeat prompt from file */}
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Heartbeat Prompt
-                  </label>
-                  <span className="text-[10px] text-muted-foreground">
-                    from{" "}
-                    <code className="bg-muted px-1 py-0.5 font-mono text-[10px]">
-                      {filePath || "heartbeat.md"}
-                    </code>
-                  </span>
-                </div>
-                <p className="text-[11px] text-muted-foreground/70 mb-2">
-                  What should the agent do each heartbeat cycle? Loaded from
-                  heartbeat.md in the workspace.
-                </p>
-                {!loaded ? (
-                  <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span className="text-sm">Loading...</span>
-                  </div>
-                ) : (
-                  <Textarea
-                    value={content}
-                    onChange={(e) => onChange(e.target.value)}
-                    rows={10}
-                    className="text-sm font-mono"
-                    placeholder="Check your tasks, process pending work..."
-                  />
-                )}
-              </div>
-
-              {/* Status visualization */}
-              <div className="border-t pt-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="h-2 w-2 bg-primary animate-pulse-dot" />
-                    <span className="text-xs text-muted-foreground">
-                      Active
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground/50">
-                    |
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    Next beat in ~{Math.floor(intervalSec / 2)}s
-                  </span>
-                </div>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ── Schedule Tab ─────────────────────────────────────────────────────────────
-
-function cronNextOccurrences(cron: string, count: number): Date[] {
-  const fields = cron.trim().split(/\s+/);
-  if (fields.length !== 5) return [];
-
-  const [minF, hourF, domF, monF, dowF] = fields;
-  const results: Date[] = [];
-  const now = new Date();
-  const cursor = new Date(now);
-  cursor.setSeconds(0, 0);
-
-  function matches(val: number, field: string): boolean {
-    if (field === "*") return true;
-    for (const part of field.split(",")) {
-      if (part.includes("/")) {
-        const [base, step] = part.split("/");
-        const stepN = parseInt(step);
-        const baseN = base === "*" ? 0 : parseInt(base);
-        if (stepN > 0 && (val - baseN) % stepN === 0 && val >= baseN) return true;
-      } else if (part.includes("-")) {
-        const [lo, hi] = part.split("-").map(Number);
-        if (val >= lo && val <= hi) return true;
-      } else {
-        if (parseInt(part) === val) return true;
-      }
-    }
-    return false;
-  }
-
-  for (let i = 0; i < 60 * 24 * 90 && results.length < count; i++) {
-    cursor.setMinutes(cursor.getMinutes() + 1);
-    const min = cursor.getMinutes();
-    const hour = cursor.getHours();
-    const dom = cursor.getDate();
-    const mon = cursor.getMonth() + 1;
-    const dow = cursor.getDay();
-
-    if (
-      matches(min, minF) &&
-      matches(hour, hourF) &&
-      matches(dom, domF) &&
-      matches(mon, monF) &&
-      (matches(dow, dowF) || matches(dow === 0 ? 7 : dow, dowF))
-    ) {
-      results.push(new Date(cursor));
-    }
-  }
-  return results;
-}
-
-type RepeatMode = "once" | "daily" | "weekdays" | "weekly" | "monthly" | "hourly" | "custom";
-const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-
-function buildCron(opts: {
-  repeat: RepeatMode;
-  hour: number;
-  minute: number;
-  days: number[];  // 0=Sun..6=Sat
-  monthDay: number;
-  customCron: string;
-  intervalMinutes: number;
-}): string {
-  switch (opts.repeat) {
-    case "once":
-      return ""; // one-time uses runAt, not cron
-    case "hourly":
-      return opts.intervalMinutes > 0
-        ? `*/${opts.intervalMinutes} * * * *`
-        : `${opts.minute} * * * *`;
-    case "daily":
-      return `${opts.minute} ${opts.hour} * * *`;
-    case "weekdays":
-      return `${opts.minute} ${opts.hour} * * 1-5`;
-    case "weekly":
-      if (opts.days.length === 0) return `${opts.minute} ${opts.hour} * * *`;
-      return `${opts.minute} ${opts.hour} * * ${opts.days.join(",")}`;
-    case "monthly":
-      return `${opts.minute} ${opts.hour} ${opts.monthDay} * *`;
-    case "custom":
-      return opts.customCron;
-  }
-}
-
-function describeSchedule(opts: {
-  repeat: RepeatMode;
-  hour: number;
-  minute: number;
-  days: number[];
-  monthDay: number;
-  intervalMinutes: number;
-  runAtDate: string;
-  runAtTime: string;
-}): string {
-  const timeStr = `${opts.hour % 12 || 12}:${String(opts.minute).padStart(2, "0")} ${opts.hour >= 12 ? "PM" : "AM"}`;
-  switch (opts.repeat) {
-    case "once": {
-      if (!opts.runAtDate) return "Pick a date and time";
-      const d = new Date(`${opts.runAtDate}T${opts.runAtTime || "09:00"}`);
-      return `Once on ${d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })} at ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
-    }
-    case "hourly":
-      return opts.intervalMinutes > 0
-        ? `Every ${opts.intervalMinutes} minutes`
-        : `Every hour at :${String(opts.minute).padStart(2, "0")}`;
-    case "daily":
-      return `Every day at ${timeStr}`;
-    case "weekdays":
-      return `Weekdays (Mon-Fri) at ${timeStr}`;
-    case "weekly": {
-      if (opts.days.length === 0) return `Every day at ${timeStr}`;
-      const names = opts.days.map(d => DAYS_OF_WEEK[d]);
-      return `Every ${names.join(", ")} at ${timeStr}`;
-    }
-    case "monthly":
-      return `${ordinal(opts.monthDay)} of every month at ${timeStr}`;
-    case "custom":
-      return "Custom cron expression";
-  }
-}
-
-function ordinal(n: number): string {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] || s[v] || s[0]);
-}
-
-function ScheduleTab({ agentId }: { agentId: string }) {
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-
-  // Form state — Google Calendar style
-  const [formRepeat, setFormRepeat] = useState<RepeatMode>("daily");
-  const [formHour, setFormHour] = useState(9);
-  const [formMinute, setFormMinute] = useState(0);
-  const [formDays, setFormDays] = useState<number[]>([1]); // Monday
-  const [formMonthDay, setFormMonthDay] = useState(1);
-  const [formIntervalMinutes, setFormIntervalMinutes] = useState(30);
-  const [formCustomCron, setFormCustomCron] = useState("");
-  const [formRunAtDate, setFormRunAtDate] = useState(""); // yyyy-MM-dd
-  const [formRunAtTime, setFormRunAtTime] = useState("09:00"); // HH:mm
-  const [formMessage, setFormMessage] = useState("");
-  const [formLabel, setFormLabel] = useState("");
-  const [formSaving, setFormSaving] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const loadSchedules = useCallback(() => {
-    getSchedules(agentId)
-      .then((data) => {
-        setSchedules(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [agentId]);
-
-  useEffect(() => {
-    loadSchedules();
-  }, [loadSchedules]);
-
-  const handleCreate = async () => {
-    if (!formMessage.trim()) return;
-
-    const isOnce = formRepeat === "once";
-    const cron = isOnce ? undefined : buildCron({
-      repeat: formRepeat,
-      hour: formHour,
-      minute: formMinute,
-      days: formDays,
-      monthDay: formMonthDay,
-      customCron: formCustomCron,
-      intervalMinutes: formIntervalMinutes,
-    });
-    const runAt = isOnce && formRunAtDate
-      ? new Date(`${formRunAtDate}T${formRunAtTime || "09:00"}`).toISOString()
-      : undefined;
-
-    if (!isOnce && (!cron || !cron.trim())) return;
-    if (isOnce && !runAt) return;
-
-    setFormSaving(true);
-    setFormError(null);
-    try {
-      await createSchedule({
-        cron: cron || undefined,
-        runAt,
-        agentId,
-        message: formMessage,
-        label: formLabel || undefined,
-      });
-      setShowForm(false);
-      setFormRepeat("daily");
-      setFormHour(9);
-      setFormMinute(0);
-      setFormDays([1]);
-      setFormMonthDay(1);
-      setFormIntervalMinutes(30);
-      setFormCustomCron("");
-      setFormRunAtDate("");
-      setFormRunAtTime("09:00");
-      setFormMessage("");
-      setFormLabel("");
-      loadSchedules();
-    } catch (err) {
-      setFormError((err as Error).message);
-    } finally {
-      setFormSaving(false);
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteSchedule(id);
-      loadSchedules();
-    } catch { /* ignore */ }
-  };
-
-  // Convert schedules to calendar data (next 60 occurrences per schedule)
-  const calendarData: CalendarData[] = [];
-  const dayMap = new Map<string, CalendarData>();
-
-  for (const s of schedules) {
-    if (!s.enabled) continue;
-
-    // One-time events
-    if (s.runAt) {
-      const occ = new Date(s.runAt);
-      const key = occ.toDateString();
-      if (!dayMap.has(key)) {
-        dayMap.set(key, { day: new Date(occ.getFullYear(), occ.getMonth(), occ.getDate()), events: [] });
-      }
-      const hours = occ.getHours();
-      const mins = occ.getMinutes();
-      const ampm = hours >= 12 ? "PM" : "AM";
-      const h12 = hours % 12 || 12;
-      dayMap.get(key)!.events.push({
-        id: s.id,
-        name: s.label || s.message.slice(0, 40),
-        time: `${h12}:${String(mins).padStart(2, "0")} ${ampm}`,
-        datetime: occ.toISOString(),
-      });
-      continue;
-    }
-
-    // Recurring events
-    const occurrences = cronNextOccurrences(s.cron, 60);
-    for (const occ of occurrences) {
-      const key = occ.toDateString();
-      if (!dayMap.has(key)) {
-        dayMap.set(key, { day: new Date(occ.getFullYear(), occ.getMonth(), occ.getDate()), events: [] });
-      }
-      const hours = occ.getHours();
-      const mins = occ.getMinutes();
-      const ampm = hours >= 12 ? "PM" : "AM";
-      const h12 = hours % 12 || 12;
-      const timeStr = `${h12}:${String(mins).padStart(2, "0")} ${ampm}`;
-      dayMap.get(key)!.events.push({
-        id: `${s.id}-${occ.getTime()}`,
-        name: s.label || s.message.slice(0, 40),
-        time: timeStr,
-        datetime: occ.toISOString(),
-      });
-    }
-  }
-  calendarData.push(...dayMap.values());
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading schedules...
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Schedule list bar */}
-      {schedules.length > 0 && (
-        <div className="flex items-center gap-3 px-6 py-3 border-b bg-card/50">
-          <div className="flex items-center gap-2 flex-1 overflow-x-auto">
-            {schedules.map((s) => (
-              <div
-                key={s.id}
-                className="flex items-center gap-2 px-3 py-1.5 border bg-card text-xs shrink-0"
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${s.enabled ? "bg-primary" : "bg-muted-foreground/30"}`} />
-                <span className="font-medium">{s.label}</span>
-                <span className="text-muted-foreground font-mono">
-                  {s.runAt
-                    ? new Date(s.runAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-                    : s.cron}
-                </span>
-                <button
-                  onClick={() => handleDelete(s.id)}
-                  className="text-muted-foreground hover:text-destructive transition-colors ml-1"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-          <span className="text-[10px] text-muted-foreground shrink-0">
-            {schedules.length} schedule(s)
-          </span>
-        </div>
-      )}
-
-      {/* New schedule form modal — Google Calendar style */}
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md bg-card border shadow-lg rounded-lg">
-            <div className="flex items-center justify-between px-5 py-3 border-b">
-              <div className="text-sm font-semibold">New Schedule</div>
-              <button
-                onClick={() => setShowForm(false)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="p-5 space-y-5">
-              {/* Task message — first, like a Google Calendar title */}
-              <div className="space-y-1.5">
-                <Input
-                  value={formLabel}
-                  onChange={(e) => setFormLabel(e.target.value)}
-                  placeholder="Add title"
-                  className="text-base font-medium border-0 border-b rounded-none px-0 focus-visible:ring-0 focus-visible:border-primary"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Textarea
-                  value={formMessage}
-                  onChange={(e) => setFormMessage(e.target.value)}
-                  placeholder="What should the agent do?"
-                  rows={2}
-                  className="text-sm"
-                />
-              </div>
-
-              {/* Repeat */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <RefreshCw className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <select
-                    value={formRepeat}
-                    onChange={(e) => setFormRepeat(e.target.value as RepeatMode)}
-                    className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm"
-                  >
-                    <option value="once">Does not repeat</option>
-                    <option value="hourly">Every hour</option>
-                    <option value="daily">Every day</option>
-                    <option value="weekdays">Every weekday (Mon-Fri)</option>
-                    <option value="weekly">Weekly on specific days</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="custom">Custom cron</option>
-                  </select>
-                </div>
-
-                {/* Date + time picker for one-time events */}
-                {formRepeat === "once" && (
-                  <div className="flex items-center gap-3">
-                    <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <div className="flex items-center gap-2 flex-1">
-                      <input
-                        type="date"
-                        value={formRunAtDate}
-                        onChange={(e) => setFormRunAtDate(e.target.value)}
-                        min={new Date().toISOString().split("T")[0]}
-                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                      />
-                      <input
-                        type="time"
-                        value={formRunAtTime}
-                        onChange={(e) => setFormRunAtTime(e.target.value)}
-                        className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Time picker for recurring — not shown for hourly with interval */}
-                {formRepeat !== "custom" && formRepeat !== "once" && (
-                  <div className="flex items-center gap-3">
-                    <CalendarDays className="h-4 w-4 text-muted-foreground shrink-0" />
-                    {formRepeat === "hourly" ? (
-                      <div className="flex items-center gap-2 flex-1">
-                        <span className="text-sm text-muted-foreground">Every</span>
-                        <select
-                          value={formIntervalMinutes}
-                          onChange={(e) => setFormIntervalMinutes(Number(e.target.value))}
-                          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                        >
-                          <option value={15}>15 minutes</option>
-                          <option value={30}>30 minutes</option>
-                          <option value={0}>hour (at :{String(formMinute).padStart(2, "0")})</option>
-                        </select>
-                        {formIntervalMinutes === 0 && (
-                          <>
-                            <span className="text-sm text-muted-foreground">at</span>
-                            <select
-                              value={formMinute}
-                              onChange={(e) => setFormMinute(Number(e.target.value))}
-                              className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                            >
-                              {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(m => (
-                                <option key={m} value={m}>:{String(m).padStart(2, "0")}</option>
-                              ))}
-                            </select>
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 flex-1">
-                        <span className="text-sm text-muted-foreground">at</span>
-                        <select
-                          value={formHour}
-                          onChange={(e) => setFormHour(Number(e.target.value))}
-                          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                        >
-                          {Array.from({ length: 24 }, (_, i) => {
-                            const h12 = i % 12 || 12;
-                            const ampm = i >= 12 ? "PM" : "AM";
-                            return <option key={i} value={i}>{h12} {ampm}</option>;
-                          })}
-                        </select>
-                        <span className="text-sm text-muted-foreground">:</span>
-                        <select
-                          value={formMinute}
-                          onChange={(e) => setFormMinute(Number(e.target.value))}
-                          className="h-9 w-20 rounded-md border border-input bg-background px-3 text-sm"
-                        >
-                          {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(m => (
-                            <option key={m} value={m}>{String(m).padStart(2, "0")}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Day-of-week toggles for weekly */}
-                {formRepeat === "weekly" && (
-                  <div className="flex items-center gap-1.5 pl-7">
-                    {DAYS_OF_WEEK.map((day, i) => (
-                      <button
-                        key={day}
-                        type="button"
-                        onClick={() =>
-                          setFormDays(prev =>
-                            prev.includes(i) ? prev.filter(d => d !== i) : [...prev, i].sort()
-                          )
-                        }
-                        className={`h-8 w-8 rounded-full text-[11px] font-medium transition-colors ${
-                          formDays.includes(i)
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-muted-foreground hover:bg-muted/80"
-                        }`}
-                      >
-                        {day.charAt(0)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Day of month for monthly */}
-                {formRepeat === "monthly" && (
-                  <div className="flex items-center gap-2 pl-7">
-                    <span className="text-sm text-muted-foreground">on day</span>
-                    <select
-                      value={formMonthDay}
-                      onChange={(e) => setFormMonthDay(Number(e.target.value))}
-                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                    >
-                      {Array.from({ length: 28 }, (_, i) => (
-                        <option key={i + 1} value={i + 1}>{ordinal(i + 1)}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {/* Custom cron input */}
-                {formRepeat === "custom" && (
-                  <div className="pl-7">
-                    <Input
-                      value={formCustomCron}
-                      onChange={(e) => setFormCustomCron(e.target.value)}
-                      placeholder="0 9 * * 1-5"
-                      className="font-mono text-sm"
-                      autoFocus
-                    />
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      minute hour day-of-month month day-of-week
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Summary */}
-              <div className="rounded-md bg-muted/50 px-3 py-2">
-                <p className="text-xs text-muted-foreground">
-                  {describeSchedule({
-                    repeat: formRepeat,
-                    hour: formHour,
-                    minute: formMinute,
-                    days: formDays,
-                    monthDay: formMonthDay,
-                    intervalMinutes: formIntervalMinutes,
-                    runAtDate: formRunAtDate,
-                    runAtTime: formRunAtTime,
-                  })}
-                </p>
-              </div>
-
-              {formError && (
-                <p className="text-[11px] text-destructive">{formError}</p>
-              )}
-              <div className="flex justify-end gap-2 pt-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowForm(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleCreate}
-                  disabled={formSaving || !formMessage.trim() || (formRepeat === "custom" && !formCustomCron.trim()) || (formRepeat === "once" && !formRunAtDate)}
-                >
-                  {formSaving ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    "Save"
-                  )}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Calendar */}
-      {schedules.length > 0 ? (
-        <div className="flex-1">
-          <FullScreenCalendar
-            data={calendarData}
-            onNewEvent={() => setShowForm(true)}
-          />
-        </div>
-      ) : (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center text-muted-foreground">
-            <CalendarDays className="h-8 w-8 mx-auto mb-3 opacity-30" />
-            <p className="text-sm">No schedules configured</p>
-            <p className="text-xs mt-1 mb-4">
-              Schedules send recurring tasks to this agent on a cron interval
-            </p>
-            <Button size="sm" onClick={() => setShowForm(true)}>
-              Create Schedule
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

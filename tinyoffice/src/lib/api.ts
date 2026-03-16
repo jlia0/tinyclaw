@@ -141,7 +141,7 @@ export async function getLogs(limit = 100): Promise<{ lines: string[] }> {
 
 export async function saveAgent(
   id: string,
-  agent: AgentConfig
+  agent: Partial<AgentConfig> & Pick<AgentConfig, "name" | "provider" | "model">
 ): Promise<{ ok: boolean; agent: AgentConfig }> {
   return apiFetch(`/api/agents/${encodeURIComponent(id)}`, {
     method: "PUT",

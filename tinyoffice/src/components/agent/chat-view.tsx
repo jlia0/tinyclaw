@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { usePolling, timeAgo } from "@/lib/hooks";
 import {
   getAgentMessages,
@@ -8,9 +8,19 @@ import {
   type AgentMessage,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Bot, Send, Loader2 } from "lucide-react";
+import {
+  ChatContainerRoot,
+  ChatContainerContent,
+  ChatContainerScrollAnchor,
+} from "@/components/ui/chat-container";
+import {
+  PromptInput,
+  PromptInputAction,
+  PromptInputActions,
+  PromptInputTextarea,
+} from "@/components/ui/prompt-input";
+import { Markdown } from "@/components/ui/markdown";
+import { Bot, ArrowUp, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface AgentChatItem {
@@ -54,7 +64,6 @@ export function AgentChatView({
   const [messages, setMessages] = useState<AgentChatItem[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const feedEndRef = useRef<HTMLDivElement>(null);
 
   const fetchMessages = useCallback(async () => {
     return getAgentMessages(agentId, 200, 0);
@@ -85,10 +94,6 @@ export function AgentChatView({
       return combined.length > 300 ? combined.slice(-300) : combined;
     });
   }, [polledMessages, agentId]);
-
-  useEffect(() => {
-    feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || sending) return;
@@ -129,50 +134,37 @@ export function AgentChatView({
     }
   }, [input, sending, agentId]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b px-6 py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">{agentName}</span>
-          <Badge variant="outline" className="text-xs font-mono">@{agentId}</Badge>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className={cn("h-1.5 w-1.5", pollError ? "bg-destructive" : "bg-primary animate-pulse-dot")} />
-          <span className="text-[10px] text-muted-foreground">
-            {pollError ? "Disconnected" : "Polling"}
-          </span>
-        </div>
+    <div className="flex h-full flex-col relative">
+      {/* Polling status */}
+      <div className="absolute top-3 right-4 z-10 flex items-center gap-1.5">
+        <div className={cn("h-1.5 w-1.5", pollError ? "bg-destructive" : "bg-primary animate-pulse-dot")} />
+        <span className="text-[10px] text-muted-foreground">
+          {pollError ? "Disconnected" : "Connected"}
+        </span>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <Bot className="h-8 w-8 text-muted-foreground/30 mb-3" />
-            <p className="text-sm text-muted-foreground">
-              Send a message to {agentName} to get started
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3">
+      {messages.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-center">
+          <Bot className="h-8 w-8 text-muted-foreground/30 mb-3" />
+          <p className="text-sm text-muted-foreground">
+            Send a message to {agentName} to get started
+          </p>
+        </div>
+      ) : (
+        <ChatContainerRoot className="flex-1">
+          <ChatContainerContent className="space-y-3 px-6 pt-4 pb-28">
             {messages.map((msg) => {
               const isUser = msg.role === "user";
               const label = isUser ? "You" : agentName;
               const initials = label.slice(0, 2).toUpperCase();
               return (
-                <div key={msg.id} className="flex items-start gap-3 group">
+                <div key={msg.id} className="flex items-start gap-3">
                   <div
                     className={cn(
-                      "flex h-8 w-8 items-center justify-center text-[10px] font-bold uppercase shrink-0 text-white",
-                      isUser ? "bg-primary" : "bg-emerald-500"
+                      "flex h-8 w-8 items-center justify-center text-[10px] font-bold uppercase shrink-0",
+                      isUser ? "bg-primary text-primary-foreground" : "bg-emerald-500 text-white"
                     )}
                   >
                     {isUser ? "You" : initials}
@@ -184,45 +176,48 @@ export function AgentChatView({
                         {timeAgo(msg.created_at)}
                       </span>
                     </div>
-                    <p className="text-sm text-foreground/90 mt-0.5 break-words whitespace-pre-wrap">
+                    <Markdown className="prose prose-sm dark:prose-invert mt-0.5 max-w-none break-words text-foreground/90">
                       {msg.content}
-                    </p>
+                    </Markdown>
                   </div>
                 </div>
               );
             })}
-            <div ref={feedEndRef} />
-          </div>
-        )}
-      </div>
+            <ChatContainerScrollAnchor />
+          </ChatContainerContent>
+        </ChatContainerRoot>
+      )}
 
-      {/* Composer */}
-      <div className="border-t px-6 py-4">
-        <div className="flex gap-3 items-end">
-          <Textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={`Message ${agentName}...`}
-            rows={2}
-            className="flex-1 text-sm resize-none min-h-[44px]"
-          />
-          <Button
-            onClick={handleSend}
-            disabled={!input.trim() || sending}
-            size="icon"
-            className="h-10 w-10 shrink-0"
-          >
-            {sending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
-        <p className="text-[10px] text-muted-foreground mt-1.5">
-          Ctrl+Enter to send
-        </p>
+      {/* Floating composer */}
+      <div className="absolute bottom-4 left-6 right-6 z-10">
+        <PromptInput
+          value={input}
+          onValueChange={setInput}
+          isLoading={sending}
+          onSubmit={handleSend}
+          className="relative w-full shadow-lg"
+        >
+          <PromptInputTextarea placeholder={`Message ${agentName}...`} className="min-h-[70px]" />
+          <PromptInputActions className="absolute bottom-2 right-2">
+            <PromptInputAction
+              tooltip={sending ? "Sending..." : "Send message"}
+            >
+              <Button
+                variant="default"
+                size="icon"
+                className="h-8 w-8 rounded-full"
+                disabled={!input.trim() || sending}
+                onClick={handleSend}
+              >
+                {sending ? (
+                  <Square className="size-5 fill-current" />
+                ) : (
+                  <ArrowUp className="size-5" />
+                )}
+              </Button>
+            </PromptInputAction>
+          </PromptInputActions>
+        </PromptInput>
       </div>
     </div>
   );

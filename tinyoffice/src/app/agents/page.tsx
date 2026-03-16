@@ -7,10 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select } from "@/components/ui/select";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
-  Bot, Cpu, FolderOpen, FileText, Plus, Pencil, Trash2,
+  Bot, Cpu, FileText, Plus, Pencil, Trash2,
   X, Check, Loader2, Swords,
 } from "lucide-react";
 import Link from "next/link";
@@ -20,14 +20,12 @@ type FormData = {
   name: string;
   provider: string;
   model: string;
-  working_directory: string;
   system_prompt: string;
-  prompt_file: string;
 };
 
 const emptyForm: FormData = {
   id: "", name: "", provider: "anthropic", model: "sonnet",
-  working_directory: "", system_prompt: "", prompt_file: "",
+  system_prompt: "",
 };
 
 export default function AgentsPage() {
@@ -50,9 +48,7 @@ export default function AgentsPage() {
       name: agent.name,
       provider: agent.provider,
       model: agent.model,
-      working_directory: agent.working_directory,
       system_prompt: agent.system_prompt || "",
-      prompt_file: agent.prompt_file || "",
     });
     setIsNew(false);
     setError("");
@@ -62,7 +58,7 @@ export default function AgentsPage() {
 
   const handleSave = useCallback(async () => {
     if (!editing) return;
-    const { id, name, provider, model, working_directory, system_prompt, prompt_file } = editing;
+    const { id, name, provider, model, system_prompt } = editing;
     if (!id.trim() || !name.trim() || !provider.trim() || !model.trim()) {
       setError("ID, name, provider, and model are required");
       return;
@@ -75,9 +71,8 @@ export default function AgentsPage() {
     setError("");
     try {
       await saveAgent(id.toLowerCase(), {
-        name, provider, model, working_directory,
+        name, provider, model,
         ...(system_prompt ? { system_prompt } : {}),
-        ...(prompt_file ? { prompt_file } : {}),
       });
       setEditing(null);
       refresh();
@@ -118,17 +113,19 @@ export default function AgentsPage() {
         </Button>
       </div>
 
-      {/* Editor */}
+      {/* Editor Modal */}
       {editing && (
-        <AgentEditor
-          form={editing}
-          setForm={setEditing}
-          isNew={isNew}
-          saving={saving}
-          error={error}
-          onSave={handleSave}
-          onCancel={cancel}
-        />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <AgentEditor
+            form={editing}
+            setForm={setEditing}
+            isNew={isNew}
+            saving={saving}
+            error={error}
+            onSave={handleSave}
+            onCancel={cancel}
+          />
+        </div>
       )}
 
       {/* Agent Grid */}
@@ -180,14 +177,19 @@ function AgentEditor({
     setForm({ ...form, [field]: value });
 
   return (
-    <Card className="border-primary/50">
-      <CardHeader>
-        <CardTitle className="text-sm flex items-center gap-2">
-          {isNew ? <Plus className="h-4 w-4 text-primary" /> : <Pencil className="h-4 w-4 text-primary" />}
-          {isNew ? "New Agent" : `Edit @${form.id}`}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <Card className="w-full max-w-lg border-border">
+      <CardContent className="p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold flex items-center gap-2">
+              {isNew ? <Plus className="h-4 w-4 text-primary" /> : <Pencil className="h-4 w-4 text-primary" />}
+              {isNew ? "New Agent" : `Edit @${form.id}`}
+            </p>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onCancel}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Agent ID</label>
@@ -209,10 +211,15 @@ function AgentEditor({
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Provider</label>
-            <Select value={form.provider} onChange={(e) => set("provider", e.target.value)}>
-              <option value="anthropic">anthropic</option>
-              <option value="openai">openai</option>
-              <option value="opencode">opencode</option>
+            <Select value={form.provider} onValueChange={(v) => set("provider", v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="anthropic">anthropic</SelectItem>
+                <SelectItem value="openai">openai</SelectItem>
+                <SelectItem value="opencode">opencode</SelectItem>
+              </SelectContent>
             </Select>
           </div>
           <div className="space-y-1.5">
@@ -225,15 +232,6 @@ function AgentEditor({
             />
           </div>
           <div className="space-y-1.5 md:col-span-2">
-            <label className="text-xs font-medium text-muted-foreground">Working Directory</label>
-            <Input
-              value={form.working_directory}
-              onChange={(e) => set("working_directory", e.target.value)}
-              placeholder="Leave empty for default workspace path"
-              className="font-mono"
-            />
-          </div>
-          <div className="space-y-1.5 md:col-span-2">
             <label className="text-xs font-medium text-muted-foreground">System Prompt (optional)</label>
             <Textarea
               value={form.system_prompt}
@@ -241,15 +239,6 @@ function AgentEditor({
               placeholder="Custom system prompt for this agent..."
               rows={3}
               className="text-sm"
-            />
-          </div>
-          <div className="space-y-1.5 md:col-span-2">
-            <label className="text-xs font-medium text-muted-foreground">Prompt File (optional)</label>
-            <Input
-              value={form.prompt_file}
-              onChange={(e) => set("prompt_file", e.target.value)}
-              placeholder="Path to a prompt file"
-              className="font-mono"
             />
           </div>
         </div>
@@ -264,7 +253,6 @@ function AgentEditor({
             {isNew ? "Create Agent" : "Save Changes"}
           </Button>
           <Button variant="ghost" onClick={onCancel} disabled={saving}>
-            <X className="h-4 w-4" />
             Cancel
           </Button>
         </div>
@@ -339,29 +327,11 @@ function AgentCard({
           <Badge variant="outline">{agent.model}</Badge>
         </div>
 
-        {agent.working_directory && (
-          <div className="flex items-start gap-2">
-            <FolderOpen className="h-3.5 w-3.5 text-muted-foreground mt-0.5" />
-            <p className="text-xs text-muted-foreground font-mono break-all">
-              {agent.working_directory}
-            </p>
-          </div>
-        )}
-
         {agent.system_prompt && (
           <div className="flex items-start gap-2">
             <FileText className="h-3.5 w-3.5 text-muted-foreground mt-0.5" />
             <p className="text-xs text-muted-foreground line-clamp-2">
               {agent.system_prompt}
-            </p>
-          </div>
-        )}
-
-        {agent.prompt_file && (
-          <div className="flex items-start gap-2">
-            <FileText className="h-3.5 w-3.5 text-muted-foreground mt-0.5" />
-            <p className="text-xs text-muted-foreground font-mono">
-              {agent.prompt_file}
             </p>
           </div>
         )}

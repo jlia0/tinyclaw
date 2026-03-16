@@ -8,7 +8,7 @@ import { Card, CardContent, CardTitle, CardDescription } from "@/components/ui/c
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
   Wand2,
@@ -277,18 +277,28 @@ export default function SetupPage() {
               <div className="space-y-3 pt-2">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Provider</label>
-                  <Select value={provider} onChange={(e) => handleProviderChange(e.target.value)} className="mt-1">
-                    {PROVIDERS.map((p) => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
+                  <Select value={provider} onValueChange={handleProviderChange}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROVIDERS.map((p) => (
+                        <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Model</label>
-                  <Select value={model} onChange={(e) => setModel(e.target.value)} className="mt-1">
-                    {(MODELS[provider] || []).map((m) => (
-                      <option key={m.value} value={m.value}>{m.label}</option>
-                    ))}
+                  <Select value={model} onValueChange={setModel}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(MODELS[provider] || []).map((m) => (
+                        <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
                 </div>
                 <div>
@@ -367,28 +377,35 @@ export default function SetupPage() {
                         <label className="text-[10px] text-muted-foreground uppercase">Provider</label>
                         <Select
                           value={agent.provider}
-                          onChange={(e) => {
-                            const p = e.target.value;
+                          onValueChange={(p) => {
                             const m = MODELS[p]?.[0]?.value || "";
                             updateAgent(idx, { provider: p, model: m });
                           }}
-                          className="text-xs"
                         >
-                          {PROVIDERS.map((p) => (
-                            <option key={p.value} value={p.value}>{p.label}</option>
-                          ))}
+                          <SelectTrigger className="text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PROVIDERS.map((p) => (
+                              <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+                            ))}
+                          </SelectContent>
                         </Select>
                       </div>
                       <div>
                         <label className="text-[10px] text-muted-foreground uppercase">Model</label>
                         <Select
                           value={agent.model}
-                          onChange={(e) => updateAgent(idx, { model: e.target.value })}
-                          className="text-xs"
+                          onValueChange={(v) => updateAgent(idx, { model: v })}
                         >
-                          {(MODELS[agent.provider] || []).map((m) => (
-                            <option key={m.value} value={m.value}>{m.label}</option>
-                          ))}
+                          <SelectTrigger className="text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(MODELS[agent.provider] || []).map((m) => (
+                              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                            ))}
+                          </SelectContent>
                         </Select>
                       </div>
                     </div>

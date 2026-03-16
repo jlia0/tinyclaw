@@ -25,6 +25,11 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { useMediaQuery } from "@/hooks/use-media-query"
 
 export interface CalendarEvent {
@@ -61,6 +66,7 @@ export function FullScreenCalendar({ data, onNewEvent, newEventLabel }: FullScre
   const [currentMonth, setCurrentMonth] = React.useState(
     format(today, "MMM-yyyy"),
   )
+  const [popoverDay, setPopoverDay] = React.useState<Date | null>(null)
   const firstDayCurrentMonth = parse(currentMonth, "MMM-yyyy", new Date())
   const isDesktop = useMediaQuery("(min-width: 768px)")
 
@@ -227,77 +233,118 @@ export function FullScreenCalendar({ data, onNewEvent, newEventLabel }: FullScre
                     </div>
                   )}
                 </button>
-              ) : (
-                <div
-                  key={dayIdx}
-                  onClick={() => setSelectedDay(day)}
-                  className={cn(
-                    dayIdx === 0 && colStartClasses[getDay(day)],
-                    !isEqual(day, selectedDay) &&
-                      !isToday(day) &&
-                      !isSameMonth(day, firstDayCurrentMonth) &&
-                      "bg-accent/50 text-muted-foreground",
-                    "relative flex flex-col border-b border-r hover:bg-muted focus:z-10",
-                    !isEqual(day, selectedDay) && "hover:bg-accent/75",
-                  )}
-                >
-                  <header className="flex items-center justify-between p-2.5">
-                    <button
-                      type="button"
-                      className={cn(
-                        isEqual(day, selectedDay) && "text-primary-foreground",
-                        !isEqual(day, selectedDay) &&
-                          !isToday(day) &&
-                          isSameMonth(day, firstDayCurrentMonth) &&
-                          "text-foreground",
-                        !isEqual(day, selectedDay) &&
-                          !isToday(day) &&
-                          !isSameMonth(day, firstDayCurrentMonth) &&
-                          "text-muted-foreground",
-                        isEqual(day, selectedDay) &&
-                          isToday(day) &&
-                          "border-none bg-primary",
-                        isEqual(day, selectedDay) &&
-                          !isToday(day) &&
-                          "bg-foreground",
-                        (isEqual(day, selectedDay) || isToday(day)) &&
-                          "font-semibold",
-                        "flex h-7 w-7 items-center justify-center rounded-full text-xs hover:border",
-                      )}
-                    >
-                      <time dateTime={format(day, "yyyy-MM-dd")}>
-                        {format(day, "d")}
-                      </time>
-                    </button>
-                  </header>
-                  <div className="flex-1 p-2.5">
-                    {data
-                      .filter((event) => isSameDay(event.day, day))
-                      .map((dayData) => (
-                        <div key={dayData.day.toString()} className="space-y-1.5">
-                          {dayData.events.slice(0, 1).map((event) => (
-                            <div
-                              key={event.id}
-                              className="flex flex-col items-start gap-1 rounded-lg border bg-muted/50 p-2 text-xs leading-tight"
-                            >
-                              <p className="font-medium leading-none">
-                                {event.name}
-                              </p>
-                              <p className="leading-none text-muted-foreground">
-                                {event.time}
-                              </p>
+              ) : (() => {
+                const dayEvents = data.filter((event) => isSameDay(event.day, day))
+                const hasEvents = dayEvents.length > 0
+                const isPopoverOpen = popoverDay !== null && isSameDay(popoverDay, day)
+
+                return (
+                  <Popover
+                    key={dayIdx}
+                    open={isPopoverOpen}
+                    onOpenChange={(open) => {
+                      if (!open) setPopoverDay(null)
+                    }}
+                  >
+                    <PopoverTrigger asChild>
+                      <div
+                        onClick={() => {
+                          setSelectedDay(day)
+                          if (hasEvents) setPopoverDay(day)
+                        }}
+                        className={cn(
+                          dayIdx === 0 && colStartClasses[getDay(day)],
+                          !isEqual(day, selectedDay) &&
+                            !isToday(day) &&
+                            !isSameMonth(day, firstDayCurrentMonth) &&
+                            "bg-accent/50 text-muted-foreground",
+                          "relative flex flex-col border-b border-r hover:bg-muted focus:z-10 cursor-default",
+                          !isEqual(day, selectedDay) && "hover:bg-accent/75",
+                        )}
+                      >
+                        <header className="flex items-center justify-between p-2.5">
+                          <button
+                            type="button"
+                            className={cn(
+                              isEqual(day, selectedDay) && "text-primary-foreground",
+                              !isEqual(day, selectedDay) &&
+                                !isToday(day) &&
+                                isSameMonth(day, firstDayCurrentMonth) &&
+                                "text-foreground",
+                              !isEqual(day, selectedDay) &&
+                                !isToday(day) &&
+                                !isSameMonth(day, firstDayCurrentMonth) &&
+                                "text-muted-foreground",
+                              isEqual(day, selectedDay) &&
+                                isToday(day) &&
+                                "border-none bg-primary",
+                              isEqual(day, selectedDay) &&
+                                !isToday(day) &&
+                                "bg-foreground",
+                              (isEqual(day, selectedDay) || isToday(day)) &&
+                                "font-semibold",
+                              "flex h-7 w-7 items-center justify-center rounded-full text-xs hover:border",
+                            )}
+                          >
+                            <time dateTime={format(day, "yyyy-MM-dd")}>
+                              {format(day, "d")}
+                            </time>
+                          </button>
+                        </header>
+                        <div className="flex-1 p-2.5">
+                          {dayEvents.map((dayData) => (
+                            <div key={dayData.day.toString()} className="space-y-1.5">
+                              {dayData.events.slice(0, 1).map((event) => (
+                                <div
+                                  key={event.id}
+                                  className="flex flex-col items-start gap-1 rounded-lg border bg-muted/50 p-2 text-xs leading-tight"
+                                >
+                                  <p className="font-medium leading-none">
+                                    {event.name}
+                                  </p>
+                                  <p className="leading-none text-muted-foreground">
+                                    {event.time}
+                                  </p>
+                                </div>
+                              ))}
+                              {dayData.events.length > 1 && (
+                                <div className="text-xs text-muted-foreground">
+                                  + {dayData.events.length - 1} more
+                                </div>
+                              )}
                             </div>
                           ))}
-                          {dayData.events.length > 1 && (
-                            <div className="text-xs text-muted-foreground">
-                              + {dayData.events.length - 1} more
-                            </div>
-                          )}
                         </div>
-                      ))}
-                  </div>
-                </div>
-              ),
+                      </div>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-72 p-0" align="start">
+                      <div className="px-3 py-2 border-b">
+                        <p className="text-sm font-semibold">
+                          {format(day, "EEEE, MMM d")}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {dayEvents.reduce((sum, d) => sum + d.events.length, 0)} event(s)
+                        </p>
+                      </div>
+                      <div className="max-h-60 overflow-y-auto p-2 space-y-1.5">
+                        {dayEvents.flatMap((d) => d.events).map((event) => (
+                          <div
+                            key={event.id}
+                            className="flex items-start gap-2 rounded-lg border bg-muted/50 p-2 text-xs"
+                          >
+                            <span className="text-muted-foreground shrink-0 pt-px">
+                              {event.time}
+                            </span>
+                            <span className="font-medium leading-tight">
+                              {event.name}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                )
+              })(),
             )}
           </div>
 

@@ -16,7 +16,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select } from "@/components/ui/select";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
   FolderKanban, Plus, GripVertical, Bot, Users, X, Check, Loader2,
@@ -204,22 +204,27 @@ export default function ProjectDetailPage({
               className="md:col-span-2"
             />
             <Select
-              value={form.assignee ? `${form.assigneeType}:${form.assignee}` : ""}
-              onChange={(e) => setAssignee(e.target.value)}
+              value={form.assignee ? `${form.assigneeType}:${form.assignee}` : "none"}
+              onValueChange={(v) => setAssignee(v === "none" ? "" : v)}
             >
-              <option value="">Unassigned</option>
-              {agents &&
-                Object.entries(agents).map(([id, a]) => (
-                  <option key={`agent:${id}`} value={`agent:${id}`}>
-                    Agent: {a.name}
-                  </option>
-                ))}
-              {teams &&
-                Object.entries(teams).map(([id, t]) => (
-                  <option key={`team:${id}`} value={`team:${id}`}>
-                    Team: {t.name}
-                  </option>
-                ))}
+              <SelectTrigger>
+                <SelectValue placeholder="Unassigned" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Unassigned</SelectItem>
+                {agents &&
+                  Object.entries(agents).map(([id, a]) => (
+                    <SelectItem key={`agent:${id}`} value={`agent:${id}`}>
+                      Agent: {a.name}
+                    </SelectItem>
+                  ))}
+                {teams &&
+                  Object.entries(teams).map(([id, t]) => (
+                    <SelectItem key={`team:${id}`} value={`team:${id}`}>
+                      Team: {t.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
             </Select>
           </div>
           <Textarea
