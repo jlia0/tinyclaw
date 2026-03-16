@@ -215,14 +215,14 @@ export async function getAgentMemory(agentId: string): Promise<{ index: string; 
   return apiFetch(`/api/agents/${encodeURIComponent(agentId)}/memory`);
 }
 
-export async function getAgentHeartbeat(agentId: string): Promise<{ content: string; path: string }> {
+export async function getAgentHeartbeat(agentId: string): Promise<{ content: string; path: string; enabled: boolean; interval?: number }> {
   return apiFetch(`/api/agents/${encodeURIComponent(agentId)}/heartbeat`);
 }
 
-export async function saveAgentHeartbeat(agentId: string, content: string): Promise<{ ok: boolean }> {
+export async function saveAgentHeartbeat(agentId: string, data: { content?: string; enabled?: boolean; interval?: number }): Promise<{ ok: boolean }> {
   return apiFetch(`/api/agents/${encodeURIComponent(agentId)}/heartbeat`, {
     method: "PUT",
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(data),
   });
 }
 
