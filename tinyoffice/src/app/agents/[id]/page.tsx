@@ -4,8 +4,6 @@ import { useState, useCallback, useEffect, use } from "react";
 import { usePolling } from "@/lib/hooks";
 import {
   getAgents,
-  getSettings,
-  updateSettings,
   getAgentSkills,
   getAgentSystemPrompt,
   saveAgentSystemPrompt,
@@ -13,7 +11,6 @@ import {
   getAgentHeartbeat,
   saveAgentHeartbeat,
   type AgentConfig,
-  type Settings,
   type WorkspaceSkill,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -74,7 +71,6 @@ export default function AgentConfigPage({
     getAgents,
     0,
   );
-  const { data: settings } = usePolling<Settings>(getSettings, 0);
 
   const [activeTab, setActiveTab] = useState<TabId>("chat");
   const [spSaving, setSpSaving] = useState(false);
@@ -130,19 +126,14 @@ export default function AgentConfigPage({
       .then((data) => {
         setHeartbeatContent(data.content);
         setHeartbeatPath(data.path);
+        setHeartbeatEnabled(data.enabled);
+        if (data.interval != null) {
+          setHeartbeatInterval(String(data.interval));
+        }
         setHeartbeatLoaded(true);
       })
       .catch(() => setHeartbeatLoaded(true));
   }, [agent, agentId]);
-
-  // Sync heartbeat interval from settings unless the user has edited it
-  useEffect(() => {
-    if (!settings?.monitoring) return;
-    const interval = settings.monitoring.heartbeat_interval;
-    if (typeof interval === "number") {
-      setHeartbeatInterval(String(interval));
-    }
-  }, [settings]);
 
   // Convert workspace skills to SkillEntry format for constellation
   const constellationSkills: SkillEntry[] = workspaceSkills.map((s) => ({
@@ -169,15 +160,11 @@ export default function AgentConfigPage({
     if (!agent) return;
     setHbSaving(true);
     try {
-      await saveAgentHeartbeat(agentId, heartbeatContent);
-      if (settings?.monitoring) {
-        await updateSettings({
-          monitoring: {
-            ...settings.monitoring,
-            heartbeat_interval: parseInt(heartbeatInterval) || 300,
-          },
-        });
-      }
+      await saveAgentHeartbeat(agentId, {
+        content: heartbeatContent,
+        enabled: heartbeatEnabled,
+        interval: parseInt(heartbeatInterval) || 300,
+      });
       setHbSaved(true);
       setTimeout(() => setHbSaved(false), 2000);
     } catch {
@@ -185,7 +172,7 @@ export default function AgentConfigPage({
     } finally {
       setHbSaving(false);
     }
-  }, [agent, agentId, heartbeatContent, heartbeatEnabled, heartbeatInterval, settings]);
+  }, [agent, agentId, heartbeatContent, heartbeatEnabled, heartbeatInterval]);
 
   const refreshWorkspaceData = useCallback(() => {
     getAgentSkills(agentId)

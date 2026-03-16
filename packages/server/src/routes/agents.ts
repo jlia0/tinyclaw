@@ -265,7 +265,7 @@ app.get('/api/agents/:id/memory', (c) => {
     return c.json({ index, files, memoryDir });
 });
 
-// GET /api/agents/:id/heartbeat — read heartbeat.md from workspace
+// GET /api/agents/:id/heartbeat — read heartbeat.md and settings from workspace
 app.get('/api/agents/:id/heartbeat', (c) => {
     const agentId = c.req.param('id');
     const settings = getSettings();
@@ -277,19 +277,39 @@ app.get('/api/agents/:id/heartbeat', (c) => {
     if (fs.existsSync(heartbeatMd)) {
         try { content = fs.readFileSync(heartbeatMd, 'utf8'); } catch { /* skip */ }
     }
-    return c.json({ content, path: heartbeatMd });
+    return c.json({
+        content,
+        path: heartbeatMd,
+        enabled: agent.heartbeat?.enabled ?? true,
+        interval: agent.heartbeat?.interval,
+    });
 });
 
-// PUT /api/agents/:id/heartbeat — write heartbeat.md to workspace
+// PUT /api/agents/:id/heartbeat — write heartbeat.md and settings to workspace
 app.put('/api/agents/:id/heartbeat', async (c) => {
     const agentId = c.req.param('id');
     const settings = getSettings();
     const agent = settings.agents?.[agentId];
     if (!agent) return c.json({ error: `agent '${agentId}' not found` }, 404);
 
-    const body = await c.req.json() as { content: string };
-    const heartbeatMd = path.join(agent.working_directory, 'heartbeat.md');
-    fs.writeFileSync(heartbeatMd, body.content || '', 'utf8');
+    const body = await c.req.json() as { content?: string; enabled?: boolean; interval?: number };
+
+    // Write heartbeat.md if content provided
+    if (body.content != null) {
+        const heartbeatMd = path.join(agent.working_directory, 'heartbeat.md');
+        fs.writeFileSync(heartbeatMd, body.content || '', 'utf8');
+    }
+
+    // Persist heartbeat overrides to settings.json
+    if (body.enabled != null || body.interval != null) {
+        mutateSettings(s => {
+            if (!s.agents?.[agentId]) return;
+            if (!s.agents[agentId].heartbeat) s.agents[agentId].heartbeat = {};
+            if (body.enabled != null) s.agents[agentId].heartbeat!.enabled = body.enabled;
+            if (body.interval != null) s.agents[agentId].heartbeat!.interval = body.interval;
+        });
+    }
+
     return c.json({ ok: true });
 });
 
