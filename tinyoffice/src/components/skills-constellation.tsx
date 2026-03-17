@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
+
 // ── Skill types ──────────────────────────────────────────────────────────────
 
 export interface SkillEntry {
