@@ -62,6 +62,13 @@ export interface Settings {
     monitoring?: {
         heartbeat_interval?: number;
     };
+    protection?: {
+        // Max agent-to-agent messages a single agent may receive per minute before
+        // the loop guard drops further messages. Default: 10.
+        max_agent_messages_per_minute?: number;
+        // Max total agent exchanges in a single team conversation chain. Default: 10.
+        max_chain_depth?: number;
+    };
 }
 
 export interface MessageData {
