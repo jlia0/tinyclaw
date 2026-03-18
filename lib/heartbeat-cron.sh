@@ -10,6 +10,7 @@ API_PORT="${TINYCLAW_API_PORT:-3777}"
 API_URL="http://localhost:${API_PORT}"
 MEMORY_MAINTENANCE_PROMPT_FILE="$PROJECT_ROOT/memory-maintenance-heartbeat.md"
 MEMORY_MAINTENANCE_INTERVAL=$((7 * 24 * 60 * 60))
+PENDING_MAINTENANCE_TTL=$((24 * 60 * 60))
 
 # Read interval from settings.json, default to 3600
 if [ -f "$SETTINGS_FILE" ]; then
@@ -22,6 +23,8 @@ INTERVAL=${INTERVAL:-3600}
 declare -A LAST_SENT
 declare -A PENDING_MAINTENANCE_DIR
 declare -A PENDING_MAINTENANCE_BY_AGENT
+declare -A PENDING_MAINTENANCE_AGENT
+declare -A PENDING_MAINTENANCE_STARTED
 
 get_override_enabled() {
     local agent_id="$1"
@@ -71,7 +74,7 @@ needs_memory_maintenance() {
     return 1
 }
 
-mark_memory_maintenance_sent() {
+mark_memory_maintenance_completed() {
     local agent_dir="$1"
     local now="$2"
     mkdir -p "$agent_dir/.tinyclaw"
@@ -85,6 +88,42 @@ get_memory_maintenance_prompt() {
     fi
 
     return 1
+}
+
+clear_pending_maintenance() {
+    local message_id="$1"
+    local agent_id="$2"
+
+    unset "PENDING_MAINTENANCE_DIR[$message_id]"
+    unset "PENDING_MAINTENANCE_AGENT[$message_id]"
+    unset "PENDING_MAINTENANCE_STARTED[$message_id]"
+
+    if [ -n "$agent_id" ]; then
+        unset "PENDING_MAINTENANCE_BY_AGENT[$agent_id]"
+    fi
+}
+
+cleanup_stale_pending_maintenance() {
+    local now="$1"
+
+    for message_id in "${!PENDING_MAINTENANCE_STARTED[@]}"; do
+        local started_at="${PENDING_MAINTENANCE_STARTED[$message_id]}"
+        if [ -z "$started_at" ]; then
+            continue
+        fi
+
+        if [ $((now - started_at)) -lt "$PENDING_MAINTENANCE_TTL" ]; then
+            continue
+        fi
+
+        local agent_id="${PENDING_MAINTENANCE_AGENT[$message_id]}"
+        clear_pending_maintenance "$message_id" "$agent_id"
+        if [ -n "$agent_id" ]; then
+            log "  → Agent @$agent_id: stale pending memory maintenance expired"
+        else
+            log "  → Cleared stale pending memory maintenance for message $message_id"
+        fi
+    done
 }
 
 MIN_OVERRIDE_INTERVAL=$(get_min_override_interval)
@@ -128,6 +167,7 @@ while true; do
     AGENT_COUNT=0
 
     NOW=$(date +%s)
+    cleanup_stale_pending_maintenance "$NOW"
 
     # Send heartbeat to each agent
     for AGENT_ID in $AGENT_IDS; do
@@ -201,6 +241,8 @@ ${PROMPT}"
             if [ "$SHOULD_RUN_MEMORY_MAINTENANCE" -eq 1 ]; then
                 PENDING_MAINTENANCE_DIR["$MESSAGE_ID"]="$AGENT_DIR"
                 PENDING_MAINTENANCE_BY_AGENT["$AGENT_ID"]="$MESSAGE_ID"
+                PENDING_MAINTENANCE_AGENT["$MESSAGE_ID"]="$AGENT_ID"
+                PENDING_MAINTENANCE_STARTED["$MESSAGE_ID"]="$NOW"
             fi
         else
             log "  ✗ Failed to queue for @$AGENT_ID: $RESPONSE"
@@ -218,11 +260,10 @@ ${PROMPT}"
         for MESSAGE_ID in "${!PENDING_MAINTENANCE_DIR[@]}"; do
             if echo "$RESPONSES" | jq -e --arg mid "$MESSAGE_ID" '.[] | select(.channel == "heartbeat" and .messageId == $mid)' >/dev/null 2>&1; then
                 AGENT_DIR="${PENDING_MAINTENANCE_DIR["$MESSAGE_ID"]}"
-                AGENT_ID=$(echo "$RESPONSES" | jq -r --arg mid "$MESSAGE_ID" '.[] | select(.channel == "heartbeat" and .messageId == $mid) | .agent' 2>/dev/null | head -1)
-                mark_memory_maintenance_sent "$AGENT_DIR" "$(date +%s)"
-                unset 'PENDING_MAINTENANCE_DIR[$MESSAGE_ID]'
+                AGENT_ID="${PENDING_MAINTENANCE_AGENT["$MESSAGE_ID"]}"
+                mark_memory_maintenance_completed "$AGENT_DIR" "$(date +%s)"
+                clear_pending_maintenance "$MESSAGE_ID" "$AGENT_ID"
                 if [ -n "$AGENT_ID" ]; then
-                    unset 'PENDING_MAINTENANCE_BY_AGENT[$AGENT_ID]'
                     log "  ↺ @$AGENT_ID: memory maintenance completed"
                 fi
             fi
