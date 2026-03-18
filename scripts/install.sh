@@ -66,6 +66,13 @@ chmod +x "$WRAPPER"
 chmod +x "$PROJECT_ROOT/bin/tinyclaw" 2>/dev/null || true
 chmod +x "$PROJECT_ROOT/lib/tinyagi.sh" 2>/dev/null || true
 
+# Rebuild native modules for this platform (bundle was built on Linux)
+if command -v npm &> /dev/null; then
+    echo -e "Rebuilding native modules..."
+    cd "$PROJECT_ROOT" && npm rebuild better-sqlite3 --silent 2>/dev/null || true
+    echo -e "  ${GREEN}✓${NC} Native modules rebuilt"
+fi
+
 # Determine symlink directory
 INSTALL_DIR=""
 
