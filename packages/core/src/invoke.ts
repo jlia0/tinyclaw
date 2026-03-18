@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, CustomProvider, TeamConfig } from './types';
-import { SCRIPT_DIR, resolveClaudeModel, resolveCodexModel, resolveOpenCodeModel, getSettings } from './config';
+import { SCRIPT_DIR, resolveModel, getSettings } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, buildSystemPrompt } from './agent';
 
@@ -130,7 +130,7 @@ export async function invokeAgent(
             log('INFO', `Resetting Codex conversation for agent: ${agentId}`);
         }
 
-        const modelId = customProvider ? effectiveModel : resolveCodexModel(effectiveModel);
+        const modelId = customProvider ? effectiveModel : resolveModel(effectiveModel, 'openai');
         const codexArgs = ['exec'];
         if (shouldResume) {
             codexArgs.push('resume', '--last');
@@ -165,7 +165,7 @@ export async function invokeAgent(
         // Outputs JSONL with --format json; extract "text" type events for the response.
         // Model passed via --model in provider/model format (e.g. opencode/claude-sonnet-4-6).
         // Supports -c flag for conversation continuation (resumes last session).
-        const modelId = resolveOpenCodeModel(effectiveModel);
+        const modelId = resolveModel(effectiveModel, 'opencode');
         log('DEBUG', `Using OpenCode CLI (agent: ${agentId}, model: ${modelId})`);
 
         const continueConversation = !shouldReset;
@@ -225,7 +225,7 @@ export async function invokeAgent(
             log('INFO', `Resetting conversation for agent: ${agentId}`);
         }
 
-        const modelId = customProvider ? effectiveModel : resolveClaudeModel(effectiveModel);
+        const modelId = customProvider ? effectiveModel : resolveModel(effectiveModel, 'anthropic');
         const claudeArgs = ['--dangerously-skip-permissions'];
         if (modelId) {
             claudeArgs.push('--model', modelId);
