@@ -56,7 +56,7 @@ function checkPrerequisites() {
 // ── Installation ─────────────────────────────────────────────────────────────
 
 function isInstalled() {
-    return fs.existsSync(path.join(INSTALL_DIR, 'tinyagi.sh'));
+    return fs.existsSync(path.join(INSTALL_DIR, 'lib/tinyagi.sh'));
 }
 
 async function install() {
@@ -115,7 +115,7 @@ async function install() {
     }
 
     // Make scripts executable
-    exec(`chmod +x "${INSTALL_DIR}/bin/tinyagi" "${INSTALL_DIR}/bin/tinyclaw" "${INSTALL_DIR}/tinyagi.sh" "${INSTALL_DIR}/lib/heartbeat-cron.sh" "${INSTALL_DIR}/packages/tinyagi/bin/tinyagi.mjs"`);
+    exec(`chmod +x "${INSTALL_DIR}/bin/tinyagi" "${INSTALL_DIR}/bin/tinyclaw" "${INSTALL_DIR}/lib/tinyagi.sh" "${INSTALL_DIR}/lib/heartbeat-cron.sh" "${INSTALL_DIR}/packages/cli/bin/tinyagi.mjs"`);
 
     // Install CLI symlink (tinyagi command)
     installCli();
@@ -128,7 +128,7 @@ async function install() {
 
 function installCli() {
     // Determine installation directory for the symlink
-    const tinyagiSrc = path.join(INSTALL_DIR, 'packages/tinyagi/bin/tinyagi.mjs');
+    const tinyagiSrc = path.join(INSTALL_DIR, 'packages/cli/bin/tinyagi.mjs');
     let installDir = '';
 
     try {
@@ -250,9 +250,9 @@ async function run() {
 // ── Delegate to bash (tinyagi.sh) ───────────────────────────────────────────
 
 function delegateToBash(args, opts = {}) {
-    const tinyagiSh = path.join(INSTALL_DIR, 'tinyagi.sh');
+    const tinyagiSh = path.join(INSTALL_DIR, 'lib/tinyagi.sh');
     if (!fs.existsSync(tinyagiSh)) {
-        log(RED, 'TinyAGI is not installed. Run "tinyagi" or "npx tinyagi" first.');
+        log(RED, 'TinyAGI is not installed. Run "tinyagi" first.');
         process.exit(1);
     }
 

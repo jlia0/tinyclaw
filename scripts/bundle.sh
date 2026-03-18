@@ -81,7 +81,6 @@ cp -r docs "$BUNDLE_DIR/" 2>/dev/null || true
 cp -r .agents "$BUNDLE_DIR/" 2>/dev/null || true
 cp -r tinyoffice/ "$BUNDLE_DIR/"
 
-cp tinyagi.sh "$BUNDLE_DIR/"
 cp package.json "$BUNDLE_DIR/"
 cp package-lock.json "$BUNDLE_DIR/"
 cp tsconfig.json "$BUNDLE_DIR/"
@@ -98,9 +97,9 @@ cp .gitignore "$BUNDLE_DIR/"
 # Make scripts executable
 chmod +x "$BUNDLE_DIR/bin/tinyagi"
 chmod +x "$BUNDLE_DIR/bin/tinyclaw"
-chmod +x "$BUNDLE_DIR/tinyagi.sh"
 chmod +x "$BUNDLE_DIR/scripts/install.sh"
 chmod +x "$BUNDLE_DIR/scripts/bundle.sh"
+chmod +x "$BUNDLE_DIR/lib/tinyagi.sh"
 chmod +x "$BUNDLE_DIR/lib/heartbeat-cron.sh"
 chmod +x "$BUNDLE_DIR/lib/update.sh"
 

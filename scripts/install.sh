@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # TinyAGI CLI Installation Script
-# Creates a 'tinyagi' symlink so the command is available globally.
+# Installs TinyAGI to ~/.tinyagi and creates global symlinks.
 #
 # Supports: curl -fsSL <url>/install.sh | bash
 # When piped, downloads the release tarball, extracts it, and installs.
 
 set -e
+
+INSTALL_HOME="$HOME/.tinyagi"
+
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
 
 # If piped (no BASH_SOURCE path), download and extract first
 if [ -z "${BASH_SOURCE[0]}" ] || [ "${BASH_SOURCE[0]}" = "bash" ]; then
@@ -18,17 +26,24 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-WRAPPER="$PROJECT_ROOT/bin/tinyagi"
-
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-BLUE='\033[0;34m'
-NC='\033[0m'
 
 echo -e "${BLUE}TinyAGI CLI Installer${NC}"
 echo "====================="
 echo ""
+
+# Copy project files to ~/.tinyagi (permanent location)
+if [ "$PROJECT_ROOT" != "$INSTALL_HOME" ]; then
+    echo -e "Installing to: ${GREEN}~/.tinyagi${NC}"
+    mkdir -p "$INSTALL_HOME"
+    # Copy everything from the extracted/source bundle
+    cp -a "$PROJECT_ROOT/." "$INSTALL_HOME/"
+    PROJECT_ROOT="$INSTALL_HOME"
+    echo -e "  ${GREEN}✓${NC} Files installed to ~/.tinyagi"
+else
+    echo -e "Updating in: ${GREEN}~/.tinyagi${NC}"
+fi
+
+WRAPPER="$PROJECT_ROOT/bin/tinyagi"
 
 # Check if wrapper exists
 if [ ! -f "$WRAPPER" ]; then
@@ -36,19 +51,23 @@ if [ ! -f "$WRAPPER" ]; then
     exit 1
 fi
 
-# Determine installation directory
+chmod +x "$WRAPPER"
+chmod +x "$PROJECT_ROOT/bin/tinyclaw" 2>/dev/null || true
+chmod +x "$PROJECT_ROOT/lib/tinyagi.sh" 2>/dev/null || true
+
+# Determine symlink directory
 INSTALL_DIR=""
 
 if [ -w "/usr/local/bin" ]; then
     INSTALL_DIR="/usr/local/bin"
-    echo -e "Installing to: ${GREEN}/usr/local/bin${NC} (system-wide)"
+    echo -e "Symlinks in: ${GREEN}/usr/local/bin${NC} (system-wide)"
 elif [ -d "$HOME/.local/bin" ]; then
     INSTALL_DIR="$HOME/.local/bin"
-    echo -e "Installing to: ${GREEN}~/.local/bin${NC} (user)"
+    echo -e "Symlinks in: ${GREEN}~/.local/bin${NC} (user)"
 else
     mkdir -p "$HOME/.local/bin"
     INSTALL_DIR="$HOME/.local/bin"
-    echo -e "Installing to: ${GREEN}~/.local/bin${NC} (user, created)"
+    echo -e "Symlinks in: ${GREEN}~/.local/bin${NC} (user, created)"
 fi
 
 # Install a symlink (removes existing if present)
@@ -118,5 +137,5 @@ else
 fi
 
 echo ""
-echo "To uninstall: rm $INSTALL_DIR/tinyagi $INSTALL_DIR/tinyclaw"
+echo "To uninstall: rm -rf ~/.tinyagi && rm $INSTALL_DIR/tinyagi $INSTALL_DIR/tinyclaw"
 echo ""

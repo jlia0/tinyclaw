@@ -23,4 +23,4 @@ REPO_ROOT="$(dirname "$TINYCLAW_DIR")"
 export TINYCLAW_HOME="$HOME/.tinyclaw"
 
 # Delegate to tinyagi entrypoint
-exec node "$REPO_ROOT/packages/tinyagi/bin/tinyagi.mjs" "$@"
+exec node "$REPO_ROOT/packages/cli/bin/tinyagi.mjs" "$@"

@@ -9,7 +9,7 @@
 #   4. Run setup wizard to enable it
 
 # SCRIPT_DIR = repo root (where bash scripts live)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # TINYAGI_HOME = data directory (settings, queue, logs, etc.)
 # Always defaults to ~/.tinyagi; override via TINYAGI_HOME env var.

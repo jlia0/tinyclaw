@@ -324,7 +324,7 @@ client.on('message_create', async (message: Message) => {
             log('INFO', 'Restart command received');
             await message.reply('Restarting TinyAGI...');
             const { exec } = require('child_process');
-            exec(`"${path.join(SCRIPT_DIR, 'tinyagi.sh')}" restart`, { detached: true, stdio: 'ignore' });
+            exec(`"${path.join(SCRIPT_DIR, 'lib', 'tinyagi.sh')}" restart`, { detached: true, stdio: 'ignore' });
             return;
         }
 

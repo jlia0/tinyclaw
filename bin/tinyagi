@@ -23,4 +23,4 @@ REPO_ROOT="$(dirname "$TINYAGI_DIR")"
 export TINYAGI_HOME="$HOME/.tinyagi"
 
 # Execute tinyagi.mjs with all arguments
-exec node "$REPO_ROOT/packages/tinyagi/bin/tinyagi.mjs" "$@"
+exec node "$REPO_ROOT/packages/cli/bin/tinyagi.mjs" "$@"

@@ -67,7 +67,7 @@ async function doUpdate() {
             p.log.message('Update cancelled.');
             return;
         }
-        execSync(`"${path.join(SCRIPT_DIR, 'tinyagi.sh')}" stop`, { stdio: 'inherit' });
+        execSync(`"${path.join(SCRIPT_DIR, 'lib', 'tinyagi.sh')}" stop`, { stdio: 'inherit' });
     }
 
     const currentVersion = getCurrentVersion();
@@ -124,7 +124,7 @@ async function doUpdate() {
         `v${currentVersion}-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`,
     );
     fs.mkdirSync(backupDir, { recursive: true });
-    for (const item of ['bin', 'src', 'dist', 'lib', 'tinyagi.sh', 'package.json']) {
+    for (const item of ['bin', 'src', 'dist', 'lib', 'package.json']) {
         const src = path.join(SCRIPT_DIR, item);
         if (fs.existsSync(src)) {
             execSync(`cp -r "${src}" "${backupDir}/"`, { stdio: 'ignore' });
@@ -136,7 +136,7 @@ async function doUpdate() {
     spinner.start('[3/4] Installing...');
     execSync(`cd "${tempDir}" && tar -xzf tinyagi-bundle.tar.gz && cp -a tinyagi/. "${SCRIPT_DIR}/"`, { stdio: 'ignore' });
     execSync(`find "${SCRIPT_DIR}/bin" "${SCRIPT_DIR}/lib" "${SCRIPT_DIR}/scripts" -type f \\( -name "*.sh" -o -name "tinyagi" \\) -exec chmod +x {} +`, { stdio: 'ignore' });
-    execSync(`chmod +x "${SCRIPT_DIR}/tinyagi.sh"`, { stdio: 'ignore' });
+    execSync(`chmod +x "${SCRIPT_DIR}/lib/tinyagi.sh"`, { stdio: 'ignore' });
     fs.rmSync(tempDir, { recursive: true, force: true });
 
     // Rebuild native modules

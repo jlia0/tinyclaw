@@ -8,7 +8,7 @@ import { log } from '@tinyagi/core';
 const app = new Hono();
 const execFileAsync = promisify(execFile);
 
-const TINYAGI_SH = path.join(SCRIPT_DIR, 'tinyagi.sh');
+const TINYAGI_SH = path.join(SCRIPT_DIR, 'lib', 'tinyagi.sh');
 
 async function runTinyagi(...args: string[]): Promise<string> {
     const { stdout, stderr } = await execFileAsync('bash', [TINYAGI_SH, ...args], {

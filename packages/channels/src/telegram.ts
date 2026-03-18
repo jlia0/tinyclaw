@@ -443,7 +443,7 @@ bot.on('message', async (msg: TelegramBot.Message) => {
                 reply_to_message_id: msg.message_id,
             });
             const { exec } = require('child_process');
-            exec(`"${path.join(SCRIPT_DIR, 'tinyagi.sh')}" restart`, { detached: true, stdio: 'ignore' });
+            exec(`"${path.join(SCRIPT_DIR, 'lib', 'tinyagi.sh')}" restart`, { detached: true, stdio: 'ignore' });
             return;
         }
 

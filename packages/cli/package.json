@@ -3,12 +3,16 @@
   "version": "0.0.10",
   "type": "module",
   "main": "dist/shared.js",
+  "bin": {
+    "tinyagi": "./bin/tinyagi.mjs"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w"
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",
-    "@tinyagi/core": "*"
+    "@tinyagi/core": "*",
+    "open": "^10.0.0"
   }
 }
