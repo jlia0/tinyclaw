@@ -378,7 +378,12 @@ export function subscribeToEvents(
   onError?: (err: Event) => void,
   eventTypes?: string[]
 ): () => void {
-  const es = new EventSource(`${API_BASE}/api/events/stream`);
+  // Connect directly to the API server for SSE, bypassing the Next.js rewrite
+  // proxy which buffers responses and breaks real-time event streaming.
+  const sseBase = typeof window !== "undefined"
+    ? (process.env.NEXT_PUBLIC_SSE_URL ?? `${window.location.protocol}//${window.location.hostname}:3777`)
+    : "";
+  const es = new EventSource(`${sseBase}/api/events/stream`);
 
   const handler = (e: MessageEvent) => {
     try { onEvent(JSON.parse(e.data)); } catch { /* ignore parse errors */ }
