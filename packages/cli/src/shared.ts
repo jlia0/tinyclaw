@@ -113,8 +113,11 @@ export function anthropicModelOptions(): ProviderOption[] {
 
 export function openaiModelOptions(): ProviderOption[] {
     return [
-        { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', hint: 'recommended' },
-        { value: 'gpt-5.2', label: 'GPT-5.2' },
+        { value: 'gpt-5.4-codex', label: 'GPT-5.4 Codex', hint: 'recommended' },
+        { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
+        { value: 'gpt-5.4', label: 'GPT-5.4' },
+        { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+        { value: 'gpt-5.4-nano', label: 'GPT-5.4 Nano' },
         { value: '__custom__', label: 'Custom', hint: 'enter model name' },
     ];
 }
@@ -123,11 +126,12 @@ export function opencodeModelOptions(): ProviderOption[] {
     return [
         { value: 'opencode/claude-sonnet-4-6', label: 'opencode/claude-sonnet-4-6', hint: 'recommended' },
         { value: 'opencode/claude-opus-4-6', label: 'opencode/claude-opus-4-6' },
-        { value: 'opencode/gemini-3-flash', label: 'opencode/gemini-3-flash' },
-        { value: 'opencode/gemini-3-pro', label: 'opencode/gemini-3-pro' },
         { value: 'anthropic/claude-sonnet-4-6', label: 'anthropic/claude-sonnet-4-6' },
         { value: 'anthropic/claude-opus-4-6', label: 'anthropic/claude-opus-4-6' },
+        { value: 'openai/gpt-5.4-codex', label: 'openai/gpt-5.4-codex' },
         { value: 'openai/gpt-5.3-codex', label: 'openai/gpt-5.3-codex' },
+        { value: 'opencode/gemini-3-flash', label: 'opencode/gemini-3-flash' },
+        { value: 'opencode/gemini-3-pro', label: 'opencode/gemini-3-pro' },
         { value: '__custom__', label: 'Custom', hint: 'enter model name' },
     ];
 }
