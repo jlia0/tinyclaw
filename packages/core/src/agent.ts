@@ -137,27 +137,35 @@ export function buildSystemPrompt(
     const startMarker = '<!-- TEAMMATES_START -->';
     const endMarker = '<!-- TEAMMATES_END -->';
 
-    const teammates: { id: string; name: string; model: string }[] = [];
-    for (const team of Object.values(teams)) {
+    // Collect teams this agent belongs to
+    const agentTeams: { teamId: string; teamName: string; leaderId: string; members: { id: string; name: string; model: string }[] }[] = [];
+    for (const [teamId, team] of Object.entries(teams)) {
         if (!team.agents.includes(agentId)) continue;
+        const members: { id: string; name: string; model: string }[] = [];
         for (const tid of team.agents) {
             if (tid === agentId) continue;
             const agent = agents[tid];
-            if (agent && !teammates.some(t => t.id === tid)) {
-                teammates.push({ id: tid, name: agent.name, model: agent.model });
+            if (agent) {
+                members.push({ id: tid, name: agent.name, model: agent.model });
             }
         }
+        agentTeams.push({ teamId, teamName: team.name, leaderId: team.leader_agent, members });
     }
 
     let block = '';
     const self = agents[agentId];
+    const isLeaderOfAny = agentTeams.some(t => t.leaderId === agentId);
     if (self) {
-        block += `\n### You\n\n- \`@${agentId}\` — **${self.name}** (${self.model})\n`;
+        const leaderTag = isLeaderOfAny ? ' *(team leader)*' : '';
+        block += `\n### You\n\n- \`@${agentId}\` — **${self.name}** (${self.model})${leaderTag}\n`;
     }
-    if (teammates.length > 0) {
-        block += '\n### Your Teammates\n\n';
-        for (const t of teammates) {
-            block += `- \`@${t.id}\` — **${t.name}** (${t.model})\n`;
+    if (agentTeams.length > 0) {
+        for (const team of agentTeams) {
+            block += `\n### Team \`#${team.teamId}\` — ${team.teamName}\n\n`;
+            for (const t of team.members) {
+                const leaderTag = t.id === team.leaderId ? ' *(team leader)*' : '';
+                block += `- \`@${t.id}\` — **${t.name}** (${t.model})${leaderTag}\n`;
+            }
         }
     }
 

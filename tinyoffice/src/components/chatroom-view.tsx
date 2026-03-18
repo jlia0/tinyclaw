@@ -49,7 +49,7 @@ export function ChatRoomView({
 
   const fetchMessages = useCallback(async () => {
     const msgs = await getChatMessages(teamId, 200, 0);
-    return msgs;
+    return [...msgs].reverse();
   }, [teamId]);
 
   const { data: polledMessages } = usePolling<ChatMessage[]>(fetchMessages, 2000, [teamId]);
