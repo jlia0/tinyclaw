@@ -233,6 +233,16 @@ async function run() {
     } catch {
         log(YELLOW, 'TinyAGI may already be running (use tinyagi status to check)');
     }
+
+    // 5. Open office
+    console.log('');
+    log(GREEN, `Opening TinyOffice: ${PORTAL_URL}`);
+    try {
+        const open = (await import('open')).default;
+        await open(PORTAL_URL);
+    } catch {
+        log(YELLOW, `Could not open browser. Visit ${PORTAL_URL} manually.`);
+    }
 }
 
 // ── Delegate to bash (tinyagi.sh) ───────────────────────────────────────────
