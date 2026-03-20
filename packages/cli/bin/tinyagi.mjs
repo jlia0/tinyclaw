@@ -317,6 +317,7 @@ switch (command) {
         console.log('  logs [type]              View logs (discord|whatsapp|telegram|heartbeat|daemon|queue|all)');
         console.log('');
         console.log('Channels & Services:');
+        console.log('  channel setup            Configure channels interactively');
         console.log('  channel start <ch>       Start a channel in the running session');
         console.log('  channel stop <ch>        Stop a channel');
         console.log('  channel reset <ch>       Reset channel auth');

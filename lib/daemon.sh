@@ -163,7 +163,7 @@ start_daemon() {
         done
         echo ""
     else
-        echo -e "${BLUE}No channels configured.${NC} Add channels later with 'tinyagi setup'"
+        echo -e "${BLUE}No channels configured.${NC} Add channels later with 'tinyagi channel setup'"
         echo ""
     fi
 

@@ -6,7 +6,7 @@
 #   1. Create src/channels/<channel>-client.ts
 #   2. Add the channel ID to ALL_CHANNELS in lib/common.sh
 #   3. Fill in the CHANNEL_* registry arrays in lib/common.sh
-#   4. Run setup wizard to enable it
+#   4. Run channel setup to enable it
 
 # SCRIPT_DIR = repo root (where bash scripts live)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -96,9 +96,12 @@ case "${1:-}" in
                 fi
                 node "$CLI/messaging.js" channels-reset "$3"
                 ;;
+            setup)
+                node "$CLI/messaging.js" channel-setup
+                ;;
             *)
                 local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
-                echo "Usage: $0 channel {start|stop|reset} {$local_names}"
+                echo "Usage: $0 channel {start|stop|reset|setup} {$local_names}"
                 exit 1
                 ;;
         esac
@@ -308,7 +311,8 @@ case "${1:-}" in
         tmux attach -t "$TMUX_SESSION"
         ;;
     setup)
-        node "$CLI/setup-wizard.js"
+        # Legacy alias — redirect to channel setup
+        node "$CLI/messaging.js" channel-setup
         ;;
     update)
         node "$CLI/update.js"
@@ -319,17 +323,17 @@ case "${1:-}" in
     *)
         local_names=$(IFS='|'; echo "${ALL_CHANNELS[*]}")
         show_banner
-        echo "Usage: $0 {start|stop|restart|status|setup|send|logs|reset <agent_id>|channel|heartbeat|provider|model|agent|team|chatroom|office|pairing|update|version|attach}"
+        echo "Usage: $0 {start|stop|restart|status|send|logs|reset <agent_id>|channel|heartbeat|provider|model|agent|team|chatroom|office|pairing|update|version|attach}"
         echo ""
         echo "Commands:"
-        echo "  start [--skip-setup]      Start TinyAGI (--skip-setup: API only, complete setup in browser)"
+        echo "  start                    Start TinyAGI"
         echo "  stop                     Stop all processes"
         echo "  restart                  Restart TinyAGI"
         echo "  status                   Show current status"
-        echo "  setup                    Run setup wizard (change channels/provider/model/heartbeat)"
         echo "  send <msg>               Send message to AI manually"
         echo "  logs [type]              View logs ($local_names|heartbeat|daemon|queue|all)"
         echo "  reset <id> [id2 ...]     Reset specific agent conversation(s)"
+        echo "  channel setup            Configure channels interactively"
         echo "  channel start <ch>       Start a channel in the running session"
         echo "  channel stop <ch>        Stop a channel"
         echo "  channel reset <ch>       Reset channel auth ($local_names)"

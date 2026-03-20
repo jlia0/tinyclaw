@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import http from 'http';
 import { SCRIPT_DIR } from '@tinyagi/core';
+import { unwrap, required, readSettings, writeSettings, printBanner } from './shared.ts';
 
 const API_PORT = process.env.TINYAGI_API_PORT || '3777';
 const API_URL = `http://localhost:${API_PORT}`;
@@ -71,9 +72,79 @@ function channelsReset(channel: string) {
     }
 
     // Token-based channels
-    p.log.message(`To reset ${channel}, run the setup wizard to update your bot token:`);
-    p.log.message('  tinyagi setup');
+    p.log.message(`To reset ${channel}, run: tinyagi channel setup`);
     p.log.message(`Or manually edit .tinyagi/settings.json to change the ${channel} token.`);
+}
+
+const ALL_CHANNELS = ['telegram', 'discord', 'whatsapp'] as const;
+
+const CHANNEL_DISPLAY: Record<string, string> = {
+    telegram: 'Telegram',
+    discord: 'Discord',
+    whatsapp: 'WhatsApp',
+};
+
+const CHANNEL_TOKEN_PROMPT: Record<string, string> = {
+    discord: 'Enter your Discord bot token',
+    telegram: 'Enter your Telegram bot token',
+};
+
+const CHANNEL_TOKEN_HELP: Record<string, string> = {
+    discord: 'Get one at: https://discord.com/developers/applications',
+    telegram: 'Create a bot via @BotFather on Telegram to get a token',
+};
+
+async function channelSetup() {
+    printBanner();
+    p.intro('TinyAGI - Channel Setup');
+
+    const settings = readSettings();
+
+    const enabledChannels = unwrap(await p.multiselect({
+        message: 'Which messaging channels do you want to enable?',
+        options: ALL_CHANNELS.map(ch => ({
+            value: ch,
+            label: CHANNEL_DISPLAY[ch],
+            initialSelected: settings.channels?.enabled?.includes(ch),
+        })),
+        required: false,
+    }));
+
+    // Collect tokens for channels that need them
+    const tokens: Record<string, string> = {};
+    for (const ch of enabledChannels) {
+        if (CHANNEL_TOKEN_PROMPT[ch]) {
+            const existing = (settings.channels as any)?.[ch]?.bot_token;
+            const token = unwrap(await p.password({
+                message: `${CHANNEL_TOKEN_PROMPT[ch]} (${CHANNEL_TOKEN_HELP[ch]})${existing ? ' [leave empty to keep current]' : ''}`,
+                validate: existing ? undefined : required,
+            }));
+            tokens[ch] = token || existing || '';
+        }
+    }
+
+    // Update settings
+    if (!settings.channels) settings.channels = { enabled: [] };
+    settings.channels.enabled = enabledChannels as string[];
+    for (const ch of ALL_CHANNELS) {
+        if (CHANNEL_TOKEN_PROMPT[ch]) {
+            if (tokens[ch]) {
+                (settings.channels as any)[ch] = { bot_token: tokens[ch] };
+            }
+        }
+    }
+    if (enabledChannels.includes('whatsapp')) {
+        (settings.channels as any).whatsapp = (settings.channels as any).whatsapp || {};
+    }
+
+    writeSettings(settings);
+    p.log.success('Channel configuration saved');
+
+    if (enabledChannels.length > 0) {
+        p.outro('Run `tinyagi restart` to apply changes.');
+    } else {
+        p.outro('No channels enabled. You can add them later.');
+    }
 }
 
 // --- CLI dispatch ---
@@ -95,6 +166,12 @@ switch (command) {
             process.exit(1);
         }
         channelsReset(arg);
+        break;
+    case 'channel-setup':
+        channelSetup().catch(err => {
+            p.log.error(err.message);
+            process.exit(1);
+        });
         break;
     default:
         p.log.error(`Unknown messaging command: ${command}`);
