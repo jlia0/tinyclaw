@@ -342,37 +342,7 @@ function App({ filterTeamId, apiPort }: { filterTeamId: string | null; apiPort: 
     // Process a single event
     const handleEvent = useCallback((event: TinyAGIEvent) => {
         switch (event.type) {
-            case 'processor_start':
-                setProcessorAlive(true);
-                addLog('\u26A1', 'Queue processor started', 'green');
-                // Refresh settings when processor starts
-                setSettings(loadSettings());
-                break;
-
-            case 'message_received':
-                addLog('\u2709', `[${event.channel}] ${event.sender}: ${truncate(String(event.message || ''), 50)}`, 'white');
-                break;
-
-            case 'agent_routed': {
-                const aid = String(event.agentId);
-                setAgentStates(prev => {
-                    if (!prev[aid]) return prev;
-                    return { ...prev, [aid]: { ...prev[aid], status: 'active' as AgentStatus, lastActivity: 'Routing...' } };
-                });
-                if (event.isTeamRouted) {
-                    addLog('\u2691', `Routed to @${aid} (via team)`, 'cyan');
-                } else {
-                    addLog('\u2192', `Routed to @${aid}`, 'cyan');
-                }
-                break;
-            }
-
-            case 'team_chain_start':
-                addLog('\u26D3', `Conversation started: ${event.teamName} [${(event.agents as string[]).map(a => '@' + a).join(', ')}]`, 'magenta');
-                setArrows([]);
-                break;
-
-            case 'chain_step_start': {
+            case 'agent:invoke': {
                 const aid = String(event.agentId);
                 setAgentStates(prev => {
                     if (!prev[aid]) return prev;
@@ -381,25 +351,25 @@ function App({ filterTeamId, apiPort }: { filterTeamId: string | null; apiPort: 
                 break;
             }
 
-            case 'chain_step_done': {
+            case 'agent:response': {
                 const aid = String(event.agentId);
                 setAgentStates(prev => {
                     if (!prev[aid]) return prev;
-                    return { ...prev, [aid]: { ...prev[aid], status: 'done' as AgentStatus, responseLength: event.responseLength as number } };
+                    return { ...prev, [aid]: { ...prev[aid], status: 'done' as AgentStatus } };
                 });
-                const text = event.responseText ? String(event.responseText) : `(${event.responseLength} chars)`;
-                addLog('\u{1F4AC}', `@${aid}: ${text}`, 'white');
+                const text = event.content ? String(event.content) : '';
+                if (text) addLog('\u{1F4AC}', `@${aid}: ${text}`, 'white');
                 break;
             }
 
-            case 'chain_handoff': {
+            case 'agent:mention': {
                 const from = String(event.fromAgent);
                 const to = String(event.toAgent);
                 setArrows(prev => [...prev, { from, to, step: event.step as number, timestamp: event.timestamp }]);
                 setAgentStates(prev => {
                     const updated = { ...prev };
                     if (updated[to]) {
-                        updated[to] = { ...updated[to], status: 'waiting' as AgentStatus, lastActivity: `Handoff from @${from}` };
+                        updated[to] = { ...updated[to], status: 'waiting' as AgentStatus, lastActivity: `Mentioned by @${from}` };
                     }
                     return updated;
                 });
@@ -407,22 +377,7 @@ function App({ filterTeamId, apiPort }: { filterTeamId: string | null; apiPort: 
                 break;
             }
 
-            case 'team_chain_end': {
-                const chainAgents = event.agents as string[];
-                addLog('\u2714', `Conversation complete [${chainAgents.map(a => '@' + a).join(', ')}]`, 'green');
-                setAgentStates(prev => {
-                    const updated = { ...prev };
-                    for (const aid of chainAgents) {
-                        if (updated[aid]) {
-                            updated[aid] = { ...updated[aid], status: 'done' as AgentStatus };
-                        }
-                    }
-                    return updated;
-                });
-                break;
-            }
-
-            case 'response_ready':
+            case 'message:done':
                 setTotalProcessed(prev => prev + 1);
                 // Reset agent states to idle after a short delay via next tick
                 setTimeout(() => {

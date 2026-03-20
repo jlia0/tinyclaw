@@ -89,5 +89,5 @@ export async function streamResponse(response: string, options: {
     });
 
     log('INFO', `@${options.agentId} responded:\n${finalResponse}`);
-    emitEvent('response_ready', { channel: options.channel, sender: options.sender, agentId: options.agentId, responseLength: finalResponse.length, responseText: finalResponse, messageId: options.messageId });
+    emitEvent('message:done', { channel: options.channel, sender: options.sender, agentId: options.agentId, responseLength: finalResponse.length, responseText: finalResponse, messageId: options.messageId });
 }

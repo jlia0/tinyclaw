@@ -11,7 +11,7 @@ import {
   PromptInputTextarea,
 } from "@/components/ui/prompt-input";
 import { Markdown } from "@/components/ui/markdown";
-import { PIXEL_SCENE_LAYOUT } from "@/components/pixel-office-scene";
+import { PIXEL_SCENE_LAYOUT } from "./pixel-office-scene";
 import { sendMessage, type AgentConfig, type AgentMessage } from "@/lib/api";
 import { timeAgo } from "@/lib/hooks";
 import type { ConversationEntry, LiveBubble } from "./types";

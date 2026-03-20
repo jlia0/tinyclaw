@@ -53,9 +53,6 @@ async function processMessage(dbMsg: any): Promise<void> {
     const isInternal = !!data.fromAgent;
 
     log('INFO', `Processing [${isInternal ? 'internal' : channel}] ${isInternal ? `@${data.fromAgent}→@${preRoutedAgent}` : `from ${sender}`}: ${rawMessage}`);
-    if (!isInternal) {
-        emitEvent('message_received', { channel, sender, message: rawMessage.substring(0, 120), messageId });
-    }
 
     const settings = getSettings();
     const agents = getAgents(settings);
@@ -86,9 +83,6 @@ async function processMessage(dbMsg: any): Promise<void> {
     }
 
     const agent = agents[agentId];
-    if (!isInternal) {
-        emitEvent('agent_routed', { agentId, agentName: agent.name, provider: agent.provider, model: agent.model, isTeamRouted });
-    }
 
     // ── Invoke agent ────────────────────────────────────────────────────────
     const agentResetFlag = getAgentResetFlag(agentId, workspacePath);
@@ -99,12 +93,12 @@ async function processMessage(dbMsg: any): Promise<void> {
 
     ({ text: message } = await runIncomingHooks(message, { channel, sender, messageId, originalMessage: rawMessage }));
 
-    emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: data.fromAgent || null });
+    emitEvent('agent:invoke', { agentId, agentName: agent.name, fromAgent: data.fromAgent || null });
     let response: string;
     try {
         response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams, (text) => {
             log('INFO', `Agent ${agentId}: ${text}`);
-            emitEvent('agent_progress', { agentId, agentName: agent.name, text, messageId });
+            emitEvent('agent:progress', { agentId, agentName: agent.name, text, messageId });
         });
     } catch (error) {
         const provider = agent.provider || 'anthropic';
@@ -112,15 +106,13 @@ async function processMessage(dbMsg: any): Promise<void> {
         log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
         response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
     }
-    emitEvent('chain_step_done', { agentId, agentName: agent.name, responseLength: response.length, responseText: response });
-
-    // ── Persist & emit simplified agent_message event ────────────────────
+    // ── Persist & emit agent:response ──────────────────────────────────
     const msgSender = isInternal ? data.fromAgent! : sender;
     if (!isInternal) {
         insertAgentMessage({ agentId, role: 'user', channel, sender: msgSender, messageId, content: rawMessage });
     }
     insertAgentMessage({ agentId, role: 'assistant', channel, sender: msgSender, messageId, content: response });
-    emitEvent('agent_message', {
+    emitEvent('agent:response', {
         agentId, agentName: agent.name, role: 'assistant',
         channel, sender, messageId,
         content: response,
@@ -248,7 +240,7 @@ startScheduler();
 
 log('INFO', 'Queue processor started (SQLite)');
 logAgentConfig();
-emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), teams: Object.keys(getTeams(getSettings())) });
+log('INFO', `Agents: ${Object.keys(getAgents(getSettings())).join(', ')}, Teams: ${Object.keys(getTeams(getSettings())).join(', ')}`);
 
 // Graceful shutdown
 function shutdown(): void {

@@ -97,7 +97,7 @@ export async function handleTeamResponse(params: {
     if (teammateMentions.length > 0) {
         log('INFO', `@${agentId} → ${teammateMentions.map(m => `@${m.teammateId}`).join(', ')}`);
         for (const mention of teammateMentions) {
-            emitEvent('chain_handoff', { teamId: teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
+            emitEvent('agent:mention', { teamId: teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
 
             const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
             enqueueMessage({

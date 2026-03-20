@@ -423,9 +423,8 @@ export function subscribeToEvents(
 
   // Listen to all known event types
   const types = eventTypes ?? [
-    "message_received", "agent_routed", "chain_step_start", "chain_step_done",
-    "chain_handoff", "team_chain_start", "team_chain_end", "response_ready",
-    "processor_start", "message_enqueued", "agent_message",
+    "message:incoming", "agent:invoke", "agent:progress",
+    "agent:response", "agent:mention", "message:done",
   ];
   for (const type of types) {
     es.addEventListener(type, handler);

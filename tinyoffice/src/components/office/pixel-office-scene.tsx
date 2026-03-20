@@ -4,7 +4,7 @@ import {
   PixelOfficeChar,
   type PixelCharAnim,
   type PixelCharFacing,
-} from "@/components/pixel-office-char";
+} from "./pixel-office-char";
 
 export type PixelDeskStatus = "empty" | "pending" | "running" | "done" | "error";
 

@@ -595,7 +595,7 @@ async function checkOutgoingQueue(): Promise<void> {
 createSSEClient({
     port: API_PORT,
     onEvent: (eventType, data) => {
-        if (eventType === 'response_ready' && data.channel === 'telegram') {
+        if (eventType === 'message:done' && data.channel === 'telegram') {
             checkOutgoingQueue();
         }
     },

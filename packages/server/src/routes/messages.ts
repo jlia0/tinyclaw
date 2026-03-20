@@ -33,7 +33,7 @@ app.post('/api/message', async (c) => {
     }
 
     log('INFO', `[API] Message enqueued: ${message}`);
-    emitEvent('message_enqueued', {
+    emitEvent('message:incoming', {
         messageId,
         agent: agent || null,
         channel: resolvedChannel,
