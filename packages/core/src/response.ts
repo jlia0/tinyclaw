@@ -76,6 +76,12 @@ export async function streamResponse(response: string, options: {
     });
     const { message: responseMessage, files: allFiles } = handleLongResponse(hookedResponse, outboundFiles);
 
+    // Skip queuing empty responses — they produce "(Silent)" messages in Telegram/WhatsApp
+    if (!responseMessage.trim() && allFiles.length === 0) {
+        log('DEBUG', `Empty response suppressed [${options.channel}] ${options.sender} via agent:${options.agentId}`);
+        return;
+    }
+
     enqueueResponse({
         channel: options.channel,
         sender: options.sender,
