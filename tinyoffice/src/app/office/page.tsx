@@ -1,15 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { Loader2, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   PixelOfficeScene,
   PIXEL_SCENE_LAYOUT,
   getTaskStationMemberSpot,
   getLoungeMemberSpot,
-  pointToPercent,
-  type PixelDeskStatus,
   type SceneAgent,
   type SceneArchiveRoom,
   type SceneBossRoom,
@@ -30,7 +27,6 @@ import {
   getSettings,
   getTasks,
   getTeams,
-  sendMessage,
   subscribeToEvents,
   type AgentConfig,
   type AgentMessage,
@@ -42,163 +38,30 @@ import {
   type TeamConfig,
 } from "@/lib/api";
 
-type LiveBubble = {
-  id: string;
-  agentId: string;
-  message: string;
-  timestamp: number;
-  targetAgents: string[];
-};
-
-type TeamGroup = {
-  id: string;
-  label: string;
-  memberIds: string[];
-  color: string;
-};
-
-type StationAssignment = {
-  stationIndex: number;
-  kind: "task" | "route";
-  status: PixelDeskStatus;
-  startAt: number;
-  responseAt?: number;
-  label: string;
-  speaker?: boolean;
-};
-
-type OverlayBubble = {
-  id: string;
-  x: number;
-  y: number;
-  color: string;
-  heading: string;
-  message: string;
-};
-
-type ConversationEntry = {
-  id: string;
-  timestamp: number;
-  role: "user" | "agent";
-  agentId?: string;
-  sender: string;
-  message: string;
-  targetAgents: string[];
-  sourceOrder: number;
-};
-
-type AgentWorkSession = {
-  rootMessageId: string;
-  startedAt: number;
-  completedAt?: number;
-};
-
-const AGENT_COLORS = ["#a3e635", "#84cc16", "#f59e0b", "#14b8a6", "#eab308", "#22c55e"];
-const AGENT_SESSION_RELEASE_MS = 6200;
-const OFFICE_STATION_COUNT = 8;
-const ARCHIVE_BUTTONS = [
-  { id: "logs", label: "Logs" },
-  { id: "outgoing", label: "Ongoing Dock" },
-  { id: "tasks", label: "Task Board" },
-  { id: "routing", label: "Live Routing" },
-] as const satisfies ReadonlyArray<{
-  id: "logs" | "outgoing" | "tasks" | "routing";
-  label: string;
-}>;
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function easeInOut(progress: number) {
-  return progress * progress * (3 - 2 * progress);
-}
-
-function lerp(from: number, to: number, progress: number) {
-  return from + (to - from) * progress;
-}
-
-function interpolatePoint(from: { x: number; y: number }, to: { x: number; y: number }, progress: number) {
-  return {
-    x: lerp(from.x, to.x, progress),
-    y: lerp(from.y, to.y, progress),
-  };
-}
-
-function trimText(text: string, maxLength: number) {
-  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
-}
-
-function extractTargets(message: string) {
-  const targets: string[] = [];
-  for (const match of message.matchAll(/\[@(\w[\w-]*?):/g)) {
-    if (!targets.includes(match[1])) targets.push(match[1]);
-  }
-  if (targets.length === 0) {
-    const direct = message.match(/^@(\w[\w-]*)/);
-    if (direct) targets.push(direct[1]);
-  }
-  return targets;
-}
-
-function isErrorMessage(message: string) {
-  return /\b(error|failed|failure|exception|timeout)\b/i.test(message);
-}
-
-function taskTone(task: Task): PixelDeskStatus {
-  if (task.status === "done") return "done";
-  if (task.status === "review") return "pending";
-  if (task.status === "in_progress") return "running";
-  return "empty";
-}
-
-function routeTone(message: string): PixelDeskStatus {
-  return isErrorMessage(message) ? "error" : "running";
-}
-
-function responseTone(response: ResponseData): PixelDeskStatus {
-  return isErrorMessage(response.message) ? "error" : "done";
-}
-
-function buildTeamGroups(
-  agents: Record<string, AgentConfig> | null,
-  teams: Record<string, TeamConfig> | null,
-) {
-  if (!agents) return [] as TeamGroup[];
-
-  const allAgentIds = Object.keys(agents);
-  const groupedIds = new Set<string>();
-  const groups: TeamGroup[] = [];
-  const teamEntries = teams ? Object.entries(teams) : [];
-
-  teamEntries.forEach(([teamId, team], index) => {
-    const members = team.agents.filter((memberId) => allAgentIds.includes(memberId));
-    members.forEach((memberId) => groupedIds.add(memberId));
-    if (members.length === 0) return;
-    groups.push({
-      id: teamId,
-      label: team.name || teamId,
-      memberIds: members,
-      color: AGENT_COLORS[index % AGENT_COLORS.length],
-    });
-  });
-
-  const independent = allAgentIds.filter((agentId) => !groupedIds.has(agentId));
-  if (independent.length > 0) {
-    groups.push({
-      id: "independent",
-      label: "Independent",
-      memberIds: independent,
-      color: AGENT_COLORS[groups.length % AGENT_COLORS.length],
-    });
-  }
-
-  return groups;
-}
-
-function responseSubtitle(response: ResponseData) {
-  return response.agent ? `@${response.agent} -> ${response.channel}` : response.channel;
-}
+import { ArchivePanel, type ArchivePanelId } from "@/components/office/archive-panel";
+import { ConversationPanel } from "@/components/office/conversation-panel";
+import { OverlayBubbles } from "@/components/office/overlay-bubbles";
+import {
+  AGENT_COLORS,
+  AGENT_SESSION_RELEASE_MS,
+  ARCHIVE_BUTTONS,
+  OFFICE_STATION_COUNT,
+  buildTeamGroups,
+  clamp,
+  easeInOut,
+  extractTargets,
+  interpolatePoint,
+  isErrorMessage,
+  responseTone,
+  responseSubtitle,
+  routeTone,
+  taskTone,
+  trimText,
+  type AgentWorkSession,
+  type LiveBubble,
+  type OverlayBubble,
+  type StationAssignment,
+} from "@/components/office/types";
 
 export default function OfficePage() {
   const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 5000);
@@ -221,24 +84,16 @@ export default function OfficePage() {
   );
 
   const [bubbles, setBubbles] = useState<LiveBubble[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [sending, setSending] = useState(false);
   const [connected, setConnected] = useState(false);
   const [clock, setClock] = useState({ now: Date.now(), frame: 0 });
-  const [archivePanel, setArchivePanel] = useState<"logs" | "workspace" | "outgoing" | "routing" | "tasks" | null>(null);
-  const [conversationFilter, setConversationFilter] = useState<string>("all");
+  const [archivePanel, setArchivePanel] = useState<ArchivePanelId | null>(null);
   const [agentWorkSessions, setAgentWorkSessions] = useState<Record<string, AgentWorkSession>>({});
 
   const seenRef = useRef(new Set<string>());
-  const conversationScrollRef = useRef<HTMLDivElement | null>(null);
-  const conversationStickToBottomRef = useRef(true);
   const rootSessionsRef = useRef(new Map<string, { startedAt: number; agentIds: Set<string>; completedAt?: number }>());
   const openRootOrderRef = useRef<string[]>([]);
 
-  const setConversationFilterAndStick = useCallback((nextFilter: string) => {
-    conversationStickToBottomRef.current = true;
-    setConversationFilter(nextFilter);
-  }, []);
+  // ── Clock tick ──────────────────────────────────────────────────────────
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -246,6 +101,8 @@ export default function OfficePage() {
     }, 120);
     return () => window.clearInterval(interval);
   }, []);
+
+  // ── Work session cleanup ────────────────────────────────────────────────
 
   useEffect(() => {
     setAgentWorkSessions((current) => {
@@ -261,6 +118,8 @@ export default function OfficePage() {
       return changed ? next : current;
     });
   }, [clock.now]);
+
+  // ── SSE subscription ───────────────────────────────────────────────────
 
   useEffect(() => {
     const latestOpenRootId = () => {
@@ -392,6 +251,8 @@ export default function OfficePage() {
     return unsubscribe;
   }, []);
 
+  // ── Bubble expiry ──────────────────────────────────────────────────────
+
   useEffect(() => {
     const interval = window.setInterval(() => {
       const cutoff = Date.now() - 180000;
@@ -400,28 +261,7 @@ export default function OfficePage() {
     return () => window.clearInterval(interval);
   }, []);
 
-  const handleSend = useCallback(async () => {
-    if (!chatInput.trim() || sending) return;
-    setSending(true);
-    try {
-      const message =
-        conversationFilter !== "all" && !chatInput.trim().startsWith("@")
-          ? `@${conversationFilter} ${chatInput.trim()}`
-          : chatInput.trim();
-
-      await sendMessage({ message, sender: "Web", channel: "web" });
-      setChatInput("");
-    } finally {
-      setSending(false);
-    }
-  }, [chatInput, conversationFilter, sending]);
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      void handleSend();
-    }
-  };
+  // ── Scene data computation ─────────────────────────────────────────────
 
   const teamGroups = useMemo(() => buildTeamGroups(agents, teams), [agents, teams]);
   const agentEntries = useMemo(() => (agents ? Object.entries(agents) : []), [agents]);
@@ -794,100 +634,7 @@ export default function OfficePage() {
     return items;
   }, [clock.now, latestAgentBubbleById, latestUserBubble, sceneAgents]);
 
-  const conversationEntries = useMemo<ConversationEntry[]>(
-    () => {
-      const historyEntries: ConversationEntry[] = [];
-      const seenHistory = new Set<string>();
-
-      Object.entries(agentHistories ?? {}).forEach(([agentId, messages]) => {
-        messages.forEach((message, index) => {
-          const dedupeKey =
-            message.role === "user"
-              ? `user:${message.message_id || message.id}:${message.content}`
-              : `agent:${agentId}:${message.message_id || message.id}:${message.content}`;
-          if (seenHistory.has(dedupeKey)) return;
-          seenHistory.add(dedupeKey);
-
-          historyEntries.push({
-            id: `history-${agentId}-${message.id}`,
-            timestamp: message.created_at,
-            role: message.role === "user" ? "user" : "agent",
-            agentId: message.role === "assistant" ? agentId : undefined,
-            sender: message.role === "user" ? message.sender || "Boss" : agents?.[agentId]?.name || `@${agentId}`,
-            message: message.content,
-            targetAgents: message.role === "user" ? [agentId] : [],
-            sourceOrder: index,
-          });
-        });
-      });
-
-      const liveEntries = [...bubbles].map((bubble, index) => {
-        if (bubble.agentId.startsWith("_user_")) {
-          return {
-            id: bubble.id,
-            timestamp: bubble.timestamp,
-            role: "user" as const,
-            sender: "Boss",
-            message: bubble.message,
-            targetAgents: bubble.targetAgents,
-            sourceOrder: index,
-          };
-        }
-
-        const agent = agents?.[bubble.agentId];
-        return {
-          id: bubble.id,
-          timestamp: bubble.timestamp,
-          role: "agent" as const,
-          agentId: bubble.agentId,
-          sender: agent?.name || `@${bubble.agentId}`,
-          message: bubble.message,
-          targetAgents: bubble.targetAgents,
-          sourceOrder: index,
-        };
-      });
-
-      const merged = [...historyEntries, ...liveEntries];
-      const seen = new Set<string>();
-      return merged
-        .sort((left, right) => {
-          if (left.timestamp !== right.timestamp) return left.timestamp - right.timestamp;
-          if (left.role !== right.role) return left.role === "user" ? -1 : 1;
-          return left.sourceOrder - right.sourceOrder;
-        })
-        .filter((entry) => {
-          const key = `${entry.role}:${entry.agentId || "boss"}:${entry.timestamp}:${entry.message}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-    },
-    [agentHistories, agents, bubbles],
-  );
-
-  const visibleConversation = useMemo(() => {
-    if (conversationFilter === "all") return conversationEntries.slice(-60);
-    return conversationEntries
-      .filter((entry) => {
-        if (entry.role === "agent") return entry.agentId === conversationFilter;
-        return entry.targetAgents.length === 0 || entry.targetAgents.includes(conversationFilter);
-      })
-      .slice(-60);
-  }, [conversationEntries, conversationFilter]);
-
-  useEffect(() => {
-    const node = conversationScrollRef.current;
-    if (!node) return;
-    if (!conversationStickToBottomRef.current) return;
-    node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
-  }, [visibleConversation]);
-
-  const handleConversationScroll = useCallback(() => {
-    const node = conversationScrollRef.current;
-    if (!node) return;
-    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
-    conversationStickToBottomRef.current = distanceFromBottom <= 32;
-  }, []);
+  // ── Render ─────────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-full flex-col">
@@ -927,233 +674,27 @@ export default function OfficePage() {
           </div>
 
           {archivePanel && (
-            <div className="absolute inset-y-6 right-4 z-[80] w-[380px] border border-stone-700 bg-stone-950/95 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-stone-800 px-4 py-3">
-                <div className="font-mono text-xs uppercase tracking-[0.18em] text-lime-300">
-                  {archivePanel === "logs" && "Logs"}
-                  {archivePanel === "workspace" && "Workspace"}
-                  {archivePanel === "tasks" && "Task Board"}
-                  {archivePanel === "outgoing" && "Outgoing Dock"}
-                  {archivePanel === "routing" && "Live Routing"}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setArchivePanel(null)}
-                  className="border border-stone-700 px-2 py-1 font-mono text-[10px] text-stone-300 transition hover:border-lime-500 hover:text-lime-300"
-                >
-                  Close
-                </button>
-              </div>
-              <div className="max-h-[calc(100%-52px)] overflow-auto p-4">
-                {archivePanel === "logs" && (
-                  <div className="space-y-2 font-mono text-xs text-stone-300">
-                    {(logs?.lines ?? []).length > 0 ? (
-                      (logs?.lines ?? []).map((line, index) => (
-                        <div key={`${index}-${line.slice(0, 12)}`} className="border border-stone-800 bg-stone-900/90 px-3 py-2 break-words">
-                          {line}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="border border-stone-800 bg-stone-900/90 px-3 py-2 text-stone-500">No logs yet</div>
-                    )}
-                  </div>
-                )}
-
-                {archivePanel === "workspace" && (
-                  <div className="space-y-3 font-mono text-xs text-stone-300">
-                    <div className="border border-stone-800 bg-stone-900/90 px-3 py-2">
-                      workspace: {settings?.workspace?.path || settings?.workspace?.name || "not configured"}
-                    </div>
-                    {agentEntries.map(([agentId, agent]) => (
-                      <div key={agentId} className="border border-stone-800 bg-stone-900/90 px-3 py-2">
-                        <div className="text-lime-300">@{agentId}</div>
-                        <div className="mt-1 break-all text-stone-400">{agent.working_directory || "no working directory"}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {archivePanel === "tasks" && (
-                  <div className="grid grid-cols-2 gap-3 font-mono text-xs text-stone-300">
-                    {taskSummaries.map((summary) => (
-                      <div key={summary.label} className="border border-stone-800 bg-stone-900/90 px-3 py-3">
-                        <div className="text-stone-500">{summary.label}</div>
-                        <div className="mt-2 text-xl text-lime-300">{summary.count}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {archivePanel === "outgoing" && (
-                  <div className="space-y-2 font-mono text-xs text-stone-300">
-                    {responseItems.length > 0 ? (
-                      responseItems.map((response) => (
-                        <div key={response.id} className="border border-stone-800 bg-stone-900/90 px-3 py-2">
-                          <div className="text-lime-300">{response.label}</div>
-                          <div className="mt-1 text-stone-500">{response.subtitle}</div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="border border-stone-800 bg-stone-900/90 px-3 py-2 text-stone-500">No outgoing responses</div>
-                    )}
-                  </div>
-                )}
-
-                {archivePanel === "routing" && (
-                  <div className="space-y-3 font-mono text-xs text-stone-300">
-                    <div className="border border-stone-800 bg-stone-900/90 px-3 py-2">
-                      <div className="text-stone-500">root</div>
-                      <div className="mt-1 text-lime-300">{routeRoot}</div>
-                    </div>
-                    {routeTargets.length > 0 ? (
-                      routeTargets.map((target) => (
-                        <div key={`${target.label}-${target.state}`} className="border border-stone-800 bg-stone-900/90 px-3 py-2">
-                          <div style={{ color: target.color }}>{target.label}</div>
-                          <div className="mt-1 text-stone-500">{target.state}</div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="border border-stone-800 bg-stone-900/90 px-3 py-2 text-stone-500">No active route</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
+            <ArchivePanel
+              panel={archivePanel}
+              onClose={() => setArchivePanel(null)}
+              logs={logs}
+              settings={settings}
+              agentEntries={agentEntries}
+              taskSummaries={taskSummaries}
+              responseItems={responseItems}
+              routeRoot={routeRoot}
+              routeTargets={routeTargets}
+            />
           )}
 
-          <div
-            className="absolute right-0 top-0 z-40 flex flex-col overflow-hidden border-l border-[#885c47] bg-[#b38857] shadow-[-18px_0_36px_rgba(36,24,16,0.2)]"
-            style={{
-              width: `${(584 / PIXEL_SCENE_LAYOUT.width) * 100}%`,
-              height: "100%",
-            }}
-          >
-            <div className="border-b border-[#885c47] bg-[#be9565] px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.08)_inset]">
-              <div className="mb-3 inline-flex items-center border border-[#465e14] bg-[#161812] px-3 py-1 text-[12px] font-mono font-bold text-[#a3e635] shadow-[0_1px_0_rgba(255,255,255,0.08)_inset]">
-                Conversations
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConversationFilterAndStick("all")}
-                  className={`border px-3 py-1.5 font-mono text-[10px] transition ${
-                    conversationFilter === "all"
-                      ? "border-[#465e14] bg-[#111111] text-[#a3e635]"
-                      : "border-[#885c47] bg-[#dcc3a3] text-[#5c4637] hover:border-[#465e14] hover:bg-[#111111] hover:text-[#a3e635]"
-                  }`}
-                >
-                  All Agents
-                </button>
-                {agentEntries.map(([agentId, agent]) => (
-                  <button
-                    key={agentId}
-                    type="button"
-                    onClick={() => setConversationFilterAndStick(agentId)}
-                    className={`border px-3 py-1.5 font-mono text-[10px] transition ${
-                      conversationFilter === agentId
-                        ? "border-[#465e14] bg-[#111111] text-[#a3e635]"
-                        : "border-[#885c47] bg-[#dcc3a3] text-[#5c4637] hover:border-[#465e14] hover:bg-[#111111] hover:text-[#a3e635]"
-                    }`}
-                  >
-                    {agent.name || `@${agentId}`}
-                  </button>
-                ))}
-              </div>
-            </div>
+          <ConversationPanel
+            agents={agents}
+            agentEntries={agentEntries}
+            agentHistories={agentHistories}
+            bubbles={bubbles}
+          />
 
-            <div
-              ref={conversationScrollRef}
-              onScroll={handleConversationScroll}
-              className="min-h-0 flex-1 overflow-y-auto border-y border-[#885c47] bg-[#ead8c3] px-4 py-4"
-            >
-              <div className="space-y-3">
-                {visibleConversation.length > 0 ? (
-                  visibleConversation.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className={`border px-3.5 py-2.5 shadow-[0_1px_0_rgba(255,255,255,0.12)_inset] ${
-                        entry.role === "user"
-                          ? "ml-12 border-[#6f7f31] bg-[#cfd88f]"
-                          : "mr-12 border-[#885c47] bg-[#f4e7d6]"
-                      }`}
-                    >
-                      <div className="mb-1 flex items-center justify-between gap-3">
-                        <span className={`font-mono text-[10px] uppercase tracking-[0.14em] ${entry.role === "user" ? "text-[#3f5b0f]" : "text-[#6f5c4b]"}`}>
-                          {entry.sender}
-                        </span>
-                        <span className="font-mono text-[10px] text-[#6f5c4b]">{new Date(entry.timestamp).toLocaleTimeString()}</span>
-                      </div>
-                      <p className="break-words text-sm leading-relaxed text-[#241b16]">{entry.message}</p>
-                    </div>
-                  ))
-                ) : (
-                  <div className="border border-dashed border-[#885c47] bg-[#f4e7d6] px-4 py-6 text-center text-sm text-[#6f5c4b]">
-                    No messages for this view
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="border-t border-[#885c47] bg-[#be9565] px-4 py-3 shadow-[0_-1px_0_rgba(255,255,255,0.08)_inset]">
-              <div className="flex items-center gap-3">
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={conversationFilter === "all" ? "Message @agent or @team..." : `Message @${conversationFilter}...`}
-                  className="h-10 flex-1 border border-[#885c47] bg-[#f4e7d6] px-3.5 text-sm text-[#241b16] outline-none transition-colors placeholder:text-[#6f5c4b] focus:border-[#465e14]"
-                />
-                <button
-                  onClick={() => void handleSend()}
-                  disabled={!chatInput.trim() || sending}
-                  className="flex h-10 w-10 items-center justify-center border border-[#465e14] bg-[#161812] text-[#a3e635] transition-colors hover:border-[#a3e635] hover:text-[#d9f99d] disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                </button>
-              </div>
-              <div className="mt-2 flex items-center justify-between font-mono text-[11px] text-[#f3eadf]">
-                <span>Cmd/Ctrl + Enter to send</span>
-                <span>
-                  {connected ? "SSE online" : "SSE disconnected"} · {taskSummaries[1]?.count ?? 0} active · {queueSnapshot.outgoing} outgoing
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {overlayBubbles.map((bubble) => {
-            const position = pointToPercent(bubble.x, bubble.y);
-            return (
-              <div
-                key={bubble.id}
-                className={`absolute z-50 h-[76px] w-[192px] -translate-x-1/2 animate-slide-up ${
-                  bubble.heading === "boss command" ? "" : "-translate-y-full"
-                }`}
-                style={{ left: position.left, top: position.top }}
-              >
-                <div
-                  className="relative flex h-full w-full flex-col border px-2.5 py-2 text-[10px] leading-relaxed text-white shadow-xl"
-                  style={{ borderColor: bubble.color, background: "rgba(17, 24, 39, 0.94)" }}
-                >
-                  <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em]" style={{ color: bubble.color }}>
-                    {bubble.heading}
-                  </div>
-                  <p className="line-clamp-2 break-words overflow-hidden text-ellipsis">{bubble.message}</p>
-                  {bubble.heading === "boss command" ? (
-                    <div
-                      className="absolute left-1/2 top-0 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border-l border-t"
-                      style={{ borderColor: bubble.color, background: "rgba(17, 24, 39, 0.94)" }}
-                    />
-                  ) : (
-                    <div
-                      className="absolute left-1/2 top-full h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border-r border-b"
-                      style={{ borderColor: bubble.color, background: "rgba(17, 24, 39, 0.94)" }}
-                    />
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          <OverlayBubbles bubbles={overlayBubbles} />
         </div>
       </div>
     </div>
