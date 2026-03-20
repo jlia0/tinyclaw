@@ -1,6 +1,6 @@
 {
   "name": "tinyagi",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "description": "Multi-agent, multi-team, multi-channel 24/7 AI assistant",
   "workspaces": [
     "packages/*"
