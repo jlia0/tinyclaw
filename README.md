@@ -60,13 +60,17 @@ We are actively looking for contributors. Please reach out.
 curl -fsSL https://raw.githubusercontent.com/TinyAGI/tinyagi/main/scripts/install.sh | bash
 ```
 
-This downloads and installs the `tinyagi` command globally. Then start it:
+This downloads and installs the `tinyagi` command globally. Then just run:
 
 ```bash
-tinyagi start
+tinyagi
 ```
 
-The setup wizard will guide you through channel selection, bot tokens, workspace setup, and AI provider configuration.
+That's it. TinyAGI auto-creates default settings, starts the daemon, and opens TinyOffice in your browser. No wizard, no configuration needed.
+
+- **Default workspace:** `~/tinyagi-workspace`
+- **Default agent:** `tinyagi` (Anthropic/Opus)
+- **Channels:** none initially — add later with `tinyagi channel setup`
 
 <details>
 <summary><b>Other installation methods</b></summary>
@@ -78,17 +82,7 @@ git clone https://github.com/TinyAGI/tinyagi.git
 cd tinyagi && npm install && ./scripts/install.sh
 ```
 
-**Web-based setup (skip CLI wizard):**
-
-```bash
-tinyagi start --skip-setup  # Starts API server only
-# Then open https://office.tinyagicompany.com or run: tinyagi office
-# After setup, channels start automatically
-```
-
 </details>
-
-The setup wizard (CLI or web) will also guide you through default agent, AI provider, model selection, and heartbeat interval.
 
 <details>
 <summary><b>📱 Channel Setup Guides</b></summary>
@@ -184,17 +178,18 @@ echo 'NEXT_PUBLIC_API_URL=http://localhost:3777' > .env.local
 
 ## 📋 Commands
 
-Commands work with `tinyagi` (primary CLI) or `tinyagi` (backward compatible alias).
+Commands work with the `tinyagi` CLI.
 
 ### Core Commands
 
 | Command       | Description                                               | Example               |
 | ------------- | --------------------------------------------------------- | --------------------- |
-| `start [--skip-setup]` | Start TinyAGI daemon (--skip-setup: API only, setup via web) | `tinyagi start` |
+| *(no command)* | Install, configure defaults, start, and open TinyOffice  | `tinyagi`            |
+| `start`       | Start TinyAGI daemon                                     | `tinyagi start`      |
 | `stop`        | Stop all processes                                        | `tinyagi stop`       |
 | `restart`     | Restart TinyAGI                                          | `tinyagi restart`    |
 | `status`      | Show current status and activity                          | `tinyagi status`     |
-| `setup`       | Run setup wizard (reconfigure)                            | `tinyagi setup`      |
+| `channel setup` | Configure channels interactively                        | `tinyagi channel setup` |
 | `logs [type]` | View logs (discord/telegram/whatsapp/queue/heartbeat/all) | `tinyagi logs queue` |
 | `attach`      | Attach to tmux session                                    | `tinyagi attach`     |
 
@@ -397,7 +392,7 @@ Use `@agent_id` prefix to route messages to specific agents:
 ```text
 @coder fix the authentication bug
 @writer document the API endpoints
-help me with this  ← goes to default agent (no prefix needed)
+help me with this  ← goes to tinyagi agent (no prefix needed)
 ```
 
 <details>
@@ -504,11 +499,11 @@ Located at `.tinyagi/settings.json`:
     "name": "tinyagi-workspace"
   },
   "agents": {
-    "assistant": {
-      "name": "Assistant",
+    "tinyagi": {
+      "name": "TinyAGI Agent",
       "provider": "anthropic",
-      "model": "sonnet",
-      "working_directory": "/Users/me/tinyagi-workspace/assistant"
+      "model": "opus",
+      "working_directory": "/Users/me/tinyagi-workspace/tinyagi"
     }
   },
   "teams": {
@@ -589,9 +584,9 @@ tinyagi/
 │   ├── heartbeat.md         #   Template for agents
 │   └── AGENTS.md            #   Template for agents
 ├── ~/tinyagi-workspace/    # Agent workspaces
+│   ├── tinyagi/            #   Default agent
 │   ├── coder/
-│   ├── writer/
-│   └── assistant/
+│   └── writer/
 ├── lib/                     # Runtime scripts
 ├── scripts/                 # Installation scripts
 └── tinyagi.sh              # Main script
