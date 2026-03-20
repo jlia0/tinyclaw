@@ -64,7 +64,10 @@ function checkPrerequisites() {
 // ── Installation ─────────────────────────────────────────────────────────────
 
 function isInstalled() {
-    return fs.existsSync(path.join(INSTALL_DIR, 'lib/tinyagi.sh'));
+    // Check installed copy or local repo (dev workflow)
+    const repoRoot = path.resolve(new URL('.', import.meta.url).pathname, '../../..');
+    return fs.existsSync(path.join(INSTALL_DIR, 'lib/tinyagi.sh'))
+        || fs.existsSync(path.join(repoRoot, 'lib/tinyagi.sh'));
 }
 
 async function install() {
@@ -235,7 +238,12 @@ async function run() {
 // ── Delegate to bash (tinyagi.sh) ───────────────────────────────────────────
 
 function delegateToBash(args, opts = {}) {
-    const tinyagiSh = path.join(INSTALL_DIR, 'lib/tinyagi.sh');
+    // Prefer local repo copy when running from source (dev workflow)
+    const repoRoot = path.resolve(new URL('.', import.meta.url).pathname, '../../..');
+    const localSh = path.join(repoRoot, 'lib/tinyagi.sh');
+    const installedSh = path.join(INSTALL_DIR, 'lib/tinyagi.sh');
+    const tinyagiSh = fs.existsSync(localSh) ? localSh : installedSh;
+
     if (!fs.existsSync(tinyagiSh)) {
         log(RED, 'TinyAGI is not installed. Run "tinyagi" first.');
         process.exit(1);
