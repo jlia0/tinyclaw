@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { log, emitEvent, enqueueMessage, genId } from '@tinyagi/core';
+import { log, emitEvent, enqueueMessage, genId, parseAgentRouting, getAgents, getTeams, getSettings } from '@tinyagi/core';
 
 const app = new Hono();
 
@@ -19,13 +19,26 @@ app.post('/api/message', async (c) => {
     const resolvedSender = sender || 'API';
     const messageId = clientMessageId || genId('api');
 
+    // Resolve agent routing at enqueue time so channel messages and scheduled
+    // messages end up in the same per-agent promise chain. Without this,
+    // messages without an explicit `agent` field go into the 'default' chain
+    // and can run in parallel with agent-targeted messages (like heartbeats).
+    let resolvedAgent = agent;
+    if (!resolvedAgent) {
+        const settings = getSettings();
+        const agents = getAgents(settings);
+        const teams = getTeams(settings);
+        const routing = parseAgentRouting(message, agents, teams);
+        resolvedAgent = routing.agentId;
+    }
+
     const rowId = enqueueMessage({
         channel: resolvedChannel,
         sender: resolvedSender,
         senderId: senderId || undefined,
         message,
         messageId,
-        agent: agent || undefined,
+        agent: resolvedAgent,
     });
 
     if (rowId === null) {
@@ -35,7 +48,7 @@ app.post('/api/message', async (c) => {
     log('INFO', `[API] Message enqueued: ${message}`);
     emitEvent('message:incoming', {
         messageId,
-        agent: agent || null,
+        agent: resolvedAgent || null,
         channel: resolvedChannel,
         sender: resolvedSender,
         message: message.substring(0, 120),
