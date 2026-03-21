@@ -657,28 +657,17 @@ bot.on('polling_error', (error: Error) => {
 // Track polling activity — any event from the bot means polling is alive
 bot.on('message', () => { lastPollingActivity = Date.now(); });
 
-// Watchdog: if no polling activity for 5 minutes, verify connectivity before restarting.
-// After 10 minutes of silence, force-restart polling even if getMe() works — a stale
-// long-poll connection (e.g. after laptop sleep/wake) won't be detected by getMe()
-// since it uses a fresh connection that can't see the broken polling socket.
-const WATCHDOG_CHECK_MS = 5 * 60 * 1000;
-const WATCHDOG_FORCE_RESTART_MS = 10 * 60 * 1000;
+// Watchdog: if no polling activity for 3 minutes, restart polling unconditionally.
+// getMe() succeeding does NOT mean polling is alive — it uses a fresh HTTP connection
+// that can't detect a stale long-poll socket (e.g. after laptop sleep/wake).
+// The old two-tier approach (check at 5 min, force at 10 min) had a bug where the
+// 5-min tier reset lastPollingActivity, preventing the 10-min tier from ever firing.
+// Simplify: just restart after 3 minutes of silence. It's cheap and harmless.
+const WATCHDOG_RESTART_MS = 3 * 60 * 1000;
 setInterval(async () => {
     const silentMs = Date.now() - lastPollingActivity;
-    if (silentMs > WATCHDOG_CHECK_MS) {
-        try {
-            await bot.getMe();
-            if (silentMs > WATCHDOG_FORCE_RESTART_MS) {
-                // API works but silence is too long — polling connection is likely stale
-                restartPolling(`No messages for ${Math.round(silentMs / 1000)}s despite API reachable — forcing polling restart (watchdog)`, 1000);
-            } else {
-                lastPollingActivity = Date.now();
-                log('INFO', `Watchdog: no messages for ${Math.round(silentMs / 1000)}s but API reachable, polling is healthy`);
-            }
-        } catch {
-            // API unreachable — polling is actually broken, restart it
-            restartPolling(`No polling activity for ${Math.round(silentMs / 1000)}s and API unreachable (watchdog)`, 5000);
-        }
+    if (silentMs > WATCHDOG_RESTART_MS) {
+        restartPolling(`No polling activity for ${Math.round(silentMs / 1000)}s (watchdog)`, 1000);
     }
 }, 30000);
 
