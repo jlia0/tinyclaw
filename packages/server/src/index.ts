@@ -27,6 +27,7 @@ import chatroomRoutes from './routes/chatroom';
 import agentMessagesRoutes from './routes/agent-messages';
 import servicesRoutes from './routes/services';
 import schedulesRoutes from './routes/schedules';
+import { initTasksDb } from './tasks-db';
 
 const API_PORT = parseInt(process.env.TINYAGI_API_PORT || '3777', 10);
 
@@ -36,6 +37,9 @@ const API_PORT = parseInt(process.env.TINYAGI_API_PORT || '3777', 10);
  * @returns The http.Server instance (for graceful shutdown).
  */
 export function startApiServer(): http.Server {
+    // Initialize tasks/projects SQLite database
+    initTasksDb();
+
     const app = new Hono();
 
     // CORS middleware

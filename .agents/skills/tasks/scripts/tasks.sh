@@ -2,9 +2,11 @@
 # tasks.sh — Manage TinyAGI kanban tasks via the REST API.
 #
 # Usage:
-#   tasks.sh list   [--mine] [--status STATUS]
-#   tasks.sh update TASK_ID --status STATUS
-#   tasks.sh create --title "TITLE" [--description "DESC"] [--assignee ID] [--assignee-type agent|team]
+#   tasks.sh list     [--mine] [--status STATUS]
+#   tasks.sh update   TASK_ID --status STATUS
+#   tasks.sh create   --title "TITLE" [--description "DESC"] [--assignee ID] [--assignee-type agent|team]
+#   tasks.sh comment  TASK_ID --content "MESSAGE"
+#   tasks.sh comments TASK_ID
 
 set -euo pipefail
 
@@ -21,9 +23,11 @@ usage() {
 tasks.sh — manage TinyAGI kanban tasks
 
 Commands:
-  list     List tasks (optionally filtered)
-  update   Update a task's status
-  create   Create a new task (always in backlog)
+  list      List tasks (optionally filtered)
+  update    Update a task's status
+  create    Create a new task (always in backlog)
+  comment   Add a comment to a task
+  comments  List comments on a task
 
 List flags:
   --mine              Only show tasks assigned to you
@@ -39,10 +43,19 @@ Create flags:
   --assignee ID             Assignee agent/team ID (optional, defaults to self)
   --assignee-type TYPE      "agent" or "team" (default: agent)
 
+Comment args:
+  TASK_ID             The task ID to comment on (required, first positional arg)
+  --content "MSG"     Comment content (required)
+
+Comments args:
+  TASK_ID             The task ID to list comments for (required, first positional arg)
+
 Examples:
   tasks.sh list --mine
   tasks.sh update task_123_abc --status done
   tasks.sh create --title "Fix auth bug" --description "Login fails on mobile"
+  tasks.sh comment task_123_abc --content "Found the root cause in auth.ts"
+  tasks.sh comments task_123_abc
 USAGE
     exit 1
 }
@@ -154,6 +167,61 @@ cmd_create() {
     echo "Task created: ${task_id} — ${title}"
 }
 
+cmd_comment() {
+    [[ $# -lt 1 ]] && die "Task ID is required as first argument"
+    local task_id="$1"; shift
+    local content=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --content) content="$2"; shift 2 ;;
+            *) die "Unknown flag: $1" ;;
+        esac
+    done
+
+    [[ -z "$content" ]] && die "--content is required"
+
+    local author="${AGENT_ID:-User}"
+    local author_type="agent"
+    [[ -z "$AGENT_ID" ]] && author_type="user"
+
+    local payload
+    payload=$(jq -n \
+        --arg author "$author" \
+        --arg authorType "$author_type" \
+        --arg content "$content" \
+        '{author: $author, authorType: $authorType, content: $content}')
+
+    local result
+    result=$(curl -sf -X POST "${API_BASE}/api/tasks/${task_id}/comments" \
+        -H 'Content-Type: application/json' \
+        -d "$payload") || die "Failed to add comment to task ${task_id}"
+
+    local comment_id
+    comment_id=$(echo "$result" | jq -r '.comment.id')
+    echo "Comment added to task ${task_id}: ${comment_id}"
+}
+
+cmd_comments() {
+    [[ $# -lt 1 ]] && die "Task ID is required as first argument"
+    local task_id="$1"; shift
+
+    local result
+    result=$(curl -sf "${API_BASE}/api/tasks/${task_id}/comments") || die "Failed to fetch comments for task ${task_id}"
+
+    local count
+    count=$(echo "$result" | jq -r 'length')
+
+    if [[ "$count" -eq 0 ]]; then
+        echo "No comments on task ${task_id}"
+        return
+    fi
+
+    echo "$result" | jq -r '.[] | "[\(.authorType)] \(.author) (\(.createdAt | . / 1000 | strftime("%Y-%m-%d %H:%M"))):\n  \(.content)\n"'
+    echo "---"
+    echo "${count} comment(s)"
+}
+
 # ────────────────────────────────────────────
 # Main
 # ────────────────────────────────────────────
@@ -163,9 +231,11 @@ cmd_create() {
 COMMAND="$1"; shift
 
 case "$COMMAND" in
-    list)   cmd_list "$@" ;;
-    update) cmd_update "$@" ;;
-    create) cmd_create "$@" ;;
+    list)     cmd_list "$@" ;;
+    update)   cmd_update "$@" ;;
+    create)   cmd_create "$@" ;;
+    comment)  cmd_comment "$@" ;;
+    comments) cmd_comments "$@" ;;
     help|-h|--help) usage ;;
-    *) die "Unknown command: $COMMAND. Use list, update, or create." ;;
+    *) die "Unknown command: $COMMAND. Use list, update, create, comment, or comments." ;;
 esac

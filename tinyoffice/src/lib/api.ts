@@ -269,6 +269,8 @@ export type TaskStatus = "backlog" | "in_progress" | "review" | "done";
 
 export interface Task {
   id: string;
+  number: number;
+  identifier: string;
   title: string;
   description: string;
   status: TaskStatus;
@@ -295,8 +297,41 @@ export async function deleteTask(id: string): Promise<{ ok: boolean }> {
   return apiFetch(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export async function getTask(id: string): Promise<Task & { commentCount: number }> {
+  return apiFetch(`/api/tasks/${encodeURIComponent(id)}`);
+}
+
 export async function reorderTasks(columns: Record<string, string[]>): Promise<{ ok: boolean }> {
   return apiFetch("/api/tasks/reorder", { method: "PUT", body: JSON.stringify({ columns }) });
+}
+
+// ── Comments ──────────────────────────────────────────────────────────────
+
+export interface Comment {
+  id: string;
+  taskId: string;
+  author: string;
+  authorType: "user" | "agent";
+  content: string;
+  createdAt: number;
+}
+
+export async function getComments(taskId: string): Promise<Comment[]> {
+  return apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/comments`);
+}
+
+export async function createComment(
+  taskId: string,
+  data: { author: string; authorType: "user" | "agent"; content: string }
+): Promise<{ ok: boolean; comment: Comment }> {
+  return apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/comments`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteComment(id: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/comments/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 // ── Chat Room ────────────────────────────────────────────────────────────
@@ -333,6 +368,8 @@ export interface Project {
   id: string;
   name: string;
   description: string;
+  prefix: string;
+  color: string;
   status: "active" | "archived";
   createdAt: number;
   updatedAt: number;

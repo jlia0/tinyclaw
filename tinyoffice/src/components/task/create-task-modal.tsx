@@ -10,6 +10,7 @@ interface CreateTaskModalProps {
   agents: Record<string, AgentConfig>;
   teams: Record<string, TeamConfig>;
   projects: Project[];
+  defaultProjectId?: string;
   onClose: () => void;
   onCreated: () => void;
 }
@@ -18,10 +19,11 @@ export function CreateTaskModal({
   agents,
   teams,
   projects,
+  defaultProjectId,
   onClose,
   onCreated,
 }: CreateTaskModalProps) {
-  const [form, setForm] = useState<TaskFormData>({ ...emptyForm });
+  const [form, setForm] = useState<TaskFormData>({ ...emptyForm, projectId: defaultProjectId || "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
