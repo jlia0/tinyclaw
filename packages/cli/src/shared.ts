@@ -96,11 +96,21 @@ export function providerOptions(includeCustom = false): ProviderOption[] {
         { value: 'anthropic', label: 'Anthropic (Claude)', hint: 'recommended' },
         { value: 'openai', label: 'OpenAI (Codex/GPT)' },
         { value: 'opencode', label: 'OpenCode' },
+        { value: 'novita', label: 'Novita AI', hint: 'kimi-k2.5, glm-5, minimax-m2.5' },
     ];
     if (includeCustom) {
         opts.push({ value: 'custom', label: 'Custom Provider' });
     }
     return opts;
+}
+
+export function novitaModelOptions(): ProviderOption[] {
+    return [
+        { value: 'moonshotai/kimi-k2.5', label: 'kimi-k2.5', hint: 'recommended, 262k context' },
+        { value: 'zai-org/glm-5', label: 'glm-5', hint: '202k context' },
+        { value: 'minimax/minimax-m2.5', label: 'minimax-m2.5', hint: '204k context' },
+        { value: '__custom__', label: 'Custom', hint: 'enter model name' },
+    ];
 }
 
 export function anthropicModelOptions(): ProviderOption[] {
@@ -158,6 +168,9 @@ export async function promptModel(provider: string): Promise<string> {
     } else if (provider === 'opencode') {
         options = opencodeModelOptions();
         customHint = 'Enter model name (e.g. provider/model)';
+    } else if (provider === 'novita') {
+        options = novitaModelOptions();
+        customHint = 'Enter model name (e.g. moonshotai/kimi-k2.5)';
     } else {
         options = openaiModelOptions();
     }

@@ -219,6 +219,7 @@ function AgentEditor({
                 <SelectItem value="anthropic">anthropic</SelectItem>
                 <SelectItem value="openai">openai</SelectItem>
                 <SelectItem value="opencode">opencode</SelectItem>
+                <SelectItem value="novita">novita</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -276,6 +277,7 @@ function AgentCard({
     anthropic: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
     openai: "bg-green-500/10 text-green-600 dark:text-green-400",
     opencode: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+    novita: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
   };
 
   return (

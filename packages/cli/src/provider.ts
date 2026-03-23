@@ -7,7 +7,11 @@ import { readSettings, writeSettings, requireSettings } from './shared.ts';
 function providerShow() {
     const settings = requireSettings();
     const provider = settings.models?.provider || 'anthropic';
-    const modelSection = provider === 'openai' ? settings.models?.openai : settings.models?.anthropic;
+    const modelSection = provider === 'openai'
+        ? settings.models?.openai
+        : provider === 'novita'
+            ? settings.models?.novita
+            : settings.models?.anthropic;
     const model = modelSection?.model || '';
 
     if (model) {
@@ -43,8 +47,8 @@ function providerSet(providerName: string, args: string[]) {
         }
     }
 
-    if (providerName !== 'anthropic' && providerName !== 'openai') {
-        p.log.error('Usage: provider {anthropic|openai} [--model MODEL] [--auth-token TOKEN]');
+    if (providerName !== 'anthropic' && providerName !== 'openai' && providerName !== 'novita') {
+        p.log.error('Usage: provider {anthropic|openai|novita} [--model MODEL] [--auth-token TOKEN]');
         process.exit(1);
     }
 
@@ -68,14 +72,20 @@ function providerSet(providerName: string, args: string[]) {
             }
         }
 
-        p.log.success(`Switched to ${providerName === 'anthropic' ? 'Anthropic' : 'OpenAI/Codex'} provider with model: ${modelArg}`);
+        const providerLabel = providerName === 'anthropic' ? 'Anthropic' : providerName === 'novita' ? 'Novita AI' : 'OpenAI/Codex';
+        p.log.success(`Switched to ${providerLabel} provider with model: ${modelArg}`);
         if (updatedCount > 0) {
             p.log.message(`  Updated ${updatedCount} agent(s) from ${oldProvider} to ${providerName}/${modelArg}`);
         }
     } else {
-        p.log.success(`Switched to ${providerName === 'anthropic' ? 'Anthropic' : 'OpenAI/Codex'} provider`);
+        const providerLabel = providerName === 'anthropic' ? 'Anthropic' : providerName === 'novita' ? 'Novita AI' : 'OpenAI/Codex';
+        p.log.success(`Switched to ${providerLabel} provider`);
         if (providerName === 'openai') {
             p.log.message("Use 'tinyagi model {gpt-5.3-codex|gpt-5.2}' to set the model.");
+            p.log.message("Note: Make sure you have the 'codex' CLI installed.");
+        } else if (providerName === 'novita') {
+            p.log.message("Use 'tinyagi model {kimi|glm|minimax}' to set the model.");
+            p.log.message("Note: Set NOVITA_API_KEY or pass --auth-token to authenticate.");
             p.log.message("Note: Make sure you have the 'codex' CLI installed.");
         } else {
             p.log.message("Use 'tinyagi model {sonnet|opus}' to set the model.");
@@ -85,7 +95,8 @@ function providerSet(providerName: string, args: string[]) {
     if (authTokenArg) {
         if (!settings.models[providerName]) settings.models[providerName] = {};
         (settings.models as any)[providerName].auth_token = authTokenArg;
-        p.log.success(`${providerName === 'anthropic' ? 'Anthropic' : 'OpenAI'} auth token saved`);
+        const providerLabel = providerName === 'anthropic' ? 'Anthropic' : providerName === 'novita' ? 'Novita AI' : 'OpenAI';
+        p.log.success(`${providerLabel} auth token saved`);
     }
 
     writeSettings(settings);
@@ -96,7 +107,11 @@ function providerSet(providerName: string, args: string[]) {
 function modelShow() {
     const settings = requireSettings();
     const provider = settings.models?.provider || 'anthropic';
-    const modelSection = provider === 'openai' ? settings.models?.openai : settings.models?.anthropic;
+    const modelSection = provider === 'openai'
+        ? settings.models?.openai
+        : provider === 'novita'
+            ? settings.models?.novita
+            : settings.models?.anthropic;
     const model = modelSection?.model || '';
 
     if (model) {
@@ -122,20 +137,23 @@ function modelShow() {
 function modelSet(modelName: string) {
     const settings = requireSettings();
 
-    // Determine provider from model name
     const anthropicModels = ['sonnet', 'opus'];
     const openaiModels = ['gpt-5.2', 'gpt-5.3-codex'];
+    const novitaModels = ['kimi', 'glm', 'minimax', 'moonshotai/kimi-k2.5', 'zai-org/glm-5', 'minimax/minimax-m2.5'];
 
     let targetProvider: string;
     if (anthropicModels.includes(modelName)) {
         targetProvider = 'anthropic';
     } else if (openaiModels.includes(modelName)) {
         targetProvider = 'openai';
+    } else if (novitaModels.includes(modelName)) {
+        targetProvider = 'novita';
     } else {
-        p.log.error('Usage: model {sonnet|opus|gpt-5.2|gpt-5.3-codex}');
+        p.log.error('Usage: model {sonnet|opus|gpt-5.2|gpt-5.3-codex|kimi|glm|minimax}');
         p.log.message('');
         p.log.message('Anthropic models: sonnet, opus');
         p.log.message('OpenAI models: gpt-5.2, gpt-5.3-codex');
+        p.log.message('Novita AI models: kimi, glm, minimax');
         process.exit(1);
     }
 
@@ -176,6 +194,7 @@ switch (command) {
         break;
     case 'anthropic':
     case 'openai':
+    case 'novita':
         providerSet(command, args);
         break;
     case 'model':
@@ -187,7 +206,7 @@ switch (command) {
         break;
     default:
         p.log.error(`Unknown provider command: ${command}`);
-        p.log.message('Usage: provider {show|anthropic|openai} [--model MODEL] [--auth-token TOKEN]');
+        p.log.message('Usage: provider {show|anthropic|openai|novita} [--model MODEL] [--auth-token TOKEN]');
         p.log.message('       provider model [name]');
         process.exit(1);
 }

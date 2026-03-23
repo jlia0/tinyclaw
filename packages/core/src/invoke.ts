@@ -182,14 +182,21 @@ export async function invokeAgent(
             envOverrides.ANTHROPIC_API_KEY = settings.models.anthropic.auth_token;
         } else if (provider === 'openai' && settings.models?.openai?.auth_token) {
             envOverrides.OPENAI_API_KEY = settings.models.openai.auth_token;
+        } else if (provider === 'novita') {
+            // Novita uses the OpenAI-compatible endpoint via the codex CLI
+            const apiKey = settings.models?.novita?.api_key || process.env.NOVITA_API_KEY || '';
+            if (apiKey) envOverrides.OPENAI_API_KEY = apiKey;
+            envOverrides.OPENAI_BASE_URL = 'https://api.novita.ai/openai';
+            log('INFO', `Using Novita AI provider (base_url: https://api.novita.ai/openai)`);
         }
     }
 
     // Resolve model — custom providers use their own model, otherwise resolve via aliases
     const effectiveModel = agent.model || customProvider?.model || '';
+    const modelForAlias = rawProvider === 'novita' ? 'novita' : provider;
     const model = customProvider
         ? effectiveModel
-        : resolveModel(effectiveModel, provider as 'anthropic' | 'openai' | 'opencode');
+        : resolveModel(effectiveModel, modelForAlias);
 
     // Look up the adapter
     const adapter = getAdapter(provider);

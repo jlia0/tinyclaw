@@ -334,6 +334,7 @@ function agentProvider(agentId: string, providerArg?: string, flag?: string, mod
         case 'anthropic':
         case 'openai':
         case 'opencode':
+        case 'novita':
             agent.provider = providerArg;
             if (model) agent.model = model;
             break;
@@ -342,7 +343,7 @@ function agentProvider(agentId: string, providerArg?: string, flag?: string, mod
                 agent.provider = providerArg;
                 if (model) agent.model = model;
             } else {
-                p.log.error('Usage: tinyagi agent provider <agent_id> {anthropic|openai|opencode|custom:<id>} [--model MODEL]');
+                p.log.error('Usage: tinyagi agent provider <agent_id> {anthropic|openai|opencode|novita|custom:<id>} [--model MODEL]');
                 process.exit(1);
             }
     }

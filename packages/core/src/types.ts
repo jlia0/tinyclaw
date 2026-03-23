@@ -38,7 +38,7 @@ export interface Settings {
         defaults?: Record<string, { agentId: string }>;
     };
     models?: {
-        provider?: string; // 'anthropic', 'openai', or 'opencode'
+        provider?: string; // 'anthropic', 'openai', 'opencode', or 'novita'
         anthropic?: {
             model?: string;
             auth_token?: string;
@@ -49,6 +49,10 @@ export interface Settings {
         };
         opencode?: {
             model?: string;
+        };
+        novita?: {
+            model?: string;
+            api_key?: string;
         };
     };
     agents?: Record<string, AgentConfig>;
@@ -92,6 +96,11 @@ export const MODEL_ALIASES: Record<string, Record<string, string>> = {
     opencode: {
         'sonnet': 'opencode/claude-sonnet-4-6',
         'opus': 'opencode/claude-opus-4-6',
+    },
+    novita: {
+        'kimi': 'moonshotai/kimi-k2.5',
+        'glm': 'zai-org/glm-5',
+        'minimax': 'minimax/minimax-m2.5',
     },
 };
 

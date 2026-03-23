@@ -39,7 +39,10 @@ export function getSettings(): Settings {
 
         // Auto-detect provider if not specified
         if (!settings?.models?.provider) {
-            if (settings?.models?.openai) {
+            if (settings?.models?.novita) {
+                if (!settings.models) settings.models = {};
+                settings.models.provider = 'novita';
+            } else if (settings?.models?.openai) {
                 if (!settings.models) settings.models = {};
                 settings.models.provider = 'openai';
             } else if (settings?.models?.opencode) {
@@ -68,6 +71,8 @@ export function getDefaultAgentFromModels(settings: Settings): AgentConfig {
         model = settings?.models?.openai?.model || 'gpt-5.3-codex';
     } else if (provider === 'opencode') {
         model = settings?.models?.opencode?.model || 'sonnet';
+    } else if (provider === 'novita') {
+        model = settings?.models?.novita?.model || 'moonshotai/kimi-k2.5';
     } else {
         model = settings?.models?.anthropic?.model || 'sonnet';
     }
@@ -103,10 +108,6 @@ export function getTeams(settings: Settings): Record<string, TeamConfig> {
     return settings.teams || {};
 }
 
-/**
- * Resolve shorthand model aliases (e.g. 'sonnet' → 'claude-sonnet-4-6').
- * Unknown models pass through as-is to the CLI.
- */
 export function resolveModel(model: string, provider: string): string {
     return MODEL_ALIASES[provider]?.[model] || model || '';
 }
