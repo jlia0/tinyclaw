@@ -4,6 +4,7 @@ import {
     getQueueStatus, getAgentQueueStatus, getRecentResponses, getResponsesForChannel,
     ackResponse, enqueueResponse,
     getDeadMessages, retryDeadMessage, deleteDeadMessage,
+    getProcessingMessages, failMessage, getActiveAgentIds, killAgentProcess, queueEvents,
 } from '@tinyagi/core';
 
 export function createQueueRoutes() {
@@ -134,6 +135,44 @@ export function createQueueRoutes() {
         if (!ok) return c.json({ error: 'dead message not found' }, 404);
         log('INFO', `[API] Dead message ${id} deleted`);
         return c.json({ ok: true });
+    });
+
+    // GET /api/queue/processing — list active processing messages + process status
+    app.get('/api/queue/processing', (c) => {
+        const activeAgents = new Set(getActiveAgentIds());
+        const messages = getProcessingMessages();
+        return c.json(messages.map((m: any) => {
+            const agent = m.agent || 'default';
+            return {
+                id: m.id,
+                messageId: m.message_id,
+                channel: m.channel,
+                sender: m.sender,
+                message: m.message,
+                agent,
+                processAlive: activeAgents.has(agent),
+                startedAt: m.updated_at,
+                duration: Date.now() - m.updated_at,
+            };
+        }));
+    });
+
+    // POST /api/queue/processing/:id/kill — kill agent process + fail the message
+    app.post('/api/queue/processing/:id/kill', (c) => {
+        const id = parseInt(c.req.param('id'), 10);
+        const messages = getProcessingMessages();
+        const msg = messages.find((m: any) => m.id === id);
+        if (!msg) return c.json({ error: 'processing message not found' }, 404);
+
+        const agent = msg.agent || 'default';
+        const killed = killAgentProcess(agent);
+        failMessage(id, 'Manually terminated by user');
+
+        // Signal main loop to clear the agent chain
+        queueEvents.emit('agent:killed', { agentId: agent });
+
+        log('INFO', `[API] Killed agent session for ${agent} (message ${id}), process killed: ${killed}`);
+        return c.json({ ok: true, agent, processKilled: killed });
     });
 
     return app;

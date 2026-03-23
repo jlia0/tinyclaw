@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { AgentConfig, CustomProvider, TeamConfig } from './types';
@@ -6,6 +6,22 @@ import { SCRIPT_DIR, resolveModel, getSettings } from './config';
 import { log } from './logging';
 import { ensureAgentDirectory, buildSystemPrompt } from './agent';
 import { getAdapter } from './adapters';
+
+// ── Active process tracking ─────────────────────────────────────────────────
+// Tracks the active child process per agent for manual session management.
+const activeProcesses = new Map<string, ChildProcess>();
+
+export function getActiveAgentIds(): string[] {
+    return Array.from(activeProcesses.keys());
+}
+
+export function killAgentProcess(agentId: string): boolean {
+    const child = activeProcesses.get(agentId);
+    if (!child) return false;
+    try { child.kill('SIGTERM'); } catch { /* already dead */ }
+    activeProcesses.delete(agentId);
+    return true;
+}
 
 export async function runCommand(command: string, args: string[], cwd?: string, envOverrides?: Record<string, string>): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -51,15 +67,23 @@ export async function runCommand(command: string, args: string[], cwd?: string, 
 /**
  * Spawn a command and process stdout line-by-line as they arrive.
  * Calls `onLine` for each complete line. Returns the full stdout when done.
+ *
+ * The caller can call the returned `signalDone()` to indicate that all useful
+ * output has been received (e.g. after a `result` JSON event). After signalDone,
+ * the process gets a 30-second grace period to exit; if it doesn't, it's killed.
+ * This prevents hangs when the subprocess stalls during post-result cleanup.
  */
-export async function runCommandStreaming(
+export function runCommandStreaming(
     command: string,
     args: string[],
     onLine: (line: string) => void,
     cwd?: string,
     envOverrides?: Record<string, string>,
-): Promise<string> {
-    return new Promise((resolve, reject) => {
+    agentId?: string,
+): { promise: Promise<string>; signalDone: () => void } {
+    let signalDoneCallback: (() => void) | null = null;
+
+    const promise = new Promise<string>((resolve, reject) => {
         const env = { ...process.env, ...envOverrides };
         delete env.CLAUDECODE;
 
@@ -69,9 +93,45 @@ export async function runCommandStreaming(
             env,
         });
 
+        // Track active process for manual session management
+        if (agentId) {
+            activeProcesses.set(agentId, child);
+            child.on('close', () => {
+                if (activeProcesses.get(agentId) === child) activeProcesses.delete(agentId);
+            });
+        }
+
         let stdout = '';
         let stderr = '';
         let lineBuffer = '';
+        let settled = false;
+        let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
+        function settle(code: number | null) {
+            if (settled) return;
+            settled = true;
+            if (graceTimer) clearTimeout(graceTimer);
+            if (lineBuffer.trim()) onLine(lineBuffer);
+            if (code === 0 || code === null) {
+                resolve(stdout);
+            } else {
+                reject(new Error(stderr.trim() || `Command exited with code ${code}`));
+            }
+        }
+
+        // When the caller signals that all useful output has been received,
+        // give the process a grace period to exit cleanly, then kill it.
+        signalDoneCallback = () => {
+            if (settled) return;
+            graceTimer = setTimeout(() => {
+                if (!settled) {
+                    log('WARN', `Process '${command}' did not exit within grace period after result — killing`);
+                    try { child.kill('SIGTERM'); } catch { /* already dead */ }
+                    // Give SIGTERM a moment, then force-resolve
+                    setTimeout(() => settle(0), 2000);
+                }
+            }, 30_000);
+        };
 
         child.stdout.setEncoding('utf8');
         child.stderr.setEncoding('utf8');
@@ -92,22 +152,22 @@ export async function runCommandStreaming(
         });
 
         child.on('error', (error) => {
-            reject(error);
+            if (!settled) {
+                settled = true;
+                if (graceTimer) clearTimeout(graceTimer);
+                reject(error);
+            }
         });
 
         child.on('close', (code) => {
-            // Flush remaining buffer
-            if (lineBuffer.trim()) onLine(lineBuffer);
-
-            if (code === 0) {
-                resolve(stdout);
-                return;
-            }
-
-            const errorMessage = stderr.trim() || `Command exited with code ${code}`;
-            reject(new Error(errorMessage));
+            settle(code);
         });
     });
+
+    return {
+        promise,
+        signalDone: () => signalDoneCallback?.(),
+    };
 }
 
 /**
