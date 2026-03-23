@@ -15,7 +15,6 @@ import {
   MoreVertical,
   Bot,
   Users,
-  FolderKanban,
   Pencil,
   Trash2,
   Send,
@@ -67,6 +66,14 @@ export function TaskCard({
                 <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
                   {task.description}
                 </p>
+              )}
+              {task.identifier && (
+                <span
+                  className="text-[10px] font-mono mt-1 inline-block"
+                  style={{ color: project?.color }}
+                >
+                  {task.identifier}
+                </span>
               )}
             </div>
             <DropdownMenu
@@ -142,7 +149,10 @@ export function TaskCard({
                 variant="outline"
                 className="text-[10px] flex items-center gap-1"
               >
-                <FolderKanban className="h-2.5 w-2.5" />
+                <div
+                  className="h-2 w-2 rounded-sm shrink-0"
+                  style={{ backgroundColor: project.color }}
+                />
                 {project.name}
               </Badge>
             )}

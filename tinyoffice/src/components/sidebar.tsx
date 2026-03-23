@@ -12,7 +12,7 @@ import Image from "next/image";
 import {
   Plus, Hash, LayoutDashboard, ScrollText,
   Settings, SlidersHorizontal, ClipboardList, Building2,
-  FolderKanban, Sun, Moon,
+  Sun, Moon,
 } from "lucide-react";
 
 const AGENT_COLORS = [
@@ -62,7 +62,6 @@ export function Sidebar() {
           { href: "/", label: "Dashboard", icon: LayoutDashboard },
           { href: "/office", label: "Office", icon: Building2 },
           { href: "/tasks", label: "Tasks", icon: ClipboardList },
-          { href: "/projects", label: "Projects", icon: FolderKanban },
           { href: "/logs", label: "Logs", icon: ScrollText },
         ].map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);

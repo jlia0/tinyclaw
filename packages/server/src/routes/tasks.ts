@@ -1,43 +1,31 @@
-import fs from 'fs';
-import path from 'path';
 import { Hono } from 'hono';
-import { TINYAGI_HOME } from '@tinyagi/core';
 import { log } from '@tinyagi/core';
-
-type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'done';
-
-interface Task {
-    id: string;
-    title: string;
-    description: string;
-    status: TaskStatus;
-    assignee: string;       // agent or team id, empty = unassigned
-    assigneeType: 'agent' | 'team' | '';
-    projectId?: string;
-    createdAt: number;
-    updatedAt: number;
-}
-
-const TASKS_FILE = path.join(TINYAGI_HOME, 'tasks.json');
-
-function readTasks(): Task[] {
-    try {
-        if (!fs.existsSync(TASKS_FILE)) return [];
-        return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-    } catch {
-        return [];
-    }
-}
-
-function writeTasks(tasks: Task[]): void {
-    fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2) + '\n');
-}
+import {
+    getTasks, getTask, createTask, updateTask, deleteTask, reorderTasks,
+    getComments, createComment, deleteComment, getCommentCount,
+    type Task,
+} from '../tasks-db';
 
 const app = new Hono();
 
 // GET /api/tasks
 app.get('/api/tasks', (c) => {
-    return c.json(readTasks());
+    const projectId = c.req.query('projectId');
+    const status = c.req.query('status') as Task['status'] | undefined;
+    const assignee = c.req.query('assignee');
+    const filters: any = {};
+    if (projectId) filters.projectId = projectId;
+    if (status) filters.status = status;
+    if (assignee) filters.assignee = assignee;
+    return c.json(getTasks(Object.keys(filters).length ? filters : undefined));
+});
+
+// GET /api/tasks/:id
+app.get('/api/tasks/:id', (c) => {
+    const task = getTask(c.req.param('id'));
+    if (!task) return c.json({ error: 'task not found' }, 404);
+    const commentCount = getCommentCount(task.id);
+    return c.json({ ...task, commentCount });
 });
 
 // POST /api/tasks
@@ -46,20 +34,14 @@ app.post('/api/tasks', async (c) => {
     if (!body.title) {
         return c.json({ error: 'title is required' }, 400);
     }
-    const tasks = readTasks();
-    const task: Task = {
-        id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    const task = createTask({
         title: body.title,
-        description: body.description || '',
-        status: body.status || 'backlog',
-        assignee: body.assignee || '',
-        assigneeType: body.assigneeType || '',
+        description: body.description,
+        status: body.status,
+        assignee: body.assignee,
+        assigneeType: body.assigneeType,
         projectId: body.projectId,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-    };
-    tasks.push(task);
-    writeTasks(tasks);
+    });
     log('INFO', `[API] Task created: ${task.title}`);
     return c.json({ ok: true, task });
 });
@@ -70,17 +52,7 @@ app.put('/api/tasks/reorder', async (c) => {
     if (!body.columns) {
         return c.json({ error: 'columns map is required' }, 400);
     }
-    const tasks = readTasks();
-    for (const [status, taskIds] of Object.entries(body.columns)) {
-        for (const taskId of taskIds) {
-            const task = tasks.find(t => t.id === taskId);
-            if (task) {
-                task.status = status as TaskStatus;
-                task.updatedAt = Date.now();
-            }
-        }
-    }
-    writeTasks(tasks);
+    reorderTasks(body.columns);
     return c.json({ ok: true });
 });
 
@@ -88,24 +60,51 @@ app.put('/api/tasks/reorder', async (c) => {
 app.put('/api/tasks/:id', async (c) => {
     const taskId = c.req.param('id');
     const body = await c.req.json() as Partial<Task>;
-    const tasks = readTasks();
-    const idx = tasks.findIndex(t => t.id === taskId);
-    if (idx === -1) return c.json({ error: 'task not found' }, 404);
-    tasks[idx] = { ...tasks[idx], ...body, id: taskId, updatedAt: Date.now() };
-    writeTasks(tasks);
+    const task = updateTask(taskId, body);
+    if (!task) return c.json({ error: 'task not found' }, 404);
     log('INFO', `[API] Task updated: ${taskId}`);
-    return c.json({ ok: true, task: tasks[idx] });
+    return c.json({ ok: true, task });
 });
 
 // DELETE /api/tasks/:id
 app.delete('/api/tasks/:id', (c) => {
     const taskId = c.req.param('id');
-    const tasks = readTasks();
-    const idx = tasks.findIndex(t => t.id === taskId);
-    if (idx === -1) return c.json({ error: 'task not found' }, 404);
-    tasks.splice(idx, 1);
-    writeTasks(tasks);
+    if (!deleteTask(taskId)) return c.json({ error: 'task not found' }, 404);
     log('INFO', `[API] Task deleted: ${taskId}`);
+    return c.json({ ok: true });
+});
+
+// ── Comments ─────────────────────────────────────────────────────────────────
+
+// GET /api/tasks/:id/comments
+app.get('/api/tasks/:id/comments', (c) => {
+    const taskId = c.req.param('id');
+    const task = getTask(taskId);
+    if (!task) return c.json({ error: 'task not found' }, 404);
+    return c.json(getComments(taskId));
+});
+
+// POST /api/tasks/:id/comments
+app.post('/api/tasks/:id/comments', async (c) => {
+    const taskId = c.req.param('id');
+    const task = getTask(taskId);
+    if (!task) return c.json({ error: 'task not found' }, 404);
+    const body = await c.req.json() as { author: string; authorType: 'user' | 'agent'; content: string };
+    if (!body.content) return c.json({ error: 'content is required' }, 400);
+    const comment = createComment({
+        taskId,
+        author: body.author || 'User',
+        authorType: body.authorType || 'user',
+        content: body.content,
+    });
+    log('INFO', `[API] Comment added to task ${taskId} by ${comment.author}`);
+    return c.json({ ok: true, comment });
+});
+
+// DELETE /api/comments/:id
+app.delete('/api/comments/:id', (c) => {
+    const commentId = c.req.param('id');
+    if (!deleteComment(commentId)) return c.json({ error: 'comment not found' }, 404);
     return c.json({ ok: true });
 });
 
