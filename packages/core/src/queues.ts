@@ -134,6 +134,10 @@ export function failMessage(rowId: number, error: string): void {
         .run(newStatus, msg.retry_count + 1, error, Date.now(), rowId);
 }
 
+export function getProcessingMessages(): any[] {
+    return getDb().prepare(`SELECT * FROM messages WHERE status='processing' ORDER BY updated_at`).all();
+}
+
 export function recoverStaleMessages(thresholdMs = 10 * 60 * 1000): number {
     return getDb().prepare(`UPDATE messages SET status='pending',updated_at=? WHERE status='processing' AND updated_at<?`)
         .run(Date.now(), Date.now() - thresholdMs).changes;
