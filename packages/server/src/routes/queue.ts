@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import {
-    log, genId,
+    log, emitEvent, genId,
     getQueueStatus, getAgentQueueStatus, getRecentResponses, getResponsesForChannel,
     ackResponse, enqueueResponse,
     getDeadMessages, retryDeadMessage, deleteDeadMessage,
@@ -86,6 +86,7 @@ export function createQueueRoutes() {
         });
 
         log('INFO', `[API] Proactive response enqueued for ${channel}/${sender}`);
+        emitEvent('message:done', { channel, sender, messageId });
         return c.json({ ok: true, messageId });
     });
 
