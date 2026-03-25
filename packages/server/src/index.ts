@@ -25,17 +25,21 @@ import logsRoutes from './routes/logs';
 import chatsRoutes from './routes/chats';
 import chatroomRoutes from './routes/chatroom';
 import agentMessagesRoutes from './routes/agent-messages';
-import servicesRoutes from './routes/services';
+import { createServicesRoutes, type ServiceHandlers } from './routes/services';
+export type { ServiceHandlers } from './routes/services';
 import schedulesRoutes from './routes/schedules';
 
 const API_PORT = parseInt(process.env.TINYAGI_API_PORT || '3777', 10);
 
+const startedAt = Date.now();
+
 /**
  * Create and start the API server.
  *
+ * @param services - Optional service handler callbacks for channel/heartbeat management.
  * @returns The http.Server instance (for graceful shutdown).
  */
-export function startApiServer(): http.Server {
+export function startApiServer(services?: ServiceHandlers): http.Server {
     const app = new Hono();
 
     // CORS middleware
@@ -53,8 +57,21 @@ export function startApiServer(): http.Server {
     app.route('/', chatsRoutes);
     app.route('/', chatroomRoutes);
     app.route('/', agentMessagesRoutes);
-    app.route('/', servicesRoutes);
+    app.route('/', createServicesRoutes(services));
     app.route('/', schedulesRoutes);
+
+    // GET /api/status — overall system status
+    app.get('/api/status', (c) => {
+        const channelStatus = services?.getChannelStatus?.() ?? {};
+        const heartbeatStatus = services?.getHeartbeatStatus?.() ?? { running: false, interval: 0, lastSent: {} };
+        return c.json({
+            ok: true,
+            uptime: Math.floor((Date.now() - startedAt) / 1000),
+            server: { running: true, port: API_PORT },
+            channels: channelStatus,
+            heartbeat: heartbeatStatus,
+        });
+    });
 
     // SSE endpoint — needs raw Node.js response for streaming
     app.get('/api/events/stream', (c) => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execSync, spawn } from 'child_process';
+import { execSync, spawn, fork } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -17,6 +17,15 @@ const YELLOW = '\x1b[33m';
 const RED = '\x1b[31m';
 const BLUE = '\x1b[34m';
 const NC = '\x1b[0m';
+
+const BANNER = `
+  ▀█▀ █ █▄ █ █▄█ █▀█ █▀▀ █
+   █  █ █ ▀█  █  █▀█ █▄█ █
+`;
+
+function printBanner() {
+    console.log(BANNER);
+}
 
 function log(color, msg) {
     process.stdout.write(`${color}${msg}${NC}\n`);
@@ -35,14 +44,20 @@ function exec(cmd, opts = {}) {
     return execSync(cmd, { stdio: 'inherit', ...opts });
 }
 
+// Resolve repo root (works from symlinks and dev workflow)
+const REPO_ROOT = path.resolve(new URL('.', import.meta.url).pathname, '../../..');
+const CLI_DIR = path.join(REPO_ROOT, 'packages/cli/dist');
+const PID_FILE = path.join(TINYAGI_HOME, 'tinyagi.pid');
+const LOG_DIR = path.join(TINYAGI_HOME, 'logs');
+const API_PORT = parseInt(process.env.TINYAGI_API_PORT || '3777', 10);
+const API_URL = `http://localhost:${API_PORT}`;
+
 // ── Prerequisites ────────────────────────────────────────────────────────────
 
 function checkPrerequisites() {
     const missing = [];
     if (!commandExists('node')) missing.push('node (https://nodejs.org/)');
     if (!commandExists('npm')) missing.push('npm (https://nodejs.org/)');
-    if (!commandExists('tmux')) missing.push('tmux (brew install tmux / apt install tmux)');
-    if (!commandExists('jq')) missing.push('jq (brew install jq / apt install jq)');
 
     if (missing.length > 0) {
         log(RED, 'Missing prerequisites:');
@@ -64,10 +79,9 @@ function checkPrerequisites() {
 // ── Installation ─────────────────────────────────────────────────────────────
 
 function isInstalled() {
-    // Check installed copy or local repo (dev workflow)
-    const repoRoot = path.resolve(new URL('.', import.meta.url).pathname, '../../..');
-    return fs.existsSync(path.join(INSTALL_DIR, 'lib/tinyagi.sh'))
-        || fs.existsSync(path.join(repoRoot, 'lib/tinyagi.sh'));
+    // Check for built main entry point (local repo or installed copy)
+    return fs.existsSync(path.join(REPO_ROOT, 'packages/main/dist/index.js'))
+        || fs.existsSync(path.join(INSTALL_DIR, 'packages/main/dist/index.js'));
 }
 
 async function install() {
@@ -126,7 +140,7 @@ async function install() {
     }
 
     // Make scripts executable
-    exec(`chmod +x "${INSTALL_DIR}/bin/tinyagi" "${INSTALL_DIR}/bin/tinyclaw" "${INSTALL_DIR}/lib/tinyagi.sh" "${INSTALL_DIR}/lib/heartbeat-cron.sh" "${INSTALL_DIR}/packages/cli/bin/tinyagi.mjs"`);
+    exec(`chmod +x "${INSTALL_DIR}/bin/tinyagi" "${INSTALL_DIR}/bin/tinyclaw" "${INSTALL_DIR}/packages/cli/bin/tinyagi.mjs"`);
 
     // Install CLI symlink (tinyagi command)
     installCli();
@@ -193,12 +207,247 @@ function installCli() {
     }
 }
 
+// ── Daemon (start/stop/restart/status) ──────────────────────────────────────
+
+function getMainScript() {
+    const local = path.join(REPO_ROOT, 'packages/main/dist/index.js');
+    const installed = path.join(INSTALL_DIR, 'packages/main/dist/index.js');
+    if (fs.existsSync(local)) return local;
+    if (fs.existsSync(installed)) return installed;
+    return null;
+}
+
+function isRunning() {
+    if (!fs.existsSync(PID_FILE)) return false;
+    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        // Stale PID file
+        fs.unlinkSync(PID_FILE);
+        return false;
+    }
+}
+
+async function fetchStatus() {
+    try {
+        const res = await fetch(`${API_URL}/api/status`);
+        return await res.json();
+    } catch {
+        return null;
+    }
+}
+
+async function waitForServer(maxWait = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+        const status = await fetchStatus();
+        if (status?.ok) return status;
+        await new Promise(r => setTimeout(r, 300));
+    }
+    return null;
+}
+
+function formatUptime(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return `${h}h ${m}m`;
+}
+
+async function startDaemon() {
+    if (isRunning()) {
+        log(YELLOW, 'TinyAGI is already running');
+        return;
+    }
+
+    const mainScript = getMainScript();
+    if (!mainScript) {
+        log(RED, 'TinyAGI is not built. Run "npm run build" first.');
+        process.exit(1);
+    }
+
+    // Ensure log directory exists
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+
+    const logFile = path.join(LOG_DIR, 'daemon.log');
+    const out = fs.openSync(logFile, 'a');
+
+    const child = spawn('node', [mainScript], {
+        detached: true,
+        stdio: ['ignore', out, out],
+        env: { ...process.env, TINYAGI_HOME },
+    });
+
+    fs.writeFileSync(PID_FILE, String(child.pid));
+    child.unref();
+
+    log(GREEN, `TinyAGI started (PID: ${child.pid})`);
+
+    // Wait for server to be ready and print service status
+    const status = await waitForServer();
+    if (status) {
+        log(GREEN, `  Server:    http://localhost:${status.server?.port || API_PORT}`);
+
+        const channels = status.channels || {};
+        const channelNames = Object.keys(channels);
+        if (channelNames.length > 0) {
+            for (const ch of channelNames) {
+                const c = channels[ch];
+                const icon = c.running ? GREEN + '●' : RED + '○';
+                log(NC, `  Channel:   ${icon} ${ch}${c.pid ? ` (PID: ${c.pid})` : ''}${NC}`);
+            }
+        } else {
+            log(NC, `  Channels:  ${YELLOW}none enabled${NC}`);
+        }
+
+        const hb = status.heartbeat || {};
+        if (hb.running) {
+            log(NC, `  Heartbeat: ${GREEN}● running${NC} (interval: ${hb.interval}s)`);
+        } else {
+            log(NC, `  Heartbeat: ${YELLOW}○ off${NC}`);
+        }
+    } else {
+        log(YELLOW, '  (waiting for server...)');
+    }
+
+    log(NC, `  Logs:      ${logFile}`);
+}
+
+function stopDaemon() {
+    if (!fs.existsSync(PID_FILE)) {
+        log(YELLOW, 'TinyAGI is not running');
+        return;
+    }
+
+    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    try {
+        process.kill(pid, 'SIGTERM');
+        log(GREEN, `TinyAGI stopped (PID: ${pid})`);
+    } catch {
+        log(YELLOW, 'Process already exited');
+    }
+    try { fs.unlinkSync(PID_FILE); } catch {}
+}
+
+async function statusDaemon() {
+    if (!isRunning()) {
+        log(YELLOW, 'TinyAGI is not running');
+        return;
+    }
+
+    const pid = fs.readFileSync(PID_FILE, 'utf8').trim();
+    const status = await fetchStatus();
+
+    if (!status?.ok) {
+        log(GREEN, `TinyAGI is running (PID: ${pid})`);
+        log(YELLOW, '  Server:    not responding');
+        return;
+    }
+
+    log(GREEN, `TinyAGI is running (PID: ${pid}, uptime: ${formatUptime(status.uptime)})`);
+    log(NC, `  Server:    ${GREEN}● http://localhost:${status.server?.port || API_PORT}${NC}`);
+
+    // Queue status
+    try {
+        const qRes = await fetch(`${API_URL}/api/queue/status`);
+        const q = await qRes.json();
+        const parts = [];
+        if (q.processing > 0) parts.push(`${q.processing} processing`);
+        if (q.queued > 0) parts.push(`${q.queued} queued`);
+        if (q.dead > 0) parts.push(`${RED}${q.dead} dead${NC}`);
+        if (q.completed > 0) parts.push(`${q.completed} completed`);
+        log(NC, `  Queue:     ${GREEN}●${NC} ${parts.length > 0 ? parts.join(', ') : 'idle'}`);
+    } catch {
+        log(NC, `  Queue:     ${YELLOW}? unknown${NC}`);
+    }
+
+    // Channels
+    const channels = status.channels || {};
+    const channelNames = Object.keys(channels);
+    if (channelNames.length > 0) {
+        for (const ch of channelNames) {
+            const c = channels[ch];
+            const icon = c.running ? GREEN + '●' : RED + '○';
+            const state = c.running ? 'running' : 'stopped';
+            log(NC, `  Channel:   ${icon} ${ch}${NC} — ${state}${c.pid ? ` (PID: ${c.pid})` : ''}`);
+        }
+    } else {
+        log(NC, `  Channels:  ${YELLOW}none enabled${NC}`);
+    }
+
+    // Heartbeat
+    const hb = status.heartbeat || {};
+    if (hb.running) {
+        const lastSent = Object.entries(hb.lastSent || {});
+        const lastStr = lastSent.length > 0
+            ? lastSent.map(([agent, ts]) => `${agent}: ${formatUptime(Math.floor(Date.now() / 1000) - ts)} ago`).join(', ')
+            : 'none yet';
+        log(NC, `  Heartbeat: ${GREEN}● running${NC} (interval: ${hb.interval}s, last: ${lastStr})`);
+    } else {
+        log(NC, `  Heartbeat: ${YELLOW}○ off${NC}`);
+    }
+}
+
+// ── Logs ─────────────────────────────────────────────────────────────────────
+
+function viewLogs(type) {
+    const logFiles = {
+        queue: 'queue.log',
+        daemon: 'daemon.log',
+        heartbeat: 'heartbeat.log',
+        discord: 'discord.log',
+        telegram: 'telegram.log',
+        whatsapp: 'whatsapp.log',
+    };
+
+    if (type === 'all' || !type) {
+        // Tail all logs
+        const files = Object.values(logFiles)
+            .map(f => path.join(LOG_DIR, f))
+            .filter(f => fs.existsSync(f));
+        if (files.length === 0) {
+            log(YELLOW, 'No log files found');
+            return;
+        }
+        const child = spawn('tail', ['-f', ...files], { stdio: 'inherit' });
+        child.on('exit', (code) => process.exit(code || 0));
+    } else {
+        const file = logFiles[type];
+        if (!file) {
+            log(RED, `Unknown log type: ${type}`);
+            console.log(`Available: ${Object.keys(logFiles).join(', ')}, all`);
+            process.exit(1);
+        }
+        const logPath = path.join(LOG_DIR, file);
+        if (!fs.existsSync(logPath)) {
+            log(YELLOW, `No ${type} log file found`);
+            return;
+        }
+        const child = spawn('tail', ['-f', logPath], { stdio: 'inherit' });
+        child.on('exit', (code) => process.exit(code || 0));
+    }
+}
+
+// ── Version ──────────────────────────────────────────────────────────────────
+
+function getVersion() {
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+        return pkg.version || 'unknown';
+    } catch {
+        return 'unknown';
+    }
+}
+
 // ── Run (smart default: onboard if first time, otherwise just start) ────────
 
 async function run() {
-    // If settings already exist, just delegate to `tinyagi start` + open office
-    if (isInstalled() && fs.existsSync(path.join(os.homedir(), '.tinyagi', 'settings.json'))) {
-        delegateToBash(['start'], { sync: true });
+    // If settings already exist, just start + open office
+    if (isInstalled() && fs.existsSync(path.join(TINYAGI_HOME, 'settings.json'))) {
+        await startDaemon();
         await openOffice();
         return;
     }
@@ -229,11 +478,7 @@ async function run() {
     console.log('');
 
     // 4. Start daemon
-    try {
-        delegateToBash(['start'], { sync: true });
-    } catch {
-        log(YELLOW, 'TinyAGI may already be running (use tinyagi status to check)');
-    }
+    await startDaemon();
 
     // 5. Open office
     await openOffice();
@@ -250,26 +495,12 @@ async function openOffice() {
     }
 }
 
-// ── Delegate to bash (tinyagi.sh) ───────────────────────────────────────────
+// ── Node CLI helper ──────────────────────────────────────────────────────────
 
-function delegateToBash(args, opts = {}) {
-    // Prefer local repo copy when running from source (dev workflow)
-    const repoRoot = path.resolve(new URL('.', import.meta.url).pathname, '../../..');
-    const localSh = path.join(repoRoot, 'lib/tinyagi.sh');
-    const installedSh = path.join(INSTALL_DIR, 'lib/tinyagi.sh');
-    const tinyagiSh = fs.existsSync(localSh) ? localSh : installedSh;
-
-    if (!fs.existsSync(tinyagiSh)) {
-        log(RED, 'TinyAGI is not installed. Run "tinyagi" first.');
-        process.exit(1);
-    }
-
-    if (opts.sync) {
-        execSync(`"${tinyagiSh}" ${args.map(a => `"${a}"`).join(' ')}`, { stdio: 'inherit' });
-    } else {
-        const child = spawn(tinyagiSh, args, { stdio: 'inherit' });
-        child.on('exit', (code) => process.exit(code || 0));
-    }
+function runCliScript(script, args) {
+    const scriptPath = path.join(CLI_DIR, script);
+    const child = spawn('node', [scriptPath, ...args], { stdio: 'inherit' });
+    child.on('exit', (code) => process.exit(code || 0));
 }
 
 // ── CLI Dispatch ─────────────────────────────────────────────────────────────
@@ -277,7 +508,8 @@ function delegateToBash(args, opts = {}) {
 const command = process.argv[2] || 'run';
 const restArgs = process.argv.slice(3);
 
-// Commands that tinyagi handles directly
+printBanner();
+
 switch (command) {
     case 'run':
         run();
@@ -292,9 +524,266 @@ switch (command) {
         }
         break;
 
-    case '--help':
-    case '-h':
-    case 'help':
+    // ── Daemon ───────────────────────────────────────────────────────────────
+
+    case 'start':
+        await startDaemon();
+        openOffice();
+        break;
+
+    case 'stop':
+        stopDaemon();
+        break;
+
+    case 'restart':
+        stopDaemon();
+        await new Promise(r => setTimeout(r, 1000));
+        await startDaemon();
+        break;
+
+    case 'status':
+        await statusDaemon();
+        break;
+
+    // ── Logs ─────────────────────────────────────────────────────────────────
+
+    case 'logs':
+        viewLogs(restArgs[0]);
+        break;
+
+    // ── Messaging ────────────────────────────────────────────────────────────
+
+    case 'send':
+        if (!restArgs[0]) {
+            console.log('Usage: tinyagi send <message>');
+            process.exit(1);
+        }
+        runCliScript('messaging.js', ['send', restArgs[0]]);
+        break;
+
+    // ── Agent reset (top-level shortcut) ─────────────────────────────────────
+
+    case 'reset':
+        if (!restArgs[0]) {
+            console.log('Usage: tinyagi reset <agent_id> [agent_id2 ...]');
+            process.exit(1);
+        }
+        runCliScript('agent.js', ['reset', ...restArgs]);
+        break;
+
+    // ── Channels ─────────────────────────────────────────────────────────────
+
+    case 'channels':
+    case 'channel':
+        switch (restArgs[0]) {
+            case 'setup':
+                runCliScript('messaging.js', ['channel-setup']);
+                break;
+            case 'reset':
+                if (!restArgs[1]) {
+                    console.log('Usage: tinyagi channel reset <channel_id>');
+                    process.exit(1);
+                }
+                runCliScript('messaging.js', ['channels-reset', restArgs[1]]);
+                break;
+            case 'start':
+            case 'stop':
+            case 'restart': {
+                const action = restArgs[0];
+                if (!restArgs[1]) {
+                    console.log(`Usage: tinyagi channel ${action} <telegram|discord|whatsapp>`);
+                    process.exit(1);
+                }
+                const channelId = restArgs[1];
+                fetch(`${API_URL}/api/services/channel/${channelId}/${action}`, { method: 'POST' })
+                    .then(async (res) => {
+                        const data = await res.json();
+                        if (data.ok) {
+                            log(GREEN, `Channel ${channelId} ${data.action}`);
+                        } else {
+                            log(RED, data.error || `Failed to ${action} ${channelId}`);
+                        }
+                    })
+                    .catch(() => {
+                        log(RED, 'TinyAGI is not running. Start it first with: tinyagi start');
+                    });
+                break;
+            }
+            default:
+                console.log('Usage: tinyagi channel {setup|start|stop|restart|reset} <channel_id>');
+                process.exit(1);
+        }
+        break;
+
+    // ── Heartbeat ────────────────────────────────────────────────────────────
+
+    case 'heartbeat':
+        // Heartbeat is now built into the main process
+        log(YELLOW, 'Heartbeat runs automatically as part of the main process.');
+        log(YELLOW, 'Configure via monitoring.heartbeat_interval in settings.json.');
+        break;
+
+    // ── Agents ───────────────────────────────────────────────────────────────
+
+    case 'agent':
+        switch (restArgs[0]) {
+            case 'add':
+                runCliScript('agent.js', ['add']);
+                break;
+            case 'remove': case 'rm':
+                if (!restArgs[1]) { console.log('Usage: tinyagi agent remove <agent_id>'); process.exit(1); }
+                runCliScript('agent.js', ['remove', restArgs[1]]);
+                break;
+            case 'list': case 'ls':
+                runCliScript('agent.js', ['list']);
+                break;
+            case 'show':
+                if (!restArgs[1]) { console.log('Usage: tinyagi agent show <agent_id>'); process.exit(1); }
+                runCliScript('agent.js', ['show', restArgs[1]]);
+                break;
+            case 'reset':
+                if (!restArgs[1]) { console.log('Usage: tinyagi agent reset <agent_id> [...]'); process.exit(1); }
+                runCliScript('agent.js', ['reset', ...restArgs.slice(1)]);
+                break;
+            case 'provider':
+                if (!restArgs[1]) { console.log('Usage: tinyagi agent provider <agent_id> [provider] [--model MODEL]'); process.exit(1); }
+                runCliScript('agent.js', ['provider', ...restArgs.slice(1)]);
+                break;
+            default:
+                console.log('Usage: tinyagi agent {list|add|remove|show|reset|provider}');
+                process.exit(1);
+        }
+        break;
+
+    // ── Teams ────────────────────────────────────────────────────────────────
+
+    case 'team':
+        switch (restArgs[0]) {
+            case 'add':
+                runCliScript('team.js', ['add']);
+                break;
+            case 'remove': case 'rm':
+                if (!restArgs[1]) { console.log('Usage: tinyagi team remove <team_id>'); process.exit(1); }
+                runCliScript('team.js', ['remove', restArgs[1]]);
+                break;
+            case 'list': case 'ls':
+                runCliScript('team.js', ['list']);
+                break;
+            case 'show':
+                if (!restArgs[1]) { console.log('Usage: tinyagi team show <team_id>'); process.exit(1); }
+                runCliScript('team.js', ['show', restArgs[1]]);
+                break;
+            case 'add-agent': case 'agent-add': case 'member-add':
+                if (!restArgs[1] || !restArgs[2]) { console.log('Usage: tinyagi team add-agent <team_id> <agent_id>'); process.exit(1); }
+                runCliScript('team.js', ['add-agent', restArgs[1], restArgs[2]]);
+                break;
+            case 'remove-agent': case 'agent-remove': case 'member-remove':
+                if (!restArgs[1] || !restArgs[2]) { console.log('Usage: tinyagi team remove-agent <team_id> <agent_id>'); process.exit(1); }
+                runCliScript('team.js', ['remove-agent', restArgs[1], restArgs[2]]);
+                break;
+            case 'visualize': case 'viz': {
+                const vizScript = path.join(REPO_ROOT, 'packages/visualizer/dist/team-visualizer.js');
+                const vizArgs = restArgs[1] ? ['--team', restArgs[1]] : [];
+                const child = spawn('node', [vizScript, ...vizArgs], { stdio: 'inherit' });
+                child.on('exit', (code) => process.exit(code || 0));
+                break;
+            }
+            default:
+                console.log('Usage: tinyagi team {list|add|remove|show|add-agent|remove-agent|visualize}');
+                process.exit(1);
+        }
+        break;
+
+    // ── Chatroom ─────────────────────────────────────────────────────────────
+
+    case 'chatroom': {
+        if (!restArgs[0]) {
+            log(RED, 'Usage: tinyagi chatroom <team_id>');
+            process.exit(1);
+        }
+        const chatroomScript = path.join(REPO_ROOT, 'packages/visualizer/dist/chatroom-viewer.js');
+        const child = spawn('node', [chatroomScript, '--team', restArgs[0]], { stdio: 'inherit' });
+        child.on('exit', (code) => process.exit(code || 0));
+        break;
+    }
+
+    // ── Providers ────────────────────────────────────────────────────────────
+
+    case 'provider':
+        switch (restArgs[0]) {
+            case 'list': case 'ls':
+                runCliScript('agent.js', ['provider-list']);
+                break;
+            case 'add':
+                runCliScript('agent.js', ['provider-add']);
+                break;
+            case 'remove': case 'rm':
+                if (!restArgs[1]) { console.log('Usage: tinyagi provider remove <provider_id>'); process.exit(1); }
+                runCliScript('agent.js', ['provider-remove', restArgs[1]]);
+                break;
+            case 'anthropic': case 'openai':
+                runCliScript('provider.js', restArgs);
+                break;
+            case undefined: case '':
+                runCliScript('provider.js', ['show']);
+                break;
+            default:
+                console.log('Usage: tinyagi provider {anthropic|openai|list|add|remove} [--model MODEL]');
+                process.exit(1);
+        }
+        break;
+
+    case 'model':
+        runCliScript('provider.js', ['model', restArgs[0] || '']);
+        break;
+
+    // ── Office ───────────────────────────────────────────────────────────────
+
+    case 'office': {
+        const officeDir = path.join(REPO_ROOT, 'tinyoffice');
+        // Install deps if needed
+        if (!fs.existsSync(path.join(officeDir, 'node_modules'))) {
+            log(BLUE, 'Installing TinyOffice dependencies...');
+            exec(`cd "${officeDir}" && npm install`);
+        }
+        // Build if needed
+        if (!fs.existsSync(path.join(officeDir, '.next/BUILD_ID'))) {
+            log(BLUE, 'Building TinyOffice...');
+            exec(`cd "${officeDir}" && npm run build`);
+        }
+        log(GREEN, 'Starting TinyOffice on http://localhost:3000');
+        const child = spawn('npm', ['run', 'start'], { cwd: officeDir, stdio: 'inherit' });
+        child.on('exit', (code) => process.exit(code || 0));
+        break;
+    }
+
+    // ── Pairing ──────────────────────────────────────────────────────────────
+
+    case 'pairing':
+        runCliScript('pairing.js', restArgs);
+        break;
+
+    // ── Setup (legacy alias) ─────────────────────────────────────────────────
+
+    case 'setup':
+        runCliScript('messaging.js', ['channel-setup']);
+        break;
+
+    // ── Update ───────────────────────────────────────────────────────────────
+
+    case 'update':
+        runCliScript('update.js', []);
+        break;
+
+    // ── Version ──────────────────────────────────────────────────────────────
+
+    case 'version': case '--version': case '-v': case '-V':
+        console.log(`tinyagi v${getVersion()}`);
+        break;
+
+    // ── Help ─────────────────────────────────────────────────────────────────
+
+    case '--help': case '-h': case 'help':
         console.log('');
         console.log('Usage: tinyagi [command]');
         console.log('');
@@ -307,7 +796,6 @@ switch (command) {
         console.log('  stop                     Stop all processes');
         console.log('  restart                  Restart TinyAGI');
         console.log('  status                   Show current status');
-        console.log('  attach                   Attach to tmux session');
         console.log('');
         console.log('Config:');
         console.log('  office                   Start TinyOffice web portal (http://localhost:3000)');
@@ -318,10 +806,7 @@ switch (command) {
         console.log('');
         console.log('Channels & Services:');
         console.log('  channel setup            Configure channels interactively');
-        console.log('  channel start <ch>       Start a channel in the running session');
-        console.log('  channel stop <ch>        Stop a channel');
         console.log('  channel reset <ch>       Reset channel auth');
-        console.log('  heartbeat start|stop     Start or stop the heartbeat process');
         console.log('');
         console.log('Agents:');
         console.log('  agent list               List all configured agents');
@@ -354,15 +839,8 @@ switch (command) {
         console.log('');
         break;
 
-    // start/restart: delegate to bash then open office
-    case 'start':
-    case 'restart':
-        delegateToBash([command, ...restArgs], { sync: true });
-        openOffice();
-        break;
-
-    // All other commands delegate to tinyagi.sh
     default:
-        delegateToBash([command, ...restArgs]);
-        break;
+        console.log(`Unknown command: ${command}`);
+        console.log('Run "tinyagi --help" for usage information.');
+        process.exit(1);
 }

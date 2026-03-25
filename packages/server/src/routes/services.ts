@@ -1,65 +1,67 @@
-import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { Hono } from 'hono';
-import { SCRIPT_DIR, getSettings } from '@tinyagi/core';
+import { getSettings } from '@tinyagi/core';
 import { log } from '@tinyagi/core';
 
-const app = new Hono();
-const execFileAsync = promisify(execFile);
-
-const TINYAGI_SH = path.join(SCRIPT_DIR, 'lib', 'tinyagi.sh');
-
-async function runTinyagi(...args: string[]): Promise<string> {
-    const { stdout, stderr } = await execFileAsync('bash', [TINYAGI_SH, ...args], {
-        cwd: SCRIPT_DIR,
-        timeout: 30_000,
-        maxBuffer: 1024 * 1024,
-    });
-    return `${stdout}${stderr ? `\n${stderr}` : ''}`.trim();
+export interface ServiceHandlers {
+    startChannel?: (channelId: string) => boolean;
+    stopChannel?: (channelId: string) => boolean;
+    restartChannel?: (channelId: string) => boolean;
+    getChannelStatus?: () => Record<string, { running: boolean; pid?: number }>;
+    getHeartbeatStatus?: () => { running: boolean; interval: number; lastSent: Record<string, number> };
 }
 
-// POST /api/services/apply — start channels + heartbeat based on current settings
-app.post('/api/services/apply', async (c) => {
-    const settings = getSettings();
-    const enabledChannels = settings.channels?.enabled || [];
-    const started: string[] = [];
-    const errors: string[] = [];
+export function createServicesRoutes(handlers?: ServiceHandlers): Hono {
+    const app = new Hono();
 
-    // Start each enabled channel
-    for (const ch of enabledChannels) {
-        try {
-            await runTinyagi('channel', 'start', ch);
-            started.push(ch);
-        } catch (err) {
-            const msg = (err as Error).message;
-            // "already running" is not an error
-            if (msg.includes('already running')) {
+    // POST /api/services/apply — start enabled channels
+    app.post('/api/services/apply', async (c) => {
+        const settings = getSettings();
+        const enabledChannels = settings.channels?.enabled || [];
+        const started: string[] = [];
+        const errors: string[] = [];
+
+        for (const ch of enabledChannels) {
+            const ok = handlers?.startChannel?.(ch);
+            if (ok) {
                 started.push(ch);
             } else {
-                errors.push(`${ch}: ${msg}`);
-                log('ERROR', `[services/apply] Failed to start channel ${ch}: ${msg}`);
+                errors.push(`${ch}: failed to start or already running`);
             }
         }
-    }
 
-    // Start heartbeat
-    let heartbeat = false;
-    try {
-        await runTinyagi('heartbeat', 'start');
-        heartbeat = true;
-    } catch (err) {
-        const msg = (err as Error).message;
-        if (msg.includes('already running')) {
-            heartbeat = true;
-        } else {
-            errors.push(`heartbeat: ${msg}`);
-            log('ERROR', `[services/apply] Failed to start heartbeat: ${msg}`);
+        log('INFO', `[services/apply] Started channels=[${started.join(',')}]`);
+        return c.json({ ok: true, started, errors: errors.length ? errors : undefined });
+    });
+
+    // POST /api/services/channel/:id/start
+    app.post('/api/services/channel/:id/start', (c) => {
+        const channelId = c.req.param('id');
+        const ok = handlers?.startChannel?.(channelId);
+        if (ok) {
+            return c.json({ ok: true, channel: channelId, action: 'started' });
         }
-    }
+        return c.json({ ok: false, error: `Failed to start ${channelId} (unknown, already running, or missing token)` }, 400);
+    });
 
-    log('INFO', `[services/apply] Started channels=[${started.join(',')}] heartbeat=${heartbeat}`);
-    return c.json({ ok: true, started, heartbeat, errors: errors.length ? errors : undefined });
-});
+    // POST /api/services/channel/:id/stop
+    app.post('/api/services/channel/:id/stop', (c) => {
+        const channelId = c.req.param('id');
+        const ok = handlers?.stopChannel?.(channelId);
+        if (ok) {
+            return c.json({ ok: true, channel: channelId, action: 'stopped' });
+        }
+        return c.json({ ok: false, error: `${channelId} is not running` }, 400);
+    });
 
-export default app;
+    // POST /api/services/channel/:id/restart
+    app.post('/api/services/channel/:id/restart', (c) => {
+        const channelId = c.req.param('id');
+        const ok = handlers?.restartChannel?.(channelId);
+        if (ok) {
+            return c.json({ ok: true, channel: channelId, action: 'restarted' });
+        }
+        return c.json({ ok: false, error: `Failed to restart ${channelId}` }, 400);
+    });
+
+    return app;
+}

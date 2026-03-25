@@ -24,6 +24,8 @@ import {
     startScheduler, stopScheduler,
 } from '@tinyagi/core';
 import { startApiServer } from '@tinyagi/server';
+import { startChannels, stopChannels, startChannel, stopChannel, restartChannel, getChannelStatus } from './channels';
+import { startHeartbeat, stopHeartbeat, getHeartbeatStatus } from './heartbeat';
 import {
     handleTeamResponse,
     groupChatroomMessages,
@@ -224,7 +226,13 @@ if (startupRecovered > 0) {
     log('INFO', `Startup: recovered ${startupRecovered} in-flight message(s) from previous run`);
 }
 
-const apiServer = startApiServer();
+const apiServer = startApiServer({
+    startChannel,
+    stopChannel,
+    restartChannel,
+    getChannelStatus,
+    getHeartbeatStatus,
+});
 
 // Event-driven: process queue when a new message arrives
 queueEvents.on('message:enqueued', () => processQueue());
@@ -252,6 +260,10 @@ const maintenanceInterval = setInterval(() => {
 // Start in-process cron scheduler
 startScheduler();
 
+// Start channels and heartbeat
+startChannels();
+startHeartbeat();
+
 log('INFO', 'Queue processor started (SQLite)');
 logAgentConfig();
 log('INFO', `Agents: ${Object.keys(getAgents(getSettings())).join(', ')}, Teams: ${Object.keys(getTeams(getSettings())).join(', ')}`);
@@ -259,6 +271,8 @@ log('INFO', `Agents: ${Object.keys(getAgents(getSettings())).join(', ')}, Teams:
 // Graceful shutdown
 function shutdown(): void {
     log('INFO', 'Shutting down queue processor...');
+    stopHeartbeat();
+    stopChannels();
     stopScheduler();
     clearInterval(pollInterval);
     clearInterval(maintenanceInterval);

@@ -35,7 +35,7 @@
 - ✅ **Persistent sessions** - Conversation context maintained across restarts
 - ✅ **SQLite queue** - Atomic transactions, retry logic, dead-letter management
 - ✅ **Plugin system** - Extend TinyAGI with custom plugins for message hooks and event listeners
-- ✅ **24/7 operation** - Runs in tmux for always-on availability
+- ✅ **24/7 operation** - Runs as a background process or Docker container
 
 ## Community
 
@@ -45,12 +45,24 @@ We are actively looking for contributors. Please reach out.
 
 ## 🚀 Quick Start
 
+### Docker
+
+```bash
+docker compose up -d
+```
+
+Set your API key in a `.env` file or pass it directly:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
+```
+
+The API runs on `http://localhost:3777`. Data is persisted in a `tinyagi-data` Docker volume.
+
 ### Prerequisites
 
 - macOS, Linux and Windows (WSL2)
 - Node.js v18+
-- tmux, jq
-- Bash 3.2+
 - [Claude Code CLI](https://claude.com/claude-code) (for Anthropic provider)
 - [Codex CLI](https://docs.openai.com/codex) (for OpenAI provider)
 
@@ -202,7 +214,6 @@ Commands work with the `tinyagi` CLI.
 | `status`      | Show current status and activity                          | `tinyagi status`     |
 | `channel setup` | Configure channels interactively                        | `tinyagi channel setup` |
 | `logs [type]` | View logs (discord/telegram/whatsapp/queue/heartbeat/all) | `tinyagi logs queue` |
-| `attach`      | Attach to tmux session                                    | `tinyagi attach`     |
 
 ### Agent Commands
 
@@ -580,7 +591,7 @@ tinyagi/
 │   ├── teams/               #   Team conversation orchestration
 │   ├── server/              #   API server (REST + SSE)
 │   ├── channels/            #   Channel clients (Discord, Telegram, WhatsApp)
-│   ├── cli/                 #   CLI commands (tinyagi.sh helpers)
+│   ├── cli/                 #   CLI commands
 │   └── visualizer/          #   TUI dashboard and chatroom viewer
 ├── tinyoffice/              # TinyOffice web portal (Next.js)
 ├── .tinyagi/               # TinyAGI data (created at runtime)
@@ -599,9 +610,7 @@ tinyagi/
 │   ├── tinyagi/            #   Default agent
 │   ├── coder/
 │   └── writer/
-├── lib/                     # Runtime scripts
-├── scripts/                 # Installation scripts
-└── tinyagi.sh              # Main script
+└── scripts/                 # Installation scripts
 ```
 
 </details>
