@@ -51,12 +51,23 @@ function checkPrerequisites() {
         }
         process.exit(1);
     }
+
+    // Soft check: warn if neither claude nor codex CLI is installed
+    if (!commandExists('claude') && !commandExists('codex')) {
+        log(YELLOW, 'Warning: neither \'claude\' nor \'codex\' CLI found');
+        console.log('  Install Claude: npm install -g @anthropic-ai/claude-code');
+        console.log('  Install Codex:  npm install -g @openai/codex');
+        console.log('');
+    }
 }
 
 // ── Installation ─────────────────────────────────────────────────────────────
 
 function isInstalled() {
-    return fs.existsSync(path.join(INSTALL_DIR, 'lib/tinyagi.sh'));
+    // Check installed copy or local repo (dev workflow)
+    const repoRoot = path.resolve(new URL('.', import.meta.url).pathname, '../../..');
+    return fs.existsSync(path.join(INSTALL_DIR, 'lib/tinyagi.sh'))
+        || fs.existsSync(path.join(repoRoot, 'lib/tinyagi.sh'));
 }
 
 async function install() {
@@ -182,9 +193,17 @@ function installCli() {
     }
 }
 
-// ── Run (first-time onboarding) ──────────────────────────────────────────────
+// ── Run (smart default: onboard if first time, otherwise just start) ────────
 
 async function run() {
+    // If settings already exist, just delegate to `tinyagi start` + open office
+    if (isInstalled() && fs.existsSync(path.join(os.homedir(), '.tinyagi', 'settings.json'))) {
+        delegateToBash(['start'], { sync: true });
+        await openOffice();
+        return;
+    }
+
+    // First-time onboarding
     console.log('');
     log(BLUE, '╔════════════════════════════════════════╗');
     log(BLUE, '║          TinyAGI Quick Start           ║');
@@ -202,55 +221,44 @@ async function run() {
         console.log('');
     }
 
-    // 3. Write default settings if needed
-    const wrote = writeDefaults();
-    if (wrote) {
-        log(GREEN, '✓ Default settings written');
-        console.log(`  Workspace: ~/tinyagi-workspace`);
-        console.log(`  Agent: TinyAGI Agent (anthropic/opus)`);
-        console.log('');
-    }
+    // 3. Write default settings
+    writeDefaults();
+    log(GREEN, '✓ Default settings written');
+    console.log(`  Workspace: ~/tinyagi-workspace`);
+    console.log(`  Agent: tinyagi (anthropic/opus)`);
+    console.log('');
 
-    // 4. Start with --skip-setup
-    log(BLUE, 'Starting TinyAGI...');
+    // 4. Start daemon
     try {
-        delegateToBash(['start', '--skip-setup'], { sync: true });
+        delegateToBash(['start'], { sync: true });
     } catch {
-        // May already be running
         log(YELLOW, 'TinyAGI may already be running (use tinyagi status to check)');
     }
 
-    // 5. Open web portal
-    console.log('');
-    log(GREEN, '✓ Opening TinyAGI setup portal...');
-    console.log(`  ${BLUE}${PORTAL_URL}${NC}`);
-    console.log('');
+    // 5. Open office
+    await openOffice();
+}
 
+async function openOffice() {
+    console.log('');
+    log(GREEN, `Opening TinyOffice: ${PORTAL_URL}`);
     try {
         const open = (await import('open')).default;
         await open(PORTAL_URL);
     } catch {
         log(YELLOW, `Could not open browser. Visit ${PORTAL_URL} manually.`);
     }
-
-    // 6. Instructions
-    console.log('');
-    log(GREEN, 'Next steps:');
-    console.log('  1. Complete setup in the web portal');
-    console.log('  2. Once configured, channels will start automatically');
-    console.log('');
-    console.log('Useful commands:');
-    console.log(`  ${BLUE}tinyagi status${NC}    Check status`);
-    console.log(`  ${BLUE}tinyagi stop${NC}      Stop all processes`);
-    console.log(`  ${BLUE}tinyagi restart${NC}   Restart with new settings`);
-    console.log(`  ${BLUE}tinyagi office${NC}    Start local web portal`);
-    console.log('');
 }
 
 // ── Delegate to bash (tinyagi.sh) ───────────────────────────────────────────
 
 function delegateToBash(args, opts = {}) {
-    const tinyagiSh = path.join(INSTALL_DIR, 'lib/tinyagi.sh');
+    // Prefer local repo copy when running from source (dev workflow)
+    const repoRoot = path.resolve(new URL('.', import.meta.url).pathname, '../../..');
+    const localSh = path.join(repoRoot, 'lib/tinyagi.sh');
+    const installedSh = path.join(INSTALL_DIR, 'lib/tinyagi.sh');
+    const tinyagiSh = fs.existsSync(localSh) ? localSh : installedSh;
+
     if (!fs.existsSync(tinyagiSh)) {
         log(RED, 'TinyAGI is not installed. Run "tinyagi" first.');
         process.exit(1);
@@ -291,18 +299,17 @@ switch (command) {
         console.log('Usage: tinyagi [command]');
         console.log('');
         console.log('Quick Start:');
-        console.log('  run                      Install, configure defaults, start, and open portal (default)');
+        console.log('  run                      Install, configure defaults, and start (default)');
         console.log('  install                  Install TinyAGI only');
         console.log('');
         console.log('Daemon:');
-        console.log('  start [--skip-setup]     Start TinyAGI (--skip-setup: API only, setup via browser)');
+        console.log('  start                    Start TinyAGI');
         console.log('  stop                     Stop all processes');
         console.log('  restart                  Restart TinyAGI');
         console.log('  status                   Show current status');
         console.log('  attach                   Attach to tmux session');
         console.log('');
-        console.log('Setup & Config:');
-        console.log('  setup                    Run setup wizard');
+        console.log('Config:');
         console.log('  office                   Start TinyOffice web portal (http://localhost:3000)');
         console.log('');
         console.log('Messaging:');
@@ -310,6 +317,7 @@ switch (command) {
         console.log('  logs [type]              View logs (discord|whatsapp|telegram|heartbeat|daemon|queue|all)');
         console.log('');
         console.log('Channels & Services:');
+        console.log('  channel setup            Configure channels interactively');
         console.log('  channel start <ch>       Start a channel in the running session');
         console.log('  channel stop <ch>        Stop a channel');
         console.log('  channel reset <ch>       Reset channel auth');
@@ -344,6 +352,13 @@ switch (command) {
         console.log('  update                   Update TinyAGI to latest version');
         console.log('  version                  Show current version');
         console.log('');
+        break;
+
+    // start/restart: delegate to bash then open office
+    case 'start':
+    case 'restart':
+        delegateToBash([command, ...restArgs], { sync: true });
+        openOffice();
         break;
 
     // All other commands delegate to tinyagi.sh

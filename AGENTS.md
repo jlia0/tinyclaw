@@ -4,28 +4,16 @@ Running in persistent mode with teams of agents, messaging integration (Telegram
 
 Stay proactive and responsive to messages.
 
-## Setup
+## First-Time Setup
 
-On first run, log your setup here so it persists across conversations:
+On first run, write your setup and system prompt to the `AGENTS.md` file **in your own workspace directory**. That per-agent `AGENTS.md` should include:
 
-- **Agent**: [your agent id]
-- **User**: [user's name]
-- **Dependencies**: [e.g. agent-browser installed: yes/no]
+- **Agent**: your agent id
+- **User**: the user's name
+- **Dependencies**: e.g. agent-browser installed: yes/no
+- **System Prompt**: Ask the user what role/personality, primary responsibilities, and any specific instructions or constraints the agent should have. Draft a system prompt based on their answers, present it for approval, then write it to your workspace `AGENTS.md`.
 
-Keep this section updated and simple or complete first-time setup tasks.
-
-### System Prompt Setup
-
-On first run, if this file does not yet have a customized system prompt section below, ask the user:
-
-1. What role/personality should this agent have?
-2. What are the agent's primary responsibilities?
-3. Any specific instructions, constraints, or domain expertise?
-
-Draft a system prompt based on their answers and present it for approval before writing it here.
-
-#### System Prompt
-<!-- Write the approved system prompt here -->
+Keep your workspace `AGENTS.md` updated as your setup evolves.
 
 ## Direct Messages (`[@agent: ...]`)
 

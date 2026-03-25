@@ -116,9 +116,13 @@ export function claimAllPendingMessages(agentId: string): any[] {
         if (rows.length === 0) return [];
         const now = Date.now();
         const ids = rows.map((r: any) => r.id);
-        d.prepare(`UPDATE messages SET status='processing',updated_at=? WHERE id IN (${ids.map(() => '?').join(',')})`).run(now, ...ids);
-        return rows.map((r: any) => ({ ...r, status: 'processing' }));
+        d.prepare(`UPDATE messages SET status='queued',updated_at=? WHERE id IN (${ids.map(() => '?').join(',')})`).run(now, ...ids);
+        return rows.map((r: any) => ({ ...r, status: 'queued' }));
     }).immediate();
+}
+
+export function markProcessing(rowId: number): void {
+    getDb().prepare(`UPDATE messages SET status='processing',updated_at=? WHERE id=?`).run(Date.now(), rowId);
 }
 
 export function completeMessage(rowId: number): void {
@@ -134,8 +138,12 @@ export function failMessage(rowId: number, error: string): void {
         .run(newStatus, msg.retry_count + 1, error, Date.now(), rowId);
 }
 
+export function getProcessingMessages(): any[] {
+    return getDb().prepare(`SELECT * FROM messages WHERE status IN ('queued','processing') ORDER BY updated_at`).all();
+}
+
 export function recoverStaleMessages(thresholdMs = 10 * 60 * 1000): number {
-    return getDb().prepare(`UPDATE messages SET status='pending',updated_at=? WHERE status='processing' AND updated_at<?`)
+    return getDb().prepare(`UPDATE messages SET status='pending',updated_at=? WHERE status IN ('processing','queued') AND updated_at<?`)
         .run(Date.now(), Date.now() - thresholdMs).changes;
 }
 
@@ -168,19 +176,20 @@ export function getRecentResponses(limit: number): any[] {
 export function getQueueStatus() {
     const d = getDb();
     const counts = d.prepare(`SELECT status, COUNT(*) as cnt FROM messages GROUP BY status`).all() as { status: string; cnt: number }[];
-    const result: any = { pending: 0, processing: 0, completed: 0, dead: 0, responsesPending: 0 };
+    const result: any = { pending: 0, queued: 0, processing: 0, completed: 0, dead: 0, responsesPending: 0 };
     for (const row of counts) if (row.status in result) result[row.status] = row.cnt;
     result.responsesPending = (d.prepare(`SELECT COUNT(*) as cnt FROM responses WHERE status='pending'`).get() as { cnt: number }).cnt;
     return result;
 }
 
-export function getAgentQueueStatus(): { agent: string; pending: number; processing: number }[] {
+export function getAgentQueueStatus(): { agent: string; pending: number; queued: number; processing: number }[] {
     return getDb().prepare(
         `SELECT COALESCE(agent,'default') as agent,
                 SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) as queued,
                 SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END) as processing
-         FROM messages WHERE status IN ('pending','processing') GROUP BY agent`
-    ).all() as { agent: string; pending: number; processing: number }[];
+         FROM messages WHERE status IN ('pending','queued','processing') GROUP BY agent`
+    ).all() as { agent: string; pending: number; queued: number; processing: number }[];
 }
 
 export function getDeadMessages(): any[] {

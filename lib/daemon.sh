@@ -2,6 +2,36 @@
 # Daemon runtime for TinyAGI
 # Lifecycle (start/stop/restart/status), update checks, agent skills sync, log viewing
 
+# Check required dependencies before starting
+check_dependencies() {
+    local missing=()
+
+    if ! command -v tmux &> /dev/null; then
+        missing+=("tmux (brew install tmux / apt install tmux)")
+    fi
+    if ! command -v jq &> /dev/null; then
+        missing+=("jq (brew install jq / apt install jq)")
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${RED}Missing required dependencies:${NC}"
+        for dep in "${missing[@]}"; do
+            echo "  - $dep"
+        done
+        return 1
+    fi
+
+    # Soft check: warn if neither claude nor codex is installed
+    if ! command -v claude &> /dev/null && ! command -v codex &> /dev/null; then
+        echo -e "${YELLOW}Warning: neither 'claude' nor 'codex' CLI found${NC}"
+        echo "  Install Claude: npm install -g @anthropic-ai/claude-code"
+        echo "  Install Codex:  npm install -g @openai/codex"
+        echo ""
+    fi
+
+    return 0
+}
+
 # Start daemon
 start_daemon() {
     # Parse flags
@@ -19,6 +49,11 @@ start_daemon() {
 
     show_banner
     log "Starting TinyAGI daemon..."
+
+    # Check dependencies
+    if ! check_dependencies; then
+        return 1
+    fi
 
     # Check if Node.js dependencies are installed
     if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
@@ -41,7 +76,7 @@ start_daemon() {
         npm run build
     fi
 
-    # Load settings or run setup wizard
+    # Load settings — auto-create defaults if no settings file exists
     load_settings
     local load_rc=$?
 
@@ -74,37 +109,21 @@ start_daemon() {
             return 1
         fi
     elif [ $load_rc -ne 0 ]; then
-        if [ "$skip_setup" = true ]; then
-            # --skip-setup: start API server only, let user complete setup via web
-            echo -e "${YELLOW}No configuration found. Starting API server for web setup...${NC}"
-            echo ""
-            _start_server_only
-            return
-        fi
-        echo -e "${YELLOW}No configuration found. Running setup wizard...${NC}"
+        # No settings file — write defaults automatically
+        echo -e "${YELLOW}No configuration found. Creating defaults...${NC}"
+        node -e "import('$SCRIPT_DIR/packages/cli/lib/defaults.mjs').then(m => { if (m.writeDefaults()) console.log('✓ Default settings created') })"
         echo ""
-        node "$SCRIPT_DIR/packages/cli/dist/setup-wizard.js"
 
         if ! load_settings; then
-            echo -e "${RED}Setup failed or was cancelled${NC}"
+            echo -e "${RED}Failed to create default settings${NC}"
             return 1
         fi
-    fi
-
-    if [ ${#ACTIVE_CHANNELS[@]} -eq 0 ]; then
-        if [ "$skip_setup" = true ]; then
-            # Settings exist but no channels — start API-only mode
-            _start_server_only
-            return
-        fi
-        echo -e "${RED}No channels configured. Run 'tinyagi setup' to reconfigure${NC}"
-        return 1
     fi
 
     # Ensure all agent workspaces have .agents/skills symlink
     ensure_agent_skills_links
 
-    # Validate tokens for channels that need them
+    # Validate tokens for enabled channels
     for ch in "${ACTIVE_CHANNELS[@]}"; do
         local token_key
         token_key="$(channel_token_key "$ch")"
@@ -137,11 +156,16 @@ start_daemon() {
     fi
 
     # Report channels
-    echo -e "${BLUE}Channels:${NC}"
-    for ch in "${ACTIVE_CHANNELS[@]}"; do
-        echo -e "  ${GREEN}✓${NC} $(channel_display "$ch")"
-    done
-    echo ""
+    if [ ${#ACTIVE_CHANNELS[@]} -gt 0 ]; then
+        echo -e "${BLUE}Channels:${NC}"
+        for ch in "${ACTIVE_CHANNELS[@]}"; do
+            echo -e "  ${GREEN}✓${NC} $(channel_display "$ch")"
+        done
+        echo ""
+    else
+        echo -e "${BLUE}No channels configured.${NC} Add channels later with 'tinyagi channel setup'"
+        echo ""
+    fi
 
     # --- Build tmux session dynamically ---
     # Total panes = N channels + 2 (queue, heartbeat)
@@ -253,20 +277,15 @@ start_daemon() {
         fi
     fi
 
-    # Build channel names for help line
-    local channel_names
-    channel_names=$(IFS='|'; echo "${ACTIVE_CHANNELS[*]}")
-
-    echo ""
     echo -e "${GREEN}Commands:${NC}"
     echo "  Status:  tinyagi status"
-    echo "  Logs:    tinyagi logs [$channel_names|queue]"
+    echo "  Logs:    tinyagi logs queue"
     echo "  Attach:  tmux attach -t $TMUX_SESSION"
     echo ""
 
     local ch_list
     ch_list=$(IFS=','; echo "${ACTIVE_CHANNELS[*]}")
-    log "Daemon started with $total_panes panes (channels=$ch_list)"
+    log "Daemon started with $total_panes panes (channels=${ch_list:-none})"
 }
 
 # Start queue processor + API server only (--skip-setup mode, no settings yet).

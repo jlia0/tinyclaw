@@ -41,7 +41,7 @@ export function parseAgentRouting(
             }
         }
     }
-    return { agentId: 'default', message: rawMessage };
+    return { agentId: 'tinyagi', message: rawMessage };
 }
 
 /**

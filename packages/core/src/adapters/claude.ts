@@ -42,13 +42,16 @@ export const claudeAdapter: AgentAdapter = {
             args.push('--output-format', 'stream-json', '--verbose', '-p', message);
 
             let response = '';
-            await runCommandStreaming('claude', args, (line) => {
+            const { promise, signalDone } = runCommandStreaming('claude', args, (line) => {
                 try {
                     const json = JSON.parse(line);
                     if (json.type === 'result') {
                         if (json.result) response = json.result;
                         if (json.usage) log('INFO', `Claude usage (${agentId}): ${JSON.stringify(json.usage)}`);
                         if (json.modelUsage) log('INFO', `Claude model usage (${agentId}): ${JSON.stringify(json.modelUsage)}`);
+                        // Result received — all useful output is done.
+                        // Signal that the process should exit soon or be killed.
+                        signalDone();
                         return;
                     }
                     const text = extractEventText(json);
@@ -59,7 +62,8 @@ export const claudeAdapter: AgentAdapter = {
                 } catch (e) {
                     // Ignore non-JSON lines
                 }
-            }, workingDir, envOverrides);
+            }, workingDir, envOverrides, agentId);
+            await promise;
 
             return response || 'Sorry, I could not generate a response from Claude.';
         }

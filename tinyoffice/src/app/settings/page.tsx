@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useEffect } from "react";
 import { getSettings, updateSettings, checkConnection, getApiBase, setApiBase, type Settings } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -57,7 +56,7 @@ export default function SettingsPage() {
       setSettings(s);
       setRawJson(JSON.stringify(s, null, 2));
       const isEmpty = !s || (Object.keys(s).length === 0) ||
-        (!s.channels?.enabled?.length && !s.agents && !s.models?.provider);
+        (!s.agents && !s.models?.provider);
       setNeedsSetup(isEmpty);
     } catch (err) {
       setErrorMsg((err as Error).message);
@@ -144,13 +143,7 @@ export default function SettingsPage() {
                 {errorMsg}
               </span>
             )}
-            <Link href="/setup" className="inline-flex items-center gap-2">
-              <Button variant="outline">
-                <Wand2 className="h-4 w-4" />
-                <span>Run Setup</span>
-              </Button>
-            </Link>
-            <Button onClick={handleSave} disabled={saving || loading}>
+<Button onClick={handleSave} disabled={saving || loading}>
               {saving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -243,11 +236,8 @@ export default function SettingsPage() {
               <span className="font-medium">Setup Required</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              Run the setup wizard to create your initial configuration.
+              Run <code className="text-xs">tinyagi channel setup</code> to configure channels, or edit settings below.
             </p>
-            <Link href="/setup">
-              <Button>Run Setup</Button>
-            </Link>
           </CardContent>
         </Card>
       )}

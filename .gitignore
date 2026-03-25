@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 package-lock.json
+.next
 
 # TypeScript build output
 dist/

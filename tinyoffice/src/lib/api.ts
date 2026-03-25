@@ -87,9 +87,23 @@ export interface Settings {
 
 export interface QueueStatus {
   incoming: number;
+  queued: number;
   processing: number;
   outgoing: number;
   activeConversations: number;
+}
+
+export interface ProcessingMessage {
+  id: number;
+  messageId: string;
+  channel: string;
+  sender: string;
+  message: string;
+  agent: string;
+  status: "queued" | "processing";
+  processAlive: boolean;
+  startedAt: number;
+  duration: number;
 }
 
 export interface ResponseData {
@@ -166,6 +180,14 @@ export async function applyServices(): Promise<{ ok: boolean; started: string[];
 
 export async function getQueueStatus(): Promise<QueueStatus> {
   return apiFetch("/api/queue/status");
+}
+
+export async function getProcessingMessages(): Promise<ProcessingMessage[]> {
+  return apiFetch("/api/queue/processing");
+}
+
+export async function killAgentSession(id: number): Promise<{ ok: boolean; agent: string; processKilled: boolean }> {
+  return apiFetch(`/api/queue/processing/${id}/kill`, { method: "POST" });
 }
 
 export async function getResponses(limit = 20): Promise<ResponseData[]> {

@@ -33,7 +33,7 @@ export const codexAdapter: AgentAdapter = {
         let response = '';
 
         if (onEvent) {
-            await runCommandStreaming('codex', args, (line) => {
+            const { promise } = runCommandStreaming('codex', args, (line) => {
                 try {
                     const json = JSON.parse(line);
                     const text = extractEventText(json);
@@ -44,7 +44,8 @@ export const codexAdapter: AgentAdapter = {
                 } catch (e) {
                     // Ignore non-JSON lines
                 }
-            }, workingDir, envOverrides);
+            }, workingDir, envOverrides, agentId);
+            await promise;
         } else {
             const output = await runCommand('codex', args, workingDir, envOverrides);
             const lines = output.trim().split('\n');

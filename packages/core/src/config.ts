@@ -74,10 +74,10 @@ export function getDefaultAgentFromModels(settings: Settings): AgentConfig {
 
     // Get workspace path from settings or use default
     const workspacePath = settings?.workspace?.path || path.join(require('os').homedir(), 'tinyagi-workspace');
-    const defaultAgentDir = path.join(workspacePath, 'default');
+    const defaultAgentDir = path.join(workspacePath, 'tinyagi');
 
     return {
-        name: 'Default',
+        name: 'TinyAGI Agent',
         provider,
         model,
         working_directory: defaultAgentDir,
@@ -85,7 +85,7 @@ export function getDefaultAgentFromModels(settings: Settings): AgentConfig {
 }
 
 /**
- * Get all configured agents. Falls back to a single "default" agent
+ * Get all configured agents. Falls back to a single "tinyagi" agent
  * derived from the legacy models section if no agents are configured.
  */
 export function getAgents(settings: Settings): Record<string, AgentConfig> {
@@ -93,7 +93,7 @@ export function getAgents(settings: Settings): Record<string, AgentConfig> {
         return settings.agents;
     }
     // Fall back to default agent from models section
-    return { default: getDefaultAgentFromModels(settings) };
+    return { tinyagi: getDefaultAgentFromModels(settings) };
 }
 
 /**

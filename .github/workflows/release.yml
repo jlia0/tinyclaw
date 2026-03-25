@@ -24,7 +24,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
+          # no npm cache — lockfile not tracked
 
       - name: Verify tag matches package version
         if: github.ref_type == 'tag'
@@ -54,7 +54,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          PUPPETEER_SKIP_DOWNLOAD=true npm ci --include=dev
+          PUPPETEER_SKIP_DOWNLOAD=true npm install --include=dev
 
       - name: Build TypeScript
         run: npm run build
@@ -83,7 +83,6 @@ jobs:
 
           # Copy root files
           cp package.json "$BUNDLE_DIR/"
-          cp package-lock.json "$BUNDLE_DIR/"
           cp tsconfig.json "$BUNDLE_DIR/"
           cp tsconfig.base.json "$BUNDLE_DIR/"
           cp README.md "$BUNDLE_DIR/"
@@ -96,7 +95,6 @@ jobs:
           chmod +x "$BUNDLE_DIR/bin/tinyagi"
           chmod +x "$BUNDLE_DIR/bin/tinyclaw"
           chmod +x "$BUNDLE_DIR/scripts/install.sh"
-          chmod +x "$BUNDLE_DIR/scripts/bundle.sh"
           chmod +x "$BUNDLE_DIR/lib/tinyagi.sh"
           chmod +x "$BUNDLE_DIR/lib/heartbeat-cron.sh"
           chmod +x "$BUNDLE_DIR/lib/update.sh"

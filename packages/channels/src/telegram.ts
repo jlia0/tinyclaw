@@ -7,7 +7,8 @@
  * Setup: Create a bot via @BotFather on Telegram to get a bot token.
  */
 
-import TelegramBot from 'node-telegram-bot-api';
+import { Bot, InputFile } from 'grammy';
+import type { ParseMode } from 'grammy/types';
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
@@ -76,8 +77,6 @@ function buildUniqueFilePath(dir: string, preferredName: string): string {
 // Track pending messages (waiting for response)
 const pendingMessages = new Map<string, PendingMessage>();
 let processingOutgoingQueue = false;
-let lastPollingActivity = Date.now();
-let pollingRestartInProgress = false;
 
 // Logger
 function log(level: string, message: string): void {
@@ -171,10 +170,10 @@ function splitMessage(text: string, maxLength = 4096): string[] {
 async function sendTelegramMessage(
     chatId: number,
     text: string,
-    options: TelegramBot.SendMessageOptions = {},
+    options: { parse_mode?: ParseMode; reply_to_message_id?: number } = {},
 ): Promise<void> {
     try {
-        await bot.sendMessage(chatId, text, {
+        await bot.api.sendMessage(chatId, text, {
             parse_mode: 'Markdown',
             ...options,
         });
@@ -185,7 +184,7 @@ async function sendTelegramMessage(
         }
 
         log('WARN', 'Failed to parse Telegram Markdown, retrying without Markdown parsing');
-        await bot.sendMessage(chatId, text, options);
+        await bot.api.sendMessage(chatId, text, options);
     }
 }
 
@@ -219,7 +218,7 @@ function downloadFile(url: string, destPath: string): Promise<void> {
 // Download a Telegram file by file_id and return the local path
 async function downloadTelegramFile(fileId: string, ext: string, messageId: string, originalName?: string): Promise<string | null> {
     try {
-        const file = await bot.getFile(fileId);
+        const file = await bot.api.getFile(fileId);
         if (!file.file_path) return null;
 
         const url = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file.file_path}`;
@@ -258,37 +257,21 @@ function pairingMessage(code: string): string {
     ].join('\n');
 }
 
-// Initialize Telegram bot (polling mode)
-// Set explicit server-side long-poll timeout so Telegram returns within 25s.
-// This keeps the polling loop bounded; the watchdog handles stale connections.
-const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, {
-    polling: {
-        autoStart: true,
-        params: { timeout: 25 },
-    },
-});
+// Initialize Telegram bot with grammY (handles polling reliability natively)
+const bot = new Bot(TELEGRAM_BOT_TOKEN);
 
-// Bot ready
-bot.getMe().then(async (me: TelegramBot.User) => {
-    log('INFO', `Telegram bot connected as @${me.username}`);
-    lastPollingActivity = Date.now();
-
-    // Register bot commands so they appear in Telegram's "/" menu
-    await bot.setMyCommands([
-        { command: 'agent', description: 'List available agents' },
-        { command: 'team', description: 'List available teams' },
-        { command: 'reset', description: 'Reset conversation history' },
-        { command: 'restart', description: 'Restart TinyAGI' },
-    ]).catch((err: Error) => log('WARN', `Failed to register commands: ${err.message}`));
-
-    log('INFO', 'Listening for messages...');
-}).catch((err: Error) => {
-    log('ERROR', `Failed to connect: ${err.message}`);
-    process.exit(1);
-});
+// Register bot commands so they appear in Telegram's "/" menu
+bot.api.setMyCommands([
+    { command: 'agent', description: 'List available agents' },
+    { command: 'team', description: 'List available teams' },
+    { command: 'reset', description: 'Reset conversation history' },
+    { command: 'restart', description: 'Restart TinyAGI' },
+]).catch((err: Error) => log('WARN', `Failed to register commands: ${err.message}`));
 
 // Message received - Write to queue
-bot.on('message', async (msg: TelegramBot.Message) => {
+bot.on('message', async (ctx) => {
+    const msg = ctx.message;
+
     try {
         // Skip group/channel messages - only handle private chats
         if (msg.chat.type !== 'private') {
@@ -320,8 +303,7 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         // Handle audio messages
         if (msg.audio) {
             const ext = extFromMime(msg.audio.mime_type) || '.mp3';
-            const audioFileName = ('file_name' in msg.audio) ? (msg.audio as { file_name?: string }).file_name : undefined;
-            const filePath = await downloadTelegramFile(msg.audio.file_id, ext, queueMessageId, audioFileName);
+            const filePath = await downloadTelegramFile(msg.audio.file_id, ext, queueMessageId, msg.audio.file_name);
             if (filePath) downloadedFiles.push(filePath);
         }
 
@@ -334,8 +316,7 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         // Handle video messages
         if (msg.video) {
             const ext = extFromMime(msg.video.mime_type) || '.mp4';
-            const videoFileName = ('file_name' in msg.video) ? (msg.video as { file_name?: string }).file_name : undefined;
-            const filePath = await downloadTelegramFile(msg.video.file_id, ext, queueMessageId, videoFileName);
+            const filePath = await downloadTelegramFile(msg.video.file_id, ext, queueMessageId, msg.video.file_name);
             if (filePath) downloadedFiles.push(filePath);
         }
 
@@ -369,8 +350,8 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         if (!pairing.approved && pairing.code) {
             if (pairing.isNewPending) {
                 log('INFO', `Blocked unpaired Telegram sender ${sender} (${senderId}) with code ${pairing.code}`);
-                await bot.sendMessage(msg.chat.id, pairingMessage(pairing.code), {
-                    reply_to_message_id: msg.message_id,
+                await bot.api.sendMessage(msg.chat.id, pairingMessage(pairing.code), {
+                    reply_parameters: { message_id: msg.message_id },
                 });
             } else {
                 log('INFO', `Blocked pending Telegram sender ${sender} (${senderId}) without re-sending pairing message`);
@@ -382,8 +363,8 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         if (msg.text && msg.text.trim().match(/^[!/]agent$/i)) {
             log('INFO', 'Agent list command received');
             const agentList = getAgentListText();
-            await bot.sendMessage(msg.chat.id, agentList, {
-                reply_to_message_id: msg.message_id,
+            await bot.api.sendMessage(msg.chat.id, agentList, {
+                reply_parameters: { message_id: msg.message_id },
             });
             return;
         }
@@ -392,8 +373,8 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         if (msg.text && msg.text.trim().match(/^[!/]team$/i)) {
             log('INFO', 'Team list command received');
             const teamList = getTeamListText();
-            await bot.sendMessage(msg.chat.id, teamList, {
-                reply_to_message_id: msg.message_id,
+            await bot.api.sendMessage(msg.chat.id, teamList, {
+                reply_parameters: { message_id: msg.message_id },
             });
             return;
         }
@@ -401,8 +382,8 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         // Check for reset command: /reset @agent_id [@agent_id2 ...]
         const resetMatch = messageText.trim().match(/^[!/]reset\s+(.+)$/i);
         if (messageText.trim().match(/^[!/]reset$/i)) {
-            await bot.sendMessage(msg.chat.id, 'Usage: /reset @agent_id [@agent_id2 ...]\nSpecify which agent(s) to reset.', {
-                reply_to_message_id: msg.message_id,
+            await bot.api.sendMessage(msg.chat.id, 'Usage: /reset @agent_id [@agent_id2 ...]\nSpecify which agent(s) to reset.', {
+                reply_parameters: { message_id: msg.message_id },
             });
             return;
         }
@@ -425,12 +406,12 @@ bot.on('message', async (msg: TelegramBot.Message) => {
                     fs.writeFileSync(path.join(flagDir, 'reset_flag'), 'reset');
                     resetResults.push(`Reset @${agentId} (${agents[agentId].name}).`);
                 }
-                await bot.sendMessage(msg.chat.id, resetResults.join('\n'), {
-                    reply_to_message_id: msg.message_id,
+                await bot.api.sendMessage(msg.chat.id, resetResults.join('\n'), {
+                    reply_parameters: { message_id: msg.message_id },
                 });
             } catch {
-                await bot.sendMessage(msg.chat.id, 'Could not process reset command. Check settings.', {
-                    reply_to_message_id: msg.message_id,
+                await bot.api.sendMessage(msg.chat.id, 'Could not process reset command. Check settings.', {
+                    reply_parameters: { message_id: msg.message_id },
                 });
             }
             return;
@@ -439,8 +420,8 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         // Check for restart command
         if (messageText.trim().match(/^[!/]restart$/i)) {
             log('INFO', 'Restart command received');
-            await bot.sendMessage(msg.chat.id, 'Restarting TinyAGI...', {
-                reply_to_message_id: msg.message_id,
+            await bot.api.sendMessage(msg.chat.id, 'Restarting TinyAGI...', {
+                reply_parameters: { message_id: msg.message_id },
             });
             const { exec } = require('child_process');
             exec(`"${path.join(SCRIPT_DIR, 'lib', 'tinyagi.sh')}" restart`, { detached: true, stdio: 'ignore' });
@@ -452,7 +433,7 @@ bot.on('message', async (msg: TelegramBot.Message) => {
             senderId, messageText, SETTINGS_FILE,
         );
         if (switchNotification) {
-            await bot.sendMessage(msg.chat.id, switchNotification);
+            await bot.api.sendMessage(msg.chat.id, switchNotification);
         }
         if (routedMessage === null) {
             // Tag-only switch (e.g. "@coder") — no message to queue
@@ -461,7 +442,7 @@ bot.on('message', async (msg: TelegramBot.Message) => {
         messageText = routedMessage;
 
         // Show typing indicator
-        await bot.sendChatAction(msg.chat.id, 'typing');
+        await bot.api.sendChatAction(msg.chat.id, 'typing');
 
         // Build message text with file references
         let fullMessage = messageText;
@@ -538,13 +519,13 @@ async function checkOutgoingQueue(): Promise<void> {
                                 if (!fs.existsSync(file)) continue;
                                 const ext = path.extname(file).toLowerCase();
                                 if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
-                                    await bot.sendPhoto(targetChatId, file);
+                                    await bot.api.sendPhoto(targetChatId, new InputFile(file));
                                 } else if (['.mp3', '.ogg', '.wav', '.m4a'].includes(ext)) {
-                                    await bot.sendAudio(targetChatId, file);
+                                    await bot.api.sendAudio(targetChatId, new InputFile(file));
                                 } else if (['.mp4', '.avi', '.mov', '.webm'].includes(ext)) {
-                                    await bot.sendVideo(targetChatId, file);
+                                    await bot.api.sendVideo(targetChatId, new InputFile(file));
                                 } else {
-                                    await bot.sendDocument(targetChatId, file);
+                                    await bot.api.sendDocument(targetChatId, new InputFile(file));
                                 }
                                 log('INFO', `Sent file to Telegram: ${path.basename(file)}`);
                             } catch (fileErr) {
@@ -556,11 +537,11 @@ async function checkOutgoingQueue(): Promise<void> {
                     // Split message if needed (Telegram 4096 char limit)
                     if (responseText) {
                         const chunks = splitMessage(responseText);
-                        const parseMode = resp.metadata?.parseMode as TelegramBot.ParseMode | undefined;
+                        const parseMode = resp.metadata?.parseMode as ParseMode | undefined;
 
                         if (chunks.length > 0) {
-                            const opts: TelegramBot.SendMessageOptions = pending
-                                ? { reply_to_message_id: pending.messageId }
+                            const opts: { reply_parameters?: { message_id: number }; parse_mode?: ParseMode } = pending
+                                ? { reply_parameters: { message_id: pending.messageId } }
                                 : {};
                             if (parseMode) opts.parse_mode = parseMode;
                             await sendTelegramMessage(targetChatId, chunks[0]!, opts);
@@ -608,79 +589,11 @@ createSSEClient({
 // Refresh typing indicator every 4 seconds for pending messages
 setInterval(() => {
     for (const [, data] of pendingMessages.entries()) {
-        bot.sendChatAction(data.chatId, 'typing').catch(() => {
+        bot.api.sendChatAction(data.chatId, 'typing').catch(() => {
             // Ignore typing errors silently
         });
     }
 }, 4000);
-
-// Restart polling with proper cleanup to avoid duplicate polling loops
-async function restartPolling(reason: string, delayMs = 5000): Promise<void> {
-    if (pollingRestartInProgress) {
-        log('INFO', `Polling restart already in progress, skipping (${reason})`);
-        return;
-    }
-    pollingRestartInProgress = true;
-    log('WARN', `${reason} — stopping polling, will restart in ${delayMs / 1000}s...`);
-
-    try {
-        await bot.stopPolling();
-    } catch (e) {
-        log('WARN', `stopPolling error (ignored): ${(e as Error).message}`);
-    }
-
-    await new Promise(resolve => setTimeout(resolve, delayMs));
-
-    try {
-        log('INFO', `Restarting polling (${reason})...`);
-        await bot.startPolling();
-        lastPollingActivity = Date.now();
-        log('INFO', 'Polling restarted successfully');
-    } catch (e) {
-        log('ERROR', `Failed to restart polling: ${(e as Error).message}`);
-    } finally {
-        pollingRestartInProgress = false;
-    }
-}
-
-// Handle polling errors with automatic recovery
-bot.on('polling_error', (error: Error) => {
-    log('ERROR', `Polling error: ${error.message}`);
-
-    // ETELEGRAM 409 = another instance running (stale connection after sleep)
-    // EFATAL = unrecoverable
-    if (error.message.includes('EFATAL') || error.message.includes('409')) {
-        restartPolling('Fatal polling error detected', 10000);
-    }
-});
-
-// Track polling activity — any event from the bot means polling is alive
-bot.on('message', () => { lastPollingActivity = Date.now(); });
-
-// Watchdog: if no polling activity for 5 minutes, verify connectivity before restarting.
-// After 10 minutes of silence, force-restart polling even if getMe() works — a stale
-// long-poll connection (e.g. after laptop sleep/wake) won't be detected by getMe()
-// since it uses a fresh connection that can't see the broken polling socket.
-const WATCHDOG_CHECK_MS = 5 * 60 * 1000;
-const WATCHDOG_FORCE_RESTART_MS = 10 * 60 * 1000;
-setInterval(async () => {
-    const silentMs = Date.now() - lastPollingActivity;
-    if (silentMs > WATCHDOG_CHECK_MS) {
-        try {
-            await bot.getMe();
-            if (silentMs > WATCHDOG_FORCE_RESTART_MS) {
-                // API works but silence is too long — polling connection is likely stale
-                restartPolling(`No messages for ${Math.round(silentMs / 1000)}s despite API reachable — forcing polling restart (watchdog)`, 1000);
-            } else {
-                lastPollingActivity = Date.now();
-                log('INFO', `Watchdog: no messages for ${Math.round(silentMs / 1000)}s but API reachable, polling is healthy`);
-            }
-        } catch {
-            // API unreachable — polling is actually broken, restart it
-            restartPolling(`No polling activity for ${Math.round(silentMs / 1000)}s and API unreachable (watchdog)`, 5000);
-        }
-    }
-}, 30000);
 
 // Catch unhandled errors so we can see what kills the bot
 process.on('unhandledRejection', (reason) => {
@@ -693,15 +606,26 @@ process.on('uncaughtException', (error) => {
 // Graceful shutdown
 process.on('SIGINT', () => {
     log('INFO', 'Shutting down Telegram client...');
-    bot.stopPolling();
+    bot.stop();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
     log('INFO', 'Shutting down Telegram client...');
-    bot.stopPolling();
+    bot.stop();
     process.exit(0);
 });
 
-// Start
+// Error boundary for middleware errors
+bot.catch((err) => {
+    log('ERROR', `Bot error: ${err.message}`);
+});
+
+// Start polling (grammY handles reconnection, backoff, and error recovery natively)
 log('INFO', 'Starting Telegram client...');
+bot.start({
+    onStart: (botInfo) => {
+        log('INFO', `Telegram bot connected as @${botInfo.username}`);
+        log('INFO', 'Listening for messages...');
+    },
+});

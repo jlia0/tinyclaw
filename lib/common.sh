@@ -124,19 +124,16 @@ load_settings() {
         WORKSPACE_PATH="$HOME/tinyagi-workspace"
     fi
 
-    # Read enabled channels array
+    # Read enabled channels array (empty is OK — channels are optional)
     local channels_json
     channels_json=$(jq -r '.channels.enabled[]' "$SETTINGS_FILE" 2>/dev/null)
 
-    if [ -z "$channels_json" ]; then
-        return 1
-    fi
-
-    # Parse into array
     ACTIVE_CHANNELS=()
-    while IFS= read -r ch; do
-        ACTIVE_CHANNELS+=("$ch")
-    done <<< "$channels_json"
+    if [ -n "$channels_json" ]; then
+        while IFS= read -r ch; do
+            ACTIVE_CHANNELS+=("$ch")
+        done <<< "$channels_json"
+    fi
 
     # Load tokens for each channel from nested structure
     for ch in "${ALL_CHANNELS[@]}"; do
