@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-TINYAGI_HOME="${TINYAGI_HOME:-/data/.tinyagi}"
-WORKSPACE="/data/workspace"
+TINYAGI_HOME="${TINYAGI_HOME:-/home/tinyagi/.tinyagi}"
+WORKSPACE="/home/tinyagi/workspace"
 SETTINGS_FILE="$TINYAGI_HOME/settings.json"
 
 # Create non-root user if it doesn't exist
@@ -18,7 +18,7 @@ if [ ! -f "$SETTINGS_FILE" ]; then
     cat > "$SETTINGS_FILE" <<'SETTINGS'
 {
   "workspace": {
-    "path": "/data/workspace",
+    "path": "/home/tinyagi/workspace",
     "name": "tinyagi-workspace"
   },
   "channels": {
@@ -29,7 +29,7 @@ if [ ! -f "$SETTINGS_FILE" ]; then
       "name": "TinyAGI Agent",
       "provider": "anthropic",
       "model": "opus",
-      "working_directory": "/data/workspace/tinyagi"
+      "working_directory": "/home/tinyagi/workspace/tinyagi"
     }
   },
   "models": {
@@ -60,8 +60,8 @@ ln -sf /app/packages/cli/bin/tinyagi.mjs /usr/local/bin/tinyagi
 # Ensure log directory exists
 mkdir -p "$TINYAGI_HOME/logs"
 
-# Own data directory
-chown -R tinyagi:tinyagi /data
+# Own home directory
+chown -R tinyagi:tinyagi /home/tinyagi
 
 # Write PID file so `tinyagi status` sees the running process
 # $$ is the shell PID; exec below replaces it with node, keeping the same PID

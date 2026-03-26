@@ -64,9 +64,9 @@ COPY --from=builder /app/tsconfig.base.json ./
 COPY --from=builder /app/.agents ./.agents
 COPY --from=builder /app/AGENTS.md /app/heartbeat.md /app/SOUL.md ./
 
-# Persistent data directory (mount a volume at /data)
-RUN mkdir -p /data/.tinyagi /data/workspace
-ENV TINYAGI_HOME=/data/.tinyagi
+# Persistent data directory (mount a volume at /home/tinyagi)
+RUN mkdir -p /home/tinyagi/.tinyagi /home/tinyagi/workspace
+ENV TINYAGI_HOME=/home/tinyagi/.tinyagi
 ENV NODE_ENV=production
 ENV TINYAGI_API_PORT=3777
 
