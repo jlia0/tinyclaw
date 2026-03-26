@@ -57,8 +57,16 @@ fi
 # Make tinyagi CLI available
 ln -sf /app/packages/cli/bin/tinyagi.mjs /usr/local/bin/tinyagi
 
+# Ensure log directory exists
+mkdir -p "$TINYAGI_HOME/logs"
+
 # Own data directory
 chown -R tinyagi:tinyagi /data
 
-# Run as non-root user
+# Write PID file so `tinyagi status` sees the running process
+# $$ is the shell PID; exec below replaces it with node, keeping the same PID
+echo $$ > "$TINYAGI_HOME/tinyagi.pid"
+chown tinyagi:tinyagi "$TINYAGI_HOME/tinyagi.pid"
+
+# Run as non-root user (exec replaces this process, keeping PID 1)
 exec gosu tinyagi node packages/main/dist/index.js
