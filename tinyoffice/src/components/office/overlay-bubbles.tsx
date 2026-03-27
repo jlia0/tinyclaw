@@ -1,4 +1,4 @@
-import { pointToPercent } from "@/components/pixel-office-scene";
+import { pointToPercent } from "./pixel-office-scene";
 import type { OverlayBubble } from "./types";
 
 export function OverlayBubbles({ bubbles }: { bubbles: OverlayBubble[] }) {

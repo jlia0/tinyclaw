@@ -127,6 +127,7 @@ export function AgentChatView({
     try {
       const result = await sendMessage({
         message: `@${agentId} ${outbound}`,
+        agent: agentId,
         sender: "Web",
         channel: "web",
       });

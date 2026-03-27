@@ -4,7 +4,7 @@ import { Cron } from 'croner';
 import { Schedule, MessageJobData } from './types';
 import { TINYAGI_HOME } from './config';
 import { log } from './logging';
-import { enqueueMessage } from './queues';
+import { enqueueMessage, insertAgentMessage } from './queues';
 
 export const SCHEDULES_FILE = path.join(TINYAGI_HOME, 'schedules.json');
 
@@ -46,6 +46,15 @@ function fireSchedule(schedule: Schedule): void {
     try {
         const rowId = enqueueMessage(data);
         if (rowId) {
+            // Persist user-side message so it appears in agent_messages (same as API route)
+            insertAgentMessage({
+                agentId: schedule.agentId,
+                role: 'user',
+                channel: schedule.channel,
+                sender: schedule.sender,
+                messageId: msgId,
+                content: data.message,
+            });
             log('INFO', `[Schedule] Fired '${schedule.label}' → @${schedule.agentId} (msg ${rowId})`);
         } else {
             log('WARN', `[Schedule] Duplicate messageId for '${schedule.label}', skipped`);

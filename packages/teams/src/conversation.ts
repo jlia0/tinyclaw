@@ -2,7 +2,7 @@ import {
     MessageJobData, AgentConfig, TeamConfig,
     log, emitEvent,
     findTeamForAgent, insertChatMessage,
-    enqueueMessage, streamResponse, genId,
+    enqueueMessage, genId,
 } from '@tinyagi/core';
 import { convertTagsToReadable, extractTeammateMentions, extractChatRoomMessages } from './routing';
 
@@ -85,19 +85,12 @@ export async function handleTeamResponse(params: {
         return false;
     }
 
-    // Stream this agent's response to the user immediately
-    await streamResponse(response, {
-        channel, sender, senderId: data.senderId ?? undefined,
-        messageId, originalMessage: data.message, agentId,
-        transform: (text) => convertTagsToReadable(text, agentId),
-    });
-
     // Extract teammate mentions and enqueue as flat DMs
     const teammateMentions = extractTeammateMentions(response, agentId, teamContext.teamId, teams, agents);
     if (teammateMentions.length > 0) {
         log('INFO', `@${agentId} → ${teammateMentions.map(m => `@${m.teammateId}`).join(', ')}`);
         for (const mention of teammateMentions) {
-            emitEvent('chain_handoff', { teamId: teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
+            emitEvent('agent:mention', { teamId: teamContext.teamId, fromAgent: agentId, toAgent: mention.teammateId });
 
             const internalMsg = `[Message from teammate @${agentId}]:\n${mention.message}`;
             enqueueMessage({

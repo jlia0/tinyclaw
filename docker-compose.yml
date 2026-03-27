@@ -1,0 +1,16 @@
+services:
+  tinyagi:
+    build: .
+    ports:
+      - "3777:3777"
+    volumes:
+      - tinyagi-data:/root
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+    restart: unless-stopped
+
+volumes:
+  tinyagi-data:

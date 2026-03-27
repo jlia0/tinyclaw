@@ -45,7 +45,7 @@ export const opencodeAdapter: AgentAdapter = {
         let response = '';
 
         if (onEvent) {
-            await runCommandStreaming('opencode', args, (line) => {
+            const { promise } = runCommandStreaming('opencode', args, (line) => {
                 try {
                     const json = JSON.parse(line);
                     const text = extractEventText(json);
@@ -56,7 +56,8 @@ export const opencodeAdapter: AgentAdapter = {
                 } catch (e) {
                     // Ignore non-JSON lines
                 }
-            }, workingDir, envOverrides);
+            }, workingDir, envOverrides, agentId);
+            await promise;
         } else {
             const output = await runCommand('opencode', args, workingDir, envOverrides);
             const lines = output.trim().split('\n');

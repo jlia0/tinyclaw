@@ -35,7 +35,7 @@
 - ✅ **Persistent sessions** - Conversation context maintained across restarts
 - ✅ **SQLite queue** - Atomic transactions, retry logic, dead-letter management
 - ✅ **Plugin system** - Extend TinyAGI with custom plugins for message hooks and event listeners
-- ✅ **24/7 operation** - Runs in tmux for always-on availability
+- ✅ **24/7 operation** - Runs as a background process or Docker container
 
 ## Community
 
@@ -49,8 +49,6 @@ We are actively looking for contributors. Please reach out.
 
 - macOS, Linux and Windows (WSL2)
 - Node.js v18+
-- tmux, jq
-- Bash 3.2+
 - [Claude Code CLI](https://claude.com/claude-code) (for Anthropic provider)
 - [Codex CLI](https://docs.openai.com/codex) (for OpenAI provider)
 
@@ -60,13 +58,28 @@ We are actively looking for contributors. Please reach out.
 curl -fsSL https://raw.githubusercontent.com/TinyAGI/tinyagi/main/scripts/install.sh | bash
 ```
 
-This downloads and installs the `tinyagi` command globally. Then start it:
+This downloads and installs the `tinyagi` command globally. Then just run:
 
 ```bash
-tinyagi start
+tinyagi
 ```
 
-The setup wizard will guide you through channel selection, bot tokens, workspace setup, and AI provider configuration.
+That's it. TinyAGI auto-creates default settings, starts the daemon, and opens TinyOffice in your browser. No wizard, no configuration needed.
+
+- **Default workspace:** `~/tinyagi-workspace`
+- **Default agent:** `tinyagi` (Anthropic/Opus)
+- **Channels:** none initially — add later with `tinyagi channel setup`
+
+<details>
+<summary><b>Development (run from source repo)</b></summary>
+
+```bash
+git clone https://github.com/TinyAGI/tinyagi.git
+cd tinyagi && npm install && npm run build
+npx tinyagi start
+npx tinyagi agent list
+```
+</details>
 
 <details>
 <summary><b>Other installation methods</b></summary>
@@ -78,17 +91,24 @@ git clone https://github.com/TinyAGI/tinyagi.git
 cd tinyagi && npm install && ./scripts/install.sh
 ```
 
-**Web-based setup (skip CLI wizard):**
-
-```bash
-tinyagi start --skip-setup  # Starts API server only
-# Then open https://office.tinyagicompany.com or run: tinyagi office
-# After setup, channels start automatically
-```
-
 </details>
 
-The setup wizard (CLI or web) will also guide you through default agent, AI provider, model selection, and heartbeat interval.
+<details>
+<summary><b>🐳 Docker</b></summary>
+
+```bash
+docker compose up -d
+```
+
+Set your API key in a `.env` file or pass it directly:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
+```
+
+The API runs on `http://localhost:3777`. Data is persisted in a `tinyagi-data` Docker volume.
+
+</details>
 
 <details>
 <summary><b>📱 Channel Setup Guides</b></summary>
@@ -184,19 +204,19 @@ echo 'NEXT_PUBLIC_API_URL=http://localhost:3777' > .env.local
 
 ## 📋 Commands
 
-Commands work with `tinyagi` (primary CLI) or `tinyagi` (backward compatible alias).
+Commands work with the `tinyagi` CLI.
 
 ### Core Commands
 
 | Command       | Description                                               | Example               |
 | ------------- | --------------------------------------------------------- | --------------------- |
-| `start [--skip-setup]` | Start TinyAGI daemon (--skip-setup: API only, setup via web) | `tinyagi start` |
+| *(no command)* | Install, configure defaults, start, and open TinyOffice  | `tinyagi`            |
+| `start`       | Start TinyAGI daemon                                     | `tinyagi start`      |
 | `stop`        | Stop all processes                                        | `tinyagi stop`       |
 | `restart`     | Restart TinyAGI                                          | `tinyagi restart`    |
 | `status`      | Show current status and activity                          | `tinyagi status`     |
-| `setup`       | Run setup wizard (reconfigure)                            | `tinyagi setup`      |
+| `channel setup` | Configure channels interactively                        | `tinyagi channel setup` |
 | `logs [type]` | View logs (discord/telegram/whatsapp/queue/heartbeat/all) | `tinyagi logs queue` |
-| `attach`      | Attach to tmux session                                    | `tinyagi attach`     |
 
 ### Agent Commands
 
@@ -244,7 +264,7 @@ POST /api/chatroom/:teamId          # Post a message (body: { "message": "..." }
 | --------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------ |
 | `provider [name]`                             | Show or switch global AI provider                        | `tinyagi provider anthropic`                    |
 | `provider <name> --model <model>`             | Switch provider and model; propagates to matching agents | `tinyagi provider openai --model gpt-5.3-codex` |
-| `provider <name> --auth-token <key>`          | Store API key for a built-in provider                    | `tinyagi provider anthropic --auth-token sk-...` |
+| `provider <name> --oauth-token <token>`        | Store OAuth token for a built-in provider                | `tinyagi provider anthropic --oauth-token sk-ant-oat01-...` |
 | `provider list`                               | List all custom providers                                | `tinyagi provider list`                         |
 | `provider add`                                | Add a new custom provider (interactive)                  | `tinyagi provider add`                          |
 | `provider remove <id>`                        | Remove a custom provider                                 | `tinyagi provider remove proxy`                 |
@@ -286,14 +306,15 @@ tinyagi agent provider coder custom:my-proxy
 tinyagi agent provider coder custom:my-proxy --model gpt-4o
 ```
 
-**Auth token storage** — store API keys for built-in providers so you don't need separate CLI auth:
+**Auth token storage** — store credentials for built-in providers so you don't need separate CLI auth:
 
 ```bash
-tinyagi provider anthropic --auth-token sk-ant-...
-tinyagi provider openai --auth-token sk-...
+tinyagi provider anthropic --oauth-token sk-ant-oat01-...
+tinyagi provider anthropic --api-key sk-ant-...
+tinyagi provider openai --api-key sk-...
 ```
 
-Tokens are saved in `settings.json` under `models.<provider>.auth_token` and automatically exported as `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` when invoking CLIs.
+Anthropic supports both `oauth_token` (exported as `CLAUDE_CODE_OAUTH_TOKEN`) and `api_key` (exported as `ANTHROPIC_API_KEY`). OAuth takes priority if both are set. OpenAI keys are saved as `models.openai.api_key` and exported as `OPENAI_API_KEY`. If nothing is configured, the process inherits environment variables directly.
 
 **API endpoints:**
 
@@ -397,7 +418,7 @@ Use `@agent_id` prefix to route messages to specific agents:
 ```text
 @coder fix the authentication bug
 @writer document the API endpoints
-help me with this  ← goes to default agent (no prefix needed)
+help me with this  ← goes to tinyagi agent (no prefix needed)
 ```
 
 <details>
@@ -504,11 +525,11 @@ Located at `.tinyagi/settings.json`:
     "name": "tinyagi-workspace"
   },
   "agents": {
-    "assistant": {
-      "name": "Assistant",
+    "tinyagi": {
+      "name": "TinyAGI Agent",
       "provider": "anthropic",
-      "model": "sonnet",
-      "working_directory": "/Users/me/tinyagi-workspace/assistant"
+      "model": "opus",
+      "working_directory": "/Users/me/tinyagi-workspace/tinyagi"
     }
   },
   "teams": {
@@ -528,8 +549,8 @@ Located at `.tinyagi/settings.json`:
     }
   },
   "models": {
-    "anthropic": { "auth_token": "sk-ant-..." },
-    "openai": { "auth_token": "sk-..." }
+    "anthropic": { "api_key": "sk-ant-...", "oauth_token": "sk-ant-oat01-..." },
+    "openai": { "api_key": "sk-..." }
   },
   "monitoring": {
     "heartbeat_interval": 3600
@@ -573,7 +594,7 @@ tinyagi/
 │   ├── teams/               #   Team conversation orchestration
 │   ├── server/              #   API server (REST + SSE)
 │   ├── channels/            #   Channel clients (Discord, Telegram, WhatsApp)
-│   ├── cli/                 #   CLI commands (tinyagi.sh helpers)
+│   ├── cli/                 #   CLI commands
 │   └── visualizer/          #   TUI dashboard and chatroom viewer
 ├── tinyoffice/              # TinyOffice web portal (Next.js)
 ├── .tinyagi/               # TinyAGI data (created at runtime)
@@ -589,12 +610,10 @@ tinyagi/
 │   ├── heartbeat.md         #   Template for agents
 │   └── AGENTS.md            #   Template for agents
 ├── ~/tinyagi-workspace/    # Agent workspaces
+│   ├── tinyagi/            #   Default agent
 │   ├── coder/
-│   ├── writer/
-│   └── assistant/
-├── lib/                     # Runtime scripts
-├── scripts/                 # Installation scripts
-└── tinyagi.sh              # Main script
+│   └── writer/
+└── scripts/                 # Installation scripts
 ```
 
 </details>
@@ -693,4 +712,4 @@ MIT
 
 **TinyAGI - Tiny but mighty!** 🦞✨
 
-[![Star History Chart](https://api.star-history.com/svg?repos=TinyAGI/tinyagi&type=date&legend=top-left)](https://www.star-history.com/#TinyAGI/tinyagi&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/image?repos=TinyAGI/tinyagi&type=date&legend=top-left)](https://www.star-history.com/?repos=TinyAGI%2Ftinyagi&type=date&legend=top-left)

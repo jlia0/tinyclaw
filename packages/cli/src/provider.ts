@@ -34,17 +34,20 @@ function providerSet(providerName: string, args: string[]) {
 
     // Parse flags
     let modelArg = '';
-    let authTokenArg = '';
+    let oauthTokenArg = '';
+    let apiKeyArg = '';
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '--model' && args[i + 1]) {
             modelArg = args[++i];
-        } else if (args[i] === '--auth-token' && args[i + 1]) {
-            authTokenArg = args[++i];
+        } else if (args[i] === '--oauth-token' && args[i + 1]) {
+            oauthTokenArg = args[++i];
+        } else if (args[i] === '--api-key' && args[i + 1]) {
+            apiKeyArg = args[++i];
         }
     }
 
     if (providerName !== 'anthropic' && providerName !== 'openai') {
-        p.log.error('Usage: provider {anthropic|openai} [--model MODEL] [--auth-token TOKEN]');
+        p.log.error('Usage: provider {anthropic|openai} [--model MODEL] [--oauth-token TOKEN] [--api-key KEY]');
         process.exit(1);
     }
 
@@ -82,10 +85,16 @@ function providerSet(providerName: string, args: string[]) {
         }
     }
 
-    if (authTokenArg) {
+    if (oauthTokenArg) {
         if (!settings.models[providerName]) settings.models[providerName] = {};
-        (settings.models as any)[providerName].auth_token = authTokenArg;
-        p.log.success(`${providerName === 'anthropic' ? 'Anthropic' : 'OpenAI'} auth token saved`);
+        (settings.models as any)[providerName].oauth_token = oauthTokenArg;
+        p.log.success(`OAuth token saved for ${providerName}`);
+    }
+
+    if (apiKeyArg) {
+        if (!settings.models[providerName]) settings.models[providerName] = {};
+        (settings.models as any)[providerName].api_key = apiKeyArg;
+        p.log.success(`API key saved for ${providerName}`);
     }
 
     writeSettings(settings);
@@ -187,7 +196,7 @@ switch (command) {
         break;
     default:
         p.log.error(`Unknown provider command: ${command}`);
-        p.log.message('Usage: provider {show|anthropic|openai} [--model MODEL] [--auth-token TOKEN]');
+        p.log.message('Usage: provider {show|anthropic|openai} [--model MODEL] [--oauth-token TOKEN] [--api-key KEY]');
         p.log.message('       provider model [name]');
         process.exit(1);
 }

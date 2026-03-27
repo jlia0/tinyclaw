@@ -1,4 +1,4 @@
-import type { PixelDeskStatus } from "@/components/pixel-office-scene";
+import type { PixelDeskStatus } from "./pixel-office-scene";
 import type { AgentConfig, ResponseData, Task, TeamConfig } from "@/lib/api";
 
 // ── Types ────────────────────────────────────────────────────────────────

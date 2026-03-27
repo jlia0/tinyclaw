@@ -41,11 +41,12 @@ export interface Settings {
         provider?: string; // 'anthropic', 'openai', or 'opencode'
         anthropic?: {
             model?: string;
-            auth_token?: string;
+            api_key?: string;
+            oauth_token?: string;
         };
         openai?: {
             model?: string;
-            auth_token?: string;
+            api_key?: string;
         };
         opencode?: {
             model?: string;

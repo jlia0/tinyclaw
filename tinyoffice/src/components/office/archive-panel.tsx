@@ -1,5 +1,5 @@
 import type { AgentConfig, Settings } from "@/lib/api";
-import type { SceneResponseItem, SceneRouteTarget, SceneTaskSummary } from "@/components/pixel-office-scene";
+import type { SceneResponseItem, SceneRouteTarget, SceneTaskSummary } from "./pixel-office-scene";
 
 export type ArchivePanelId = "logs" | "workspace" | "outgoing" | "routing" | "tasks";
 

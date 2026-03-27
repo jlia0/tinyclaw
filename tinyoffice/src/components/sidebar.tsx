@@ -10,9 +10,9 @@ import {
 } from "@/lib/api";
 import Image from "next/image";
 import {
-  Plus, Hash, LayoutDashboard, ScrollText,
+  Plus, Hash,
   Settings, SlidersHorizontal, ClipboardList, Building2,
-  Sun, Moon,
+  Sun, Moon, SlidersVertical,
 } from "lucide-react";
 
 const AGENT_COLORS = [
@@ -59,12 +59,11 @@ export function Sidebar() {
       {/* Dashboard + Logs */}
       <div className="px-3 pt-2 pb-1 space-y-0.5">
         {[
-          { href: "/", label: "Dashboard", icon: LayoutDashboard },
+          { href: "/control", label: "Control Plane", icon: SlidersVertical },
           { href: "/office", label: "Office", icon: Building2 },
           { href: "/tasks", label: "Tasks", icon: ClipboardList },
-          { href: "/logs", label: "Logs", icon: ScrollText },
         ].map(({ href, label, icon: Icon }) => {
-          const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+          const active = pathname === href || pathname.startsWith(href + "/");
           return (
             <Link
               key={href}

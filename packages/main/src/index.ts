@@ -10,20 +10,22 @@ import fs from 'fs';
 import path from 'path';
 import {
     MessageJobData,
-    getSettings, getAgents, getTeams, LOG_FILE, FILES_DIR,
+    getSettings, getAgents, getTeams, LOG_FILE, FILES_DIR, TINYAGI_HOME,
     log, emitEvent,
     parseAgentRouting, getAgentResetFlag,
-    invokeAgent,
+    invokeAgent, killAgentProcess,
     loadPlugins, runIncomingHooks,
     streamResponse,
     initQueueDb, getPendingAgents, claimAllPendingMessages,
-    completeMessage, failMessage,
+    markProcessing, completeMessage, failMessage,
     recoverStaleMessages, pruneAckedResponses, pruneCompletedMessages,
     closeQueueDb, queueEvents,
     insertAgentMessage,
     startScheduler, stopScheduler,
 } from '@tinyagi/core';
 import { startApiServer } from '@tinyagi/server';
+import { startChannels, stopChannels, startChannel, stopChannel, restartChannel, getChannelStatus } from './channels';
+import { startHeartbeat, stopHeartbeat, getHeartbeatStatus } from './heartbeat';
 import {
     handleTeamResponse,
     groupChatroomMessages,
@@ -53,9 +55,6 @@ async function processMessage(dbMsg: any): Promise<void> {
     const isInternal = !!data.fromAgent;
 
     log('INFO', `Processing [${isInternal ? 'internal' : channel}] ${isInternal ? `@${data.fromAgent}→@${preRoutedAgent}` : `from ${sender}`}: ${rawMessage}`);
-    if (!isInternal) {
-        emitEvent('message_received', { channel, sender, message: rawMessage.substring(0, 120), messageId });
-    }
 
     const settings = getSettings();
     const agents = getAgents(settings);
@@ -78,7 +77,7 @@ async function processMessage(dbMsg: any): Promise<void> {
     }
 
     if (!agents[agentId]) {
-        agentId = 'default';
+        agentId = 'tinyagi';
         message = rawMessage;
     }
     if (!agents[agentId]) {
@@ -86,9 +85,6 @@ async function processMessage(dbMsg: any): Promise<void> {
     }
 
     const agent = agents[agentId];
-    if (!isInternal) {
-        emitEvent('agent_routed', { agentId, agentName: agent.name, provider: agent.provider, model: agent.model, isTeamRouted });
-    }
 
     // ── Invoke agent ────────────────────────────────────────────────────────
     const agentResetFlag = getAgentResetFlag(agentId, workspacePath);
@@ -99,28 +95,32 @@ async function processMessage(dbMsg: any): Promise<void> {
 
     ({ text: message } = await runIncomingHooks(message, { channel, sender, messageId, originalMessage: rawMessage }));
 
-    emitEvent('chain_step_start', { agentId, agentName: agent.name, fromAgent: data.fromAgent || null });
+    emitEvent('agent:invoke', { agentId, agentName: agent.name, fromAgent: data.fromAgent || null });
     let response: string;
     try {
         response = await invokeAgent(agent, agentId, message, workspacePath, shouldReset, agents, teams, (text) => {
             log('INFO', `Agent ${agentId}: ${text}`);
-            emitEvent('agent_progress', { agentId, agentName: agent.name, text, messageId });
+            insertAgentMessage({ agentId, role: 'assistant', channel, sender: agentId, messageId, content: text });
+            emitEvent('agent:progress', { agentId, agentName: agent.name, text, messageId });
+            sendDirectResponse(text, {
+                channel, sender, senderId: data.senderId,
+                messageId, originalMessage: rawMessage, agentId,
+            });
         });
     } catch (error) {
         const provider = agent.provider || 'anthropic';
         const providerLabel = provider === 'openai' ? 'Codex' : provider === 'opencode' ? 'OpenCode' : 'Claude';
         log('ERROR', `${providerLabel} error (agent: ${agentId}): ${(error as Error).message}`);
         response = "Sorry, I encountered an error processing your request. Please check the queue logs.";
+        const msgSender = isInternal ? data.fromAgent! : sender;
+        insertAgentMessage({ agentId, role: 'assistant', channel, sender: msgSender, messageId, content: response });
+        await sendDirectResponse(response, {
+            channel, sender, senderId: data.senderId,
+            messageId, originalMessage: rawMessage, agentId,
+        });
     }
-    emitEvent('chain_step_done', { agentId, agentName: agent.name, responseLength: response.length, responseText: response });
 
-    // ── Persist & emit simplified agent_message event ────────────────────
-    const msgSender = isInternal ? data.fromAgent! : sender;
-    if (!isInternal) {
-        insertAgentMessage({ agentId, role: 'user', channel, sender: msgSender, messageId, content: rawMessage });
-    }
-    insertAgentMessage({ agentId, role: 'assistant', channel, sender: msgSender, messageId, content: response });
-    emitEvent('agent_message', {
+    emitEvent('agent:response', {
         agentId, agentName: agent.name, role: 'assistant',
         channel, sender, messageId,
         content: response,
@@ -128,18 +128,12 @@ async function processMessage(dbMsg: any): Promise<void> {
     });
 
     // ── Response routing ────────────────────────────────────────────────────
-    // Always try team orchestration first — handles team-routed, internal,
-    // AND direct messages to agents that belong to a team.
+    // Team orchestration — handles team-routed, internal, and direct messages
+    // to agents that belong to a team.
 
-    const handled = await handleTeamResponse({
+    await handleTeamResponse({
         agentId, response, isTeamRouted, data, agents, teams,
     });
-    if (!handled) {
-        await sendDirectResponse(response, {
-            channel, sender, senderId: data.senderId,
-            messageId, originalMessage: rawMessage, agentId,
-        });
-    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -148,7 +142,8 @@ async function sendDirectResponse(
     response: string,
     ctx: { channel: string; sender: string; senderId?: string | null; messageId: string; originalMessage: string; agentId: string }
 ): Promise<void> {
-    await streamResponse(response, {
+    const signed = `${response}\n\n- [${ctx.agentId}]`;
+    await streamResponse(signed, {
         channel: ctx.channel,
         sender: ctx.sender,
         senderId: ctx.senderId ?? undefined,
@@ -171,12 +166,14 @@ async function processQueue(): Promise<void> {
         if (messages.length === 0) continue;
 
         const currentChain = agentChains.get(agentId) || Promise.resolve();
-        const newChain = currentChain.then(async () => {
+        // .catch() prevents a rejected chain from blocking subsequent messages
+        const newChain = currentChain.catch(() => {}).then(async () => {
             const { messages: groupedMessages, messageIds } = groupChatroomMessages(messages);
             for (let i = 0; i < groupedMessages.length; i++) {
                 const msg = groupedMessages[i];
                 const ids = messageIds[i];
                 try {
+                    for (const id of ids) markProcessing(id);
                     await processMessage(msg);
                     for (const id of ids) {
                         completeMessage(id);
@@ -222,18 +219,42 @@ function logAgentConfig(): void {
 
 initQueueDb();
 
-const apiServer = startApiServer();
+// Write PID file so the CLI can find this process
+fs.writeFileSync(path.join(TINYAGI_HOME, 'tinyagi.pid'), String(process.pid));
+
+// Recover any messages left in 'processing' from a previous run — they're
+// guaranteed stale because the process just restarted.
+const startupRecovered = recoverStaleMessages(0);
+if (startupRecovered > 0) {
+    log('INFO', `Startup: recovered ${startupRecovered} in-flight message(s) from previous run`);
+}
+
+const apiServer = startApiServer({
+    startChannel,
+    stopChannel,
+    restartChannel,
+    getChannelStatus,
+    getHeartbeatStatus,
+    restart() {
+        log('INFO', 'Restart requested via API');
+        shutdown(75);
+    },
+});
 
 // Event-driven: process queue when a new message arrives
 queueEvents.on('message:enqueued', () => processQueue());
 
+// When user manually kills an agent session, clear its promise chain
+queueEvents.on('agent:killed', ({ agentId }: { agentId: string }) => {
+    agentChains.delete(agentId);
+    log('INFO', `Cleared agent chain for ${agentId}`);
+});
+
 // Also poll periodically in case events are missed
 const pollInterval = setInterval(() => processQueue(), 5000);
 
-// Periodic maintenance
+// Periodic maintenance (prune old completed/acked records)
 const maintenanceInterval = setInterval(() => {
-    const recovered = recoverStaleMessages();
-    if (recovered > 0) log('INFO', `Recovered ${recovered} stale message(s)`);
     pruneAckedResponses();
     pruneCompletedMessages();
 }, 60 * 1000);
@@ -246,19 +267,29 @@ const maintenanceInterval = setInterval(() => {
 // Start in-process cron scheduler
 startScheduler();
 
+// Start channels and heartbeat
+startChannels();
+startHeartbeat();
+
 log('INFO', 'Queue processor started (SQLite)');
 logAgentConfig();
-emitEvent('processor_start', { agents: Object.keys(getAgents(getSettings())), teams: Object.keys(getTeams(getSettings())) });
+log('INFO', `Agents: ${Object.keys(getAgents(getSettings())).join(', ')}, Teams: ${Object.keys(getTeams(getSettings())).join(', ')}`);
 
-// Graceful shutdown
-function shutdown(): void {
-    log('INFO', 'Shutting down queue processor...');
+// Graceful shutdown. Exit code 75 signals "restart" to the Docker entrypoint loop.
+function shutdown(exitCode = 0): void {
+    log('INFO', exitCode === 75 ? 'Restarting queue processor...' : 'Shutting down queue processor...');
+    stopHeartbeat();
+    stopChannels();
     stopScheduler();
     clearInterval(pollInterval);
     clearInterval(maintenanceInterval);
     apiServer.close();
     closeQueueDb();
-    process.exit(0);
+    // Clean up PID file on normal shutdown (not restart)
+    if (exitCode !== 75) {
+        try { fs.unlinkSync(path.join(TINYAGI_HOME, 'tinyagi.pid')); } catch {}
+    }
+    process.exit(exitCode);
 }
 
 process.on('SIGINT', () => { shutdown(); });

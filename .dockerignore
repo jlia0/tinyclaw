@@ -1,0 +1,14 @@
+node_modules
+*/node_modules
+**/dist
+.tinyagi
+.git
+.env
+tinyoffice
+*.md
+!AGENTS.md
+!heartbeat.md
+!SOUL.md
+!README.md
+docs
+.context

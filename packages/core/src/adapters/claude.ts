@@ -26,6 +26,7 @@ export const claudeAdapter: AgentAdapter = {
 
     async invoke(opts: InvokeOptions): Promise<string> {
         const { agentId, message, workingDir, systemPrompt, model, shouldReset, envOverrides, onEvent } = opts;
+        const env = { IS_SANDBOX: '1', ...envOverrides };
         log('DEBUG', `Using Claude provider (agent: ${agentId})`);
 
         const continueConversation = !shouldReset;
@@ -42,13 +43,16 @@ export const claudeAdapter: AgentAdapter = {
             args.push('--output-format', 'stream-json', '--verbose', '-p', message);
 
             let response = '';
-            await runCommandStreaming('claude', args, (line) => {
+            const { promise, signalDone } = runCommandStreaming('claude', args, (line) => {
                 try {
                     const json = JSON.parse(line);
                     if (json.type === 'result') {
                         if (json.result) response = json.result;
                         if (json.usage) log('INFO', `Claude usage (${agentId}): ${JSON.stringify(json.usage)}`);
                         if (json.modelUsage) log('INFO', `Claude model usage (${agentId}): ${JSON.stringify(json.modelUsage)}`);
+                        // Result received — all useful output is done.
+                        // Signal that the process should exit soon or be killed.
+                        signalDone();
                         return;
                     }
                     const text = extractEventText(json);
@@ -59,12 +63,13 @@ export const claudeAdapter: AgentAdapter = {
                 } catch (e) {
                     // Ignore non-JSON lines
                 }
-            }, workingDir, envOverrides);
+            }, workingDir, env, agentId);
+            await promise;
 
             return response || 'Sorry, I could not generate a response from Claude.';
         }
 
         args.push('-p', message);
-        return await runCommand('claude', args, workingDir, envOverrides);
+        return await runCommand('claude', args, workingDir, env);
     },
 };

@@ -36,6 +36,57 @@ function expandHome(p) {
     return p;
 }
 
+/**
+ * Determine SCRIPT_DIR (repo root) — same logic as tinyagi.sh.
+ * When running from packages/cli/lib/defaults.mjs, go up 3 levels.
+ */
+const SCRIPT_DIR = path.resolve(new URL('.', import.meta.url).pathname, '../../..');
+
+function copyDirSync(src, dest) {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        const s = path.join(src, entry.name);
+        const d = path.join(dest, entry.name);
+        if (entry.isDirectory()) copyDirSync(s, d);
+        else fs.copyFileSync(s, d);
+    }
+}
+
+/**
+ * Bootstrap an agent working directory with templates from SCRIPT_DIR.
+ */
+function bootstrapAgentDir(agentDir) {
+    if (fs.existsSync(agentDir)) return; // already exists
+
+    fs.mkdirSync(agentDir, { recursive: true });
+
+    // Copy .claude directory
+    const sourceClaudeDir = path.join(SCRIPT_DIR, '.claude');
+    if (fs.existsSync(sourceClaudeDir)) {
+        copyDirSync(sourceClaudeDir, path.join(agentDir, '.claude'));
+    }
+
+    // Copy heartbeat.md
+    const sourceHeartbeat = path.join(SCRIPT_DIR, 'heartbeat.md');
+    if (fs.existsSync(sourceHeartbeat)) {
+        fs.copyFileSync(sourceHeartbeat, path.join(agentDir, 'heartbeat.md'));
+    }
+
+    // Create empty AGENTS.md for user customization
+    fs.writeFileSync(path.join(agentDir, 'AGENTS.md'), '');
+
+    // Copy SOUL.md
+    const targetTinyagi = path.join(agentDir, '.tinyagi');
+    fs.mkdirSync(targetTinyagi, { recursive: true });
+    const sourceSoul = path.join(SCRIPT_DIR, 'SOUL.md');
+    if (fs.existsSync(sourceSoul)) {
+        fs.copyFileSync(sourceSoul, path.join(targetTinyagi, 'SOUL.md'));
+    }
+
+    // Create memory directory
+    fs.mkdirSync(path.join(agentDir, 'memory'), { recursive: true });
+}
+
 const DEFAULT_SETTINGS = {
     workspace: {
         path: path.join(os.homedir(), 'tinyagi-workspace'),
@@ -45,11 +96,11 @@ const DEFAULT_SETTINGS = {
         enabled: [],
     },
     agents: {
-        default: {
+        tinyagi: {
             name: 'TinyAGI Agent',
             provider: 'anthropic',
             model: 'opus',
-            working_directory: path.join(os.homedir(), 'tinyagi-workspace', 'default'),
+            working_directory: path.join(os.homedir(), 'tinyagi-workspace', 'tinyagi'),
         },
     },
     models: {
@@ -78,12 +129,12 @@ export function writeDefaults() {
     // Write settings
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(DEFAULT_SETTINGS, null, 2) + '\n');
 
-    // Create workspace and agent directories
+    // Create workspace and bootstrap agent directories with templates
     const wsPath = DEFAULT_SETTINGS.workspace.path;
     fs.mkdirSync(wsPath, { recursive: true });
 
     for (const agent of Object.values(DEFAULT_SETTINGS.agents)) {
-        fs.mkdirSync(agent.working_directory, { recursive: true });
+        bootstrapAgentDir(agent.working_directory);
     }
 
     return true;
