@@ -23,7 +23,6 @@ import {
   type TeamConfig,
 } from "@/lib/api";
 import { Users, Bot, Crown } from "lucide-react";
-import { useRouter } from "next/navigation";
 
 // ── Custom Nodes ──────────────────────────────────────────────────────────
 
@@ -127,16 +126,13 @@ function buildOrgChart(
   const teamEntries = Object.entries(teams);
   const allAgentIds = Object.keys(agents);
 
-  // Find agents assigned to at least one team
   const assignedAgentIds = new Set<string>();
   for (const [, team] of teamEntries) {
     for (const aid of team.agents) assignedAgentIds.add(aid);
   }
 
-  // Unassigned agents
   const unassignedAgentIds = allAgentIds.filter((id) => !assignedAgentIds.has(id));
 
-  // Calculate groups: each team is a group, plus unassigned group
   const groups: {
     headerId: string;
     headerType: string;
@@ -162,7 +158,6 @@ function buildOrgChart(
         label: agents[aid].name,
         model: `${agents[aid].provider}/${agents[aid].model}`,
       }));
-    // Sort so leader comes first
     members.sort((a, b) => (b.isLeader ? 1 : 0) - (a.isLeader ? 1 : 0));
 
     groups.push({
@@ -191,13 +186,11 @@ function buildOrgChart(
     });
   }
 
-  // Position groups side by side
   let groupX = 0;
 
   for (const group of groups) {
     const groupWidth = Math.max(1, group.members.length) * (NODE_W + H_GAP) - H_GAP;
 
-    // Header node centered above members
     const headerX = groupX + groupWidth / 2 - NODE_W / 2;
     nodes.push({
       id: group.headerId,
@@ -210,7 +203,6 @@ function buildOrgChart(
       },
     });
 
-    // Member nodes
     group.members.forEach((member, i) => {
       const memberX = groupX + i * (NODE_W + H_GAP);
       const memberY = V_GAP + NODE_H;
@@ -249,7 +241,6 @@ function OrgChartInner() {
   const { data: agents } = usePolling<Record<string, AgentConfig>>(getAgents, 0);
   const { data: teams } = usePolling<Record<string, TeamConfig>>(getTeams, 0);
   const { fitView } = useReactFlow();
-  const router = useRouter();
 
   const { nodes, edges } = useMemo(() => {
     if (!agents) return { nodes: [], edges: [] };
@@ -259,18 +250,15 @@ function OrgChartInner() {
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (node.type === "agent") {
-        router.push(`/agents/${node.data.agentId}`);
+        // Could open agent detail panel in the future
       } else if (node.type === "team" && node.data.teamId) {
-        router.push(`/chat/team/${node.data.teamId}`);
+        // Could navigate to team chat
       }
     },
-    [router]
+    []
   );
 
-  // Fit view when data changes
-  const onNodesChange = useCallback(() => {
-    // Let ReactFlow handle internal changes
-  }, []);
+  const onNodesChange = useCallback(() => {}, []);
 
   useEffect(() => {
     if (nodes.length === 0) return;

@@ -604,6 +604,7 @@ export function PixelOfficeScene({
   lounge,
   taskStations,
   agents,
+  onAgentClick,
 }: {
   frame: number;
   bossRoom: SceneBossRoom;
@@ -611,6 +612,7 @@ export function PixelOfficeScene({
   lounge: SceneLounge;
   taskStations: SceneTaskStation[];
   agents: SceneAgent[];
+  onAgentClick?: (agentId: string) => void;
 }) {
   return (
     <div className="relative size-full overflow-hidden bg-[linear-gradient(180deg,#c7ad90,#b89a7d)]">
@@ -710,6 +712,7 @@ export function PixelOfficeScene({
             size={1.08}
             worldWidth={PIXEL_SCENE_LAYOUT.width}
             worldHeight={PIXEL_SCENE_LAYOUT.height}
+            onClick={onAgentClick ? () => onAgentClick(agent.id) : undefined}
           />
         </div>
       ))}

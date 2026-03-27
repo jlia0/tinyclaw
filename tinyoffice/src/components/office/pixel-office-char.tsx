@@ -15,6 +15,7 @@ type PixelOfficeCharProps = {
   facing?: PixelCharFacing;
   worldWidth?: number;
   worldHeight?: number;
+  onClick?: () => void;
 };
 
 const SPRITE_WIDTH = 16;
@@ -86,6 +87,7 @@ export function PixelOfficeChar({
   facing = "down",
   worldWidth = DEFAULT_WORLD_WIDTH,
   worldHeight = DEFAULT_WORLD_HEIGHT,
+  onClick,
 }: PixelOfficeCharProps) {
   const scale = 2.2 * size;
   const width = SPRITE_WIDTH * scale;
@@ -131,7 +133,7 @@ export function PixelOfficeChar({
         }}
       />
       <div
-        className="pointer-events-none absolute"
+        className={onClick ? "absolute cursor-pointer hover:brightness-125 transition-all" : "pointer-events-none absolute"}
         style={{
           left: toPercent(left, worldWidth),
           top: toPercent(top, worldHeight),
@@ -139,6 +141,7 @@ export function PixelOfficeChar({
           height: toPercent(height, worldHeight),
           zIndex: Math.max(2, Math.round(y * 10)),
         }}
+        onClick={onClick}
       >
         <div style={spriteStyle} />
       </div>
