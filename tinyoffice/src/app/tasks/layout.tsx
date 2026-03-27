@@ -197,9 +197,6 @@ export default function TasksLayout({
                               style={{ backgroundColor: project.color }}
                             />
                             <span className="truncate">{project.name}</span>
-                            <span className="text-[10px] text-muted-foreground/60 ml-auto font-mono">
-                              {project.prefix}
-                            </span>
                           </Link>
                         </SidebarMenuButton>
                         <DropdownMenu>

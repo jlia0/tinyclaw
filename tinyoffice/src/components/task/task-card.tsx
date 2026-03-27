@@ -67,16 +67,12 @@ export function TaskCard({
               >
                 <GripVertical className="h-3 w-3" />
               </KanbanItemHandle>
-              <Badge
-                variant="outline"
-                className="text-[10px] font-mono font-semibold shrink-0 px-1.5 py-0"
-                style={{
-                  color: project?.color || "var(--muted-foreground)",
-                  borderColor: project?.color ? `${project.color}40` : undefined,
-                }}
+              <span
+                className="text-xs font-mono font-semibold shrink-0"
+                style={{ color: project?.color || "var(--muted-foreground)" }}
               >
                 {task.identifier || `T-${task.number}`}
-              </Badge>
+              </span>
             </div>
             <DropdownMenu
               open={confirmDelete ? true : undefined}

@@ -201,9 +201,6 @@ export default function TasksPage() {
                   style={{ backgroundColor: currentProject.color }}
                 />
                 {currentProject.name}
-                <span className="text-xs font-mono text-muted-foreground font-normal">
-                  {currentProject.prefix}
-                </span>
               </>
             ) : (
               "All Tasks"
