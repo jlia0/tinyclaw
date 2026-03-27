@@ -121,8 +121,8 @@ export default function TasksLayout({
   );
 
   return (
-    <SidebarProvider defaultOpen={true}>
-      <Sidebar collapsible="none" className="border-r">
+    <SidebarProvider defaultOpen={true} className="h-full">
+      <Sidebar collapsible="none" className="border-r h-full">
         <SidebarHeader className="px-3 py-3">
           <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
             Workspace

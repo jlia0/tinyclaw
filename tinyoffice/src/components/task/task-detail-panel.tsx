@@ -38,6 +38,7 @@ import {
 
 const STATUS_OPTIONS: { value: Task["status"]; label: string; color: string }[] = [
   { value: "backlog", label: "Backlog", color: "bg-muted text-muted-foreground" },
+  { value: "todo", label: "Todo", color: "bg-violet-500/15 text-violet-400" },
   { value: "in_progress", label: "In Progress", color: "bg-blue-500/15 text-blue-400" },
   { value: "review", label: "Review", color: "bg-orange-500/15 text-orange-400" },
   { value: "done", label: "Done", color: "bg-emerald-500/15 text-emerald-400" },

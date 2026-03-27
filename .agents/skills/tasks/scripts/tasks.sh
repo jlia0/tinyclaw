@@ -31,7 +31,7 @@ Commands:
 
 List flags:
   --mine              Only show tasks assigned to you
-  --status STATUS     Filter by status (backlog, in_progress, review, done)
+  --status STATUS     Filter by status (backlog, todo, in_progress, review, done)
 
 Update args:
   TASK_ID             The task ID to update (required, first positional arg)
@@ -114,8 +114,8 @@ cmd_update() {
     [[ -z "$status" ]] && die "--status is required"
 
     case "$status" in
-        backlog|in_progress|review|done) ;;
-        *) die "Invalid status: $status. Must be one of: backlog, in_progress, review, done" ;;
+        backlog|todo|in_progress|review|done) ;;
+        *) die "Invalid status: $status. Must be one of: backlog, todo, in_progress, review, done" ;;
     esac
 
     local result

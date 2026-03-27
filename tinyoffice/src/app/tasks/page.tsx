@@ -43,6 +43,7 @@ import {
 
 const COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
   { id: "backlog", label: "Backlog", color: "text-muted-foreground" },
+  { id: "todo", label: "Todo", color: "text-violet-400" },
   { id: "in_progress", label: "In Progress", color: "text-blue-400" },
   { id: "review", label: "Review", color: "text-orange-400" },
   { id: "done", label: "Done", color: "text-emerald-400" },
@@ -50,6 +51,7 @@ const COLUMNS: { id: TaskStatus; label: string; color: string }[] = [
 
 const STATUS_DOT: Record<string, string> = {
   backlog: "bg-muted-foreground",
+  todo: "bg-violet-400",
   in_progress: "bg-blue-400",
   review: "bg-orange-400",
   done: "bg-emerald-400",
@@ -86,6 +88,7 @@ export default function TasksPage() {
   const columns = useMemo(() => {
     const cols: Record<UniqueIdentifier, Task[]> = {
       backlog: [],
+      todo: [],
       in_progress: [],
       review: [],
       done: [],

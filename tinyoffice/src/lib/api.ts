@@ -287,7 +287,7 @@ export async function saveAgentHeartbeat(agentId: string, data: { content?: stri
 
 // ── Tasks ─────────────────────────────────────────────────────────────────
 
-export type TaskStatus = "backlog" | "in_progress" | "review" | "done";
+export type TaskStatus = "backlog" | "todo" | "in_progress" | "review" | "done";
 
 export interface Task {
   id: string;

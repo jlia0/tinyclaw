@@ -53,26 +53,29 @@ export function TaskCard({
 
   return (
     <KanbanItem value={task.id} asHandle={false}>
-      <Card className="border-border hover:border-primary/30 transition-colors">
-        <CardContent className="p-3 space-y-2">
-          {/* Title row with grip and actions */}
-          <div className="flex items-start gap-2">
-            <KanbanItemHandle className="mt-0.5 shrink-0 text-muted-foreground/40 hover:text-foreground transition-colors">
-              <GripVertical className="h-3.5 w-3.5" />
-            </KanbanItemHandle>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium leading-tight">{task.title}</p>
-              {task.description && (
-                <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                  {task.description}
-                </p>
-              )}
-              {task.identifier && (
-                <span
-                  className="text-[10px] font-mono mt-1 inline-block"
-                  style={{ color: project?.color }}
-                >
-                  {task.identifier}
+      <Card
+        className="border-border hover:border-primary/30 transition-colors cursor-pointer group"
+        onClick={() => onEdit(task)}
+      >
+        <CardContent className="p-3 space-y-1.5">
+          {/* Top row: identifier + actions */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <KanbanItemHandle
+                className="shrink-0 text-muted-foreground/30 hover:text-foreground transition-colors"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <GripVertical className="h-3 w-3" />
+              </KanbanItemHandle>
+              <span
+                className="text-xs font-mono font-semibold shrink-0"
+                style={{ color: project?.color || "var(--muted-foreground)" }}
+              >
+                {task.identifier || `T-${task.number}`}
+              </span>
+              {project && (
+                <span className="text-[10px] text-muted-foreground/60 truncate">
+                  {project.name}
                 </span>
               )}
             </div>
@@ -86,10 +89,10 @@ export function TaskCard({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 shrink-0 text-muted-foreground/50 hover:text-foreground"
+                  className="h-5 w-5 shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground/50 hover:text-foreground transition-all"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <MoreVertical className="h-3.5 w-3.5" />
+                  <MoreVertical className="h-3 w-3" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-40">
@@ -142,24 +145,22 @@ export function TaskCard({
             </DropdownMenu>
           </div>
 
-          {/* Metadata row */}
-          <div className="flex items-center gap-1.5 pl-5.5 flex-wrap">
-            {project && (
-              <Badge
-                variant="outline"
-                className="text-[10px] flex items-center gap-1"
-              >
-                <div
-                  className="h-2 w-2 rounded-sm shrink-0"
-                  style={{ backgroundColor: project.color }}
-                />
-                {project.name}
-              </Badge>
-            )}
+          {/* Title */}
+          <p className="text-sm font-medium leading-snug pl-5">{task.title}</p>
+
+          {/* Description preview */}
+          {task.description && (
+            <p className="text-xs text-muted-foreground line-clamp-2 pl-5">
+              {task.description}
+            </p>
+          )}
+
+          {/* Bottom: assignee + date */}
+          <div className="flex items-center gap-1.5 pl-5 pt-0.5">
             {assigneeName ? (
               <Badge
                 variant="secondary"
-                className="text-[10px] flex items-center gap-1"
+                className="text-[10px] flex items-center gap-1 h-5"
               >
                 {task.assigneeType === "team" ? (
                   <Users className="h-2.5 w-2.5" />
@@ -169,7 +170,7 @@ export function TaskCard({
                 {assigneeName}
               </Badge>
             ) : (
-              <span className="text-[10px] text-muted-foreground/50">
+              <span className="text-[10px] text-muted-foreground/40">
                 Unassigned
               </span>
             )}

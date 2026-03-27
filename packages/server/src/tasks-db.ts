@@ -11,7 +11,7 @@ import { log } from '@tinyagi/core';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'done';
+export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'review' | 'done';
 export type ProjectStatus = 'active' | 'archived';
 
 export const PROJECT_COLORS = [
@@ -179,9 +179,9 @@ export function initTasksDb(): void {
         CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id, created_at);
     `);
 
-    // Schema migrations for existing DBs
-    migrateSchema();
+    // Migrate JSON data first, then backfill schema additions (prefix, color, number)
     migrateJsonData();
+    migrateSchema();
     log('INFO', '[TasksDB] Initialized');
 }
 
@@ -240,11 +240,12 @@ function migrateJsonData(): void {
             try {
                 const projects = JSON.parse(fs.readFileSync(projectsFile, 'utf8'));
                 const stmt = d.prepare(
-                    `INSERT INTO projects (id, name, description, status, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?)`
+                    `INSERT INTO projects (id, name, description, prefix, color, status, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
                 );
-                for (const p of projects) {
-                    stmt.run(p.id, p.name, p.description || '', p.status || 'active', p.createdAt, p.updatedAt);
+                for (let i = 0; i < projects.length; i++) {
+                    const p = projects[i];
+                    stmt.run(p.id, p.name, p.description || '', generatePrefix(p.name), pickColor(i), p.status || 'active', p.createdAt, p.updatedAt);
                 }
                 fs.renameSync(projectsFile, projectsFile + '.migrated');
                 log('INFO', `[TasksDB] Migrated ${projects.length} projects from JSON`);

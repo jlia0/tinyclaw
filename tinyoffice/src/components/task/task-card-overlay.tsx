@@ -17,11 +17,9 @@ export function TaskCardOverlay({
   return (
     <Card className="border-primary/50 shadow-lg w-[280px]">
       <CardContent className="p-3 space-y-1">
-        {task.identifier && (
-          <span className="text-[10px] font-mono text-muted-foreground">
-            {task.identifier}
-          </span>
-        )}
+        <span className="text-xs font-mono font-semibold text-muted-foreground">
+          {task.identifier || `T-${task.number}`}
+        </span>
         <p className="text-sm font-medium">{task.title}</p>
         {task.assignee && (
           <Badge
