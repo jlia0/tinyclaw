@@ -76,8 +76,8 @@ export interface Settings {
   };
   models?: {
     provider?: string;
-    anthropic?: { model?: string };
-    openai?: { model?: string };
+    anthropic?: { model?: string; api_key?: string; oauth_token?: string };
+    openai?: { model?: string; api_key?: string };
     opencode?: { model?: string };
   };
   agents?: Record<string, AgentConfig>;
@@ -428,6 +428,99 @@ export async function updateSchedule(
 
 export async function deleteSchedule(id: string): Promise<{ ok: boolean }> {
   return apiFetch(`/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+// ── Control Plane ─────────────────────────────────────────────────────────
+
+export async function getSystemStatus(): Promise<{
+  ok: boolean;
+  uptime: number;
+  server: { running: boolean; port: number };
+  channels: Record<string, { running: boolean; pid?: number }>;
+  heartbeat: { running: boolean; interval: number; lastSent: Record<string, number> };
+}> {
+  return apiFetch("/api/status");
+}
+
+export async function restartService(): Promise<{ ok: boolean; action: string }> {
+  return apiFetch("/api/services/restart", { method: "POST" });
+}
+
+export async function startChannel(channelId: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/services/channel/${encodeURIComponent(channelId)}/start`, { method: "POST" });
+}
+
+export async function stopChannel(channelId: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/services/channel/${encodeURIComponent(channelId)}/stop`, { method: "POST" });
+}
+
+export async function restartChannel(channelId: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/services/channel/${encodeURIComponent(channelId)}/restart`, { method: "POST" });
+}
+
+// ── Pairing ───────────────────────────────────────────────────────────────
+
+export interface PairingPending {
+  channel: string;
+  senderId: string;
+  sender: string;
+  code: string;
+  createdAt: number;
+  lastSeenAt: number;
+}
+
+export interface PairingApproved {
+  channel: string;
+  senderId: string;
+  sender: string;
+  approvedAt: number;
+  approvedCode?: string;
+}
+
+export interface PairingState {
+  pending: PairingPending[];
+  approved: PairingApproved[];
+}
+
+export async function getPairings(): Promise<PairingState> {
+  return apiFetch("/api/pairing");
+}
+
+export async function approvePairing(code: string): Promise<{ ok: boolean; entry?: PairingApproved }> {
+  return apiFetch("/api/pairing/approve", { method: "POST", body: JSON.stringify({ code }) });
+}
+
+export async function revokePairing(channel: string, senderId: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/pairing/${encodeURIComponent(channel)}/${encodeURIComponent(senderId)}`, { method: "DELETE" });
+}
+
+export async function dismissPending(code: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/pairing/pending/${encodeURIComponent(code)}`, { method: "DELETE" });
+}
+
+// ── Custom Providers ──────────────────────────────────────────────────────
+
+export interface CustomProvider {
+  name: string;
+  harness: "claude" | "codex";
+  base_url: string;
+  api_key: string;
+  model?: string;
+}
+
+export async function getCustomProviders(): Promise<Record<string, CustomProvider>> {
+  return apiFetch("/api/custom-providers");
+}
+
+export async function saveCustomProvider(id: string, provider: CustomProvider): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/custom-providers/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(provider),
+  });
+}
+
+export async function deleteCustomProvider(id: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/custom-providers/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────

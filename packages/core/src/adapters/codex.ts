@@ -19,13 +19,12 @@ export const codexAdapter: AgentAdapter = {
         const { agentId, message, workingDir, systemPrompt, model, shouldReset, envOverrides, onEvent } = opts;
         log('DEBUG', `Using Codex CLI (agent: ${agentId})`);
 
-        const shouldResume = !shouldReset;
+        const args = ['exec'];
         if (shouldReset) {
             log('INFO', `Resetting Codex conversation for agent: ${agentId}`);
+        } else {
+            args.push('resume', '--last');
         }
-
-        const args = ['exec'];
-        if (shouldResume) args.push('resume', '--last');
         if (model) args.push('--model', model);
         if (systemPrompt) args.push('-c', `developer_instructions=${systemPrompt}`);
         args.push('--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '--json', message);

@@ -10,7 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import {
     MessageJobData,
-    getSettings, getAgents, getTeams, LOG_FILE, FILES_DIR,
+    getSettings, getAgents, getTeams, LOG_FILE, FILES_DIR, TINYAGI_HOME,
     log, emitEvent,
     parseAgentRouting, getAgentResetFlag,
     invokeAgent, killAgentProcess,
@@ -24,6 +24,8 @@ import {
     startScheduler, stopScheduler,
 } from '@tinyagi/core';
 import { startApiServer } from '@tinyagi/server';
+import { startChannels, stopChannels, startChannel, stopChannel, restartChannel, getChannelStatus } from './channels';
+import { startHeartbeat, stopHeartbeat, getHeartbeatStatus } from './heartbeat';
 import {
     handleTeamResponse,
     groupChatroomMessages,
@@ -217,6 +219,9 @@ function logAgentConfig(): void {
 
 initQueueDb();
 
+// Write PID file so the CLI can find this process
+fs.writeFileSync(path.join(TINYAGI_HOME, 'tinyagi.pid'), String(process.pid));
+
 // Recover any messages left in 'processing' from a previous run — they're
 // guaranteed stale because the process just restarted.
 const startupRecovered = recoverStaleMessages(0);
@@ -224,7 +229,17 @@ if (startupRecovered > 0) {
     log('INFO', `Startup: recovered ${startupRecovered} in-flight message(s) from previous run`);
 }
 
-const apiServer = startApiServer();
+const apiServer = startApiServer({
+    startChannel,
+    stopChannel,
+    restartChannel,
+    getChannelStatus,
+    getHeartbeatStatus,
+    restart() {
+        log('INFO', 'Restart requested via API');
+        shutdown(75);
+    },
+});
 
 // Event-driven: process queue when a new message arrives
 queueEvents.on('message:enqueued', () => processQueue());
@@ -252,19 +267,29 @@ const maintenanceInterval = setInterval(() => {
 // Start in-process cron scheduler
 startScheduler();
 
+// Start channels and heartbeat
+startChannels();
+startHeartbeat();
+
 log('INFO', 'Queue processor started (SQLite)');
 logAgentConfig();
 log('INFO', `Agents: ${Object.keys(getAgents(getSettings())).join(', ')}, Teams: ${Object.keys(getTeams(getSettings())).join(', ')}`);
 
-// Graceful shutdown
-function shutdown(): void {
-    log('INFO', 'Shutting down queue processor...');
+// Graceful shutdown. Exit code 75 signals "restart" to the Docker entrypoint loop.
+function shutdown(exitCode = 0): void {
+    log('INFO', exitCode === 75 ? 'Restarting queue processor...' : 'Shutting down queue processor...');
+    stopHeartbeat();
+    stopChannels();
     stopScheduler();
     clearInterval(pollInterval);
     clearInterval(maintenanceInterval);
     apiServer.close();
     closeQueueDb();
-    process.exit(0);
+    // Clean up PID file on normal shutdown (not restart)
+    if (exitCode !== 75) {
+        try { fs.unlinkSync(path.join(TINYAGI_HOME, 'tinyagi.pid')); } catch {}
+    }
+    process.exit(exitCode);
 }
 
 process.on('SIGINT', () => { shutdown(); });

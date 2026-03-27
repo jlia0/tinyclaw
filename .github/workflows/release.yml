@@ -76,7 +76,6 @@ jobs:
           cp -r packages/ "$BUNDLE_DIR/"
           cp -r node_modules/ "$BUNDLE_DIR/"
           cp -r scripts/ "$BUNDLE_DIR/"
-          cp -r lib/ "$BUNDLE_DIR/"
           cp -r docs/ "$BUNDLE_DIR/"
           cp -r .agents/ "$BUNDLE_DIR/"
           cp -r tinyoffice/ "$BUNDLE_DIR/"
@@ -95,9 +94,6 @@ jobs:
           chmod +x "$BUNDLE_DIR/bin/tinyagi"
           chmod +x "$BUNDLE_DIR/bin/tinyclaw"
           chmod +x "$BUNDLE_DIR/scripts/install.sh"
-          chmod +x "$BUNDLE_DIR/lib/tinyagi.sh"
-          chmod +x "$BUNDLE_DIR/lib/heartbeat-cron.sh"
-          chmod +x "$BUNDLE_DIR/lib/update.sh"
 
           # Create tarball
           cd "$TEMP_DIR"

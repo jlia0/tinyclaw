@@ -48,7 +48,7 @@ function sendMessage(message: string, source = 'cli') {
     req.end();
 }
 
-function channelsReset(channel: string) {
+export function channelsReset(channel: string) {
     const knownChannels = ['telegram', 'discord', 'whatsapp'];
 
     if (!knownChannels.includes(channel)) {
@@ -94,7 +94,7 @@ const CHANNEL_TOKEN_HELP: Record<string, string> = {
     telegram: 'Create a bot via @BotFather on Telegram to get a token',
 };
 
-async function channelSetup() {
+export async function channelSetup() {
     printBanner();
     p.intro('TinyAGI - Channel Setup');
 

@@ -56,7 +56,10 @@ tinyagi agent provider <id> <provider> --model <model>
 tinyagi team list                          # List teams
 tinyagi team show <id>                     # Show team config
 tinyagi team add-agent <team_id> <agent_id>  # Add agent to team (no prompts)
-tinyagi channels reset <channel>           # Reset channel auth
+tinyagi channel start <channel>            # Start a channel
+tinyagi channel stop <channel>             # Stop a channel
+tinyagi channel restart <channel>          # Restart a channel
+tinyagi channel reset <channel>            # Reset channel auth
 tinyagi pairing list                       # Show all pairings
 tinyagi pairing pending                    # Show pending
 tinyagi pairing approved                   # Show approved
@@ -115,6 +118,25 @@ curl -s http://localhost:3777/api/settings | jq
 curl -s -X PUT http://localhost:3777/api/settings \
   -H 'Content-Type: application/json' \
   -d '{"monitoring":{"heartbeat_interval":1800}}'
+```
+
+### Services (channels & daemon)
+
+```bash
+# Start a channel
+curl -s -X POST http://localhost:3777/api/services/channel/telegram/start
+
+# Stop a channel
+curl -s -X POST http://localhost:3777/api/services/channel/telegram/stop
+
+# Restart a channel
+curl -s -X POST http://localhost:3777/api/services/channel/telegram/restart
+
+# Start all enabled channels
+curl -s -X POST http://localhost:3777/api/services/apply
+
+# Restart the entire process (exit code 75 triggers restart loop in Docker)
+curl -s -X POST http://localhost:3777/api/services/restart
 ```
 
 ### Messages
@@ -197,15 +219,18 @@ After editing `settings.json`, run `tinyagi restart` to pick up changes.
 
 When modifying TinyAGI's own code (features, bug fixes, new routes, etc.):
 
-- **Source code:** `src/` directory (TypeScript)
-  - `src/server/` — API server (Hono framework)
-  - `src/server/routes/` — route handlers (agents, teams, settings, queue, tasks, messages, logs, chats)
-  - `src/lib/` — shared utilities (config, db, logging, types, plugins)
-- **Shell scripts:** `lib/` — bash libraries (agents.sh, teams.sh, daemon.sh, messaging.sh, etc.)
-- **Main CLI:** `tinyagi.sh` — command dispatcher
-- **Compiled output:** `dist/` — run `npm run build` after TypeScript changes
+- **Monorepo packages:**
+  - `packages/core/src/` — shared utilities (config, db, logging, types, plugins, agent invocation)
+  - `packages/server/src/` — API server (Hono framework)
+  - `packages/server/src/routes/` — route handlers (agents, teams, settings, queue, tasks, messages, logs, services)
+  - `packages/main/src/` — entry point, queue processor, channel/heartbeat lifecycle
+  - `packages/cli/src/` — CLI modules (daemon, channel, install, logs, agent, team, provider, etc.)
+  - `packages/cli/bin/tinyagi.mjs` — thin CLI dispatcher (delegates to compiled modules in `dist/`)
+  - `packages/teams/src/` — team orchestration
+  - `packages/visualizer/src/` — TUI dashboards (team visualizer, chatroom viewer)
 - **Skills:** `.agents/skills/` — skill definitions (copied to agent workspaces on provision)
 - **Web portal:** `tinyoffice/` — Next.js app
+- **Docker:** `Dockerfile`, `docker-entrypoint.sh`, `docker-compose.yml`
 
 After modifying TypeScript source, rebuild:
 

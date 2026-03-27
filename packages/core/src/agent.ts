@@ -158,6 +158,7 @@ export function buildSystemPrompt(
     if (self) {
         const leaderTag = isLeaderOfAny ? ' *(team leader)*' : '';
         block += `\n### You\n\n- \`@${agentId}\` — **${self.name}** (${self.model})${leaderTag}\n`;
+        block += `- Workspace: \`${agentDir}\`\n`;
     }
     if (agentTeams.length > 0) {
         for (const team of agentTeams) {

@@ -183,7 +183,7 @@ export async function invokeAgent(
     agentId: string,
     message: string,
     workspacePath: string,
-    shouldReset: boolean,
+    _shouldReset: boolean,
     agents: Record<string, AgentConfig> = {},
     teams: Record<string, TeamConfig> = {},
     onEvent?: (text: string) => void,
@@ -192,8 +192,10 @@ export async function invokeAgent(
     const agentDir = path.join(workspacePath, agentId);
     const isNewAgent = !fs.existsSync(agentDir);
     ensureAgentDirectory(agentDir);
+    let shouldReset = _shouldReset;
     if (isNewAgent) {
         log('INFO', `Initialized agent directory with config files: ${agentDir}`);
+        shouldReset = true;
     }
 
     // Build system prompt in-memory (built-in instructions + teammates + memory + user customization)
@@ -237,12 +239,16 @@ export async function invokeAgent(
 
         log('INFO', `Using custom provider '${customId}' (harness: ${customProvider.harness}, base_url: ${customProvider.base_url})`);
     } else {
-        // For built-in providers, check if auth_token is configured in settings
+        // For built-in providers, check if credentials are configured in settings
         const settings = getSettings();
-        if (provider === 'anthropic' && settings.models?.anthropic?.auth_token) {
-            envOverrides.ANTHROPIC_API_KEY = settings.models.anthropic.auth_token;
-        } else if (provider === 'openai' && settings.models?.openai?.auth_token) {
-            envOverrides.OPENAI_API_KEY = settings.models.openai.auth_token;
+        if (provider === 'anthropic' && settings.models?.anthropic?.oauth_token) {
+            envOverrides.CLAUDE_CODE_OAUTH_TOKEN = settings.models.anthropic.oauth_token;
+            envOverrides.ANTHROPIC_AUTH_TOKEN = '';
+            envOverrides.ANTHROPIC_API_KEY = '';
+        } else if (provider === 'anthropic' && settings.models?.anthropic?.api_key) {
+            envOverrides.ANTHROPIC_API_KEY = settings.models.anthropic.api_key;
+        } else if (provider === 'openai' && settings.models?.openai?.api_key) {
+            envOverrides.OPENAI_API_KEY = settings.models.openai.api_key;
         }
     }
 

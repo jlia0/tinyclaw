@@ -26,6 +26,7 @@ export const claudeAdapter: AgentAdapter = {
 
     async invoke(opts: InvokeOptions): Promise<string> {
         const { agentId, message, workingDir, systemPrompt, model, shouldReset, envOverrides, onEvent } = opts;
+        const env = { IS_SANDBOX: '1', ...envOverrides };
         log('DEBUG', `Using Claude provider (agent: ${agentId})`);
 
         const continueConversation = !shouldReset;
@@ -62,13 +63,13 @@ export const claudeAdapter: AgentAdapter = {
                 } catch (e) {
                     // Ignore non-JSON lines
                 }
-            }, workingDir, envOverrides, agentId);
+            }, workingDir, env, agentId);
             await promise;
 
             return response || 'Sorry, I could not generate a response from Claude.';
         }
 
         args.push('-p', message);
-        return await runCommand('claude', args, workingDir, envOverrides);
+        return await runCommand('claude', args, workingDir, env);
     },
 };

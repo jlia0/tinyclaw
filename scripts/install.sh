@@ -64,7 +64,6 @@ fi
 
 chmod +x "$WRAPPER"
 chmod +x "$PROJECT_ROOT/bin/tinyclaw" 2>/dev/null || true
-chmod +x "$PROJECT_ROOT/lib/tinyagi.sh" 2>/dev/null || true
 
 # Rebuild native modules for this platform (bundle was built on Linux)
 if command -v npm &> /dev/null; then
