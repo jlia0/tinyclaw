@@ -18,6 +18,11 @@ function getHeartbeatInterval(): number {
     return settings?.monitoring?.heartbeat_interval ?? 3600;
 }
 
+function isHeartbeatEnabled(): boolean {
+    const settings = getSettings();
+    return settings?.heartbeat?.enabled !== false;
+}
+
 function getBaseInterval(): number {
     const defaultInterval = getHeartbeatInterval();
     const settings = getSettings();
@@ -35,6 +40,7 @@ function getBaseInterval(): number {
 }
 
 async function tick(): Promise<void> {
+    if (!isHeartbeatEnabled()) return;
     const settings = getSettings();
     const agents = getAgents(settings);
     const defaultInterval = getHeartbeatInterval();
@@ -85,6 +91,10 @@ async function tick(): Promise<void> {
 }
 
 export function startHeartbeat(): void {
+    if (!isHeartbeatEnabled()) {
+        log('INFO', 'Heartbeat disabled (heartbeat.enabled=false in settings)');
+        return;
+    }
     const interval = getBaseInterval();
     log('INFO', `Heartbeat started (interval: ${interval}s)`);
     timer = setInterval(() => { tick().catch(() => {}); }, interval * 1000);
